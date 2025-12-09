@@ -147,25 +147,8 @@ This script is required to read the TMC register data.
             AT_DISABLE
             RESPOND MSG="Material: {material} | PA: {pa_val} | Auto-Temp OFF"
         {% endif %}
-        
 
-        # ---- 8. Purge Line ----
-        M117 Purge lines…
-        SAVE_GCODE_STATE NAME=PRIMELINE
-        G90
-        G92 E0
-        G1 X{ (x_min + 30) if (x_min + 30) > 30 else 30 } Y{y_min + 5} Z0.3 F12000
-        G91
-        G1 X220 E18 F1200
-        G1 Y1 F6000
-        G1 X-220 E9 F1200
-        G90
-        G92 E0
-        RESTORE_GCODE_STATE NAME=PRIMELINE
-
-        M117 Printing…
-    ```
-
+    
 4.  Add the following to your `PRINT_END` macro (or use this complete example):
 
     ```ini
@@ -173,30 +156,8 @@ This script is required to read the TMC register data.
     gcode:
         # 1. Disable Systems
         AT_DISABLE
-        SET_FILAMENT_SENSOR SENSOR=SFS_T0 ENABLE=0
-        TURN_OFF_HEATERS
-        M107
-
-        # 2. Safe Z Raise
-        {% set max_z = printer.toolhead.axis_maximum.z|float %}
-        {% set act_z = printer.toolhead.position.z|float %}
-        {% if act_z < (max_z - 20) %}
-            {% set z_safe = 20.0 %}
-        {% else %}
-            {% set z_safe = max_z - act_z %}
-        {% endif %}
         
-        # 3. Retract & Move
-        G91
-        G1 E-5 F3600
-        G0 Z{z_safe} F3600
-        G90
-        G0 X{printer.toolhead.axis_maximum.x - 10} Y{printer.toolhead.axis_maximum.y - 10} F12000
         
-        # 4. Motors Off
-        M84 X Y E
-        M117 Print Complete.
-    ```
 
 ### Step 3: Configure Your Slicer (Orca Slicer)
 Add the following to your **Machine G-code** settings in Orca Slicer (under Printer Settings → Machine G-code → Machine start G-code):
