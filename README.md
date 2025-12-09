@@ -77,9 +77,7 @@ This script is required to read the TMC register data.
         # ---- 2. Reset Systems ----
         AT_RESET_STATE
         AT_DISABLE
-        # Ensure standard Runout behavior (Enable SFS_T0)
-        SET_FILAMENT_SENSOR SENSOR=SFS_T0 ENABLE=1 
-
+        
         # ---- 3. Geometry helpers ----
         {% set x_max   = printer.toolhead.axis_maximum.x|float %}
         {% set y_max   = printer.toolhead.axis_maximum.y|float %}
