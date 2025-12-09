@@ -198,6 +198,15 @@ This script is required to read the TMC register data.
         M117 Print Complete.
     ```
 
+### Step 3: Configure Your Slicer (Orca Slicer)
+Add the following to your **Machine G-code** settings in Orca Slicer (under Printer Settings → Machine G-code → Machine start G-code):
+
+```gcode
+PRINT_START BED={first_layer_bed_temperature[0]} EXTRUDER={first_layer_temperature[0]} MATERIAL={filament_type[0]}
+```
+
+This passes the bed temperature, extruder temperature, and filament type from the slicer to your `PRINT_START` macro.
+
 ---
 
 ## Tuning & Usage
