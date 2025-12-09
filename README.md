@@ -60,27 +60,176 @@ This script is required to read the TMC register data.
     filename: ~/printer_data/config/sfs_auto_flow_vars.cfg
     ```
 
-3.  Add the following to your `PRINT_START` macro:
+3.  Add the following to your `PRINT_START` macro (or use this complete example):
 
     ```ini
     [gcode_macro PRINT_START]
     gcode:
-        # ... (Your heating and homing code) ...
-        
-        # Initialize Adaptive Flow
+        ###################################################################
+        # PRINT_START (Cleaned for TMC Auto-Temp + Hardcoded PA)
+        ###################################################################
+
+        # ---- 1. Get Parameters ----
+        {% set target_bed       = params.BED|default(60)|int %}
+        {% set target_extruder  = params.EXTRUDER|default(200)|int %}
+        {% set material         = params.MATERIAL|default("PLA")|string %}
+
+        # ---- 2. Reset Systems ----
         AT_RESET_STATE
-        AT_ENABLE
+        AT_DISABLE
+        # Ensure standard Runout behavior (Enable SFS_T0)
+        SET_FILAMENT_SENSOR SENSOR=SFS_T0 ENABLE=1 
+
+        # ---- 3. Geometry helpers ----
+        {% set x_max   = printer.toolhead.axis_maximum.x|float %}
+        {% set y_max   = printer.toolhead.axis_maximum.y|float %}
+        {% set x_min   = printer.toolhead.axis_minimum.x|float %}
+        {% set y_min   = printer.toolhead.axis_minimum.y|float %}
+        {% set x_mid   = (x_max + x_min) / 2.0 %}
+        {% set y_mid   = (y_max + y_min) / 2.0 %}
+
+        # ---- 4. Heat Bed & Soak ----
+        M117 Heating bed…
+        M140 S{target_bed}
+        M104 S150 ; Preheat nozzle slightly but don't ooze
+
+        # ---- 5. Homing & QGL ----
+        _CG28
+
+        # Move to middle
+        G90
+        G1 Z20 F9000
+        G1 X{x_mid} Y{y_mid} F12000
+
+        # Wait for Bed
+        M190 S{target_bed}
+        TEMPERATURE_WAIT SENSOR=heater_bed MINIMUM={target_bed-1} MAXIMUM={target_bed+3}
+
+        # QGL
+        M117 QGL…
+        QUAD_GANTRY_LEVEL
+        G28 Z
+
+        # ---- 6. Bed Mesh ----
+        M117 Eddy mesh…
+        BED_MESH_CLEAR
+        BED_MESH_CALIBRATE METHOD=rapid_scan ADAPTIVE=1
+        
+        # Move clear
+        G1 X{x_mid} Y{y_mid} Z10 F12000
+
+        # ---- 7. Heat Hotend ----
+        M117 Heating hotend…
+        M109 S{target_extruder}
+
+        # ============================================================
+        #  MATERIAL CONFIGURATION (HYBRID: Speed + Load)
+        # ============================================================
+        
+        # Initialize Defaults
+        {% set load_k = 0.0 %}   # TMC Reaction (The "Correction")
+        {% set speed_k = 0.0 %}  # Speed Prediction (The "Sprint")
+        {% set pa_val = 0.0 %}
+        {% set max_temp_safety = 300 %}
+
+        # --- LOGIC BLOCK ---
+        {% if 'PLA' in material %}
+            {% set load_k = 0.10 %}
+            {% set speed_k = 0.50 %}
+            {% set pa_val = 0.040 %}
+            {% set max_temp_safety = 235 %}
+            
+        {% elif 'PETG' in material %}
+            {% set load_k = 0.15 %}
+            {% set speed_k = 0.60 %}
+            {% set pa_val = 0.060 %}
+            {% set max_temp_safety = 265 %}
+            
+        {% elif 'ABS' in material or 'ASA' in material %}
+            {% set load_k = 0.20 %}
+            {% set speed_k = 0.80 %}
+            {% set pa_val = 0.050 %}
+            {% set max_temp_safety = 290 %}
+            
+        {% elif 'PC' in material or 'NYLON' in material %}
+            {% set load_k = 0.25 %}
+            {% set speed_k = 0.90 %}
+            {% set pa_val = 0.055 %}
+            {% set max_temp_safety = 300 %}
+            
+        {% elif 'TPU' in material %}
+            # Disable Auto-Temp for TPU (Risk of foaming)
+            {% set load_k = 0.0 %}
+            {% set speed_k = 0.0 %}
+            {% set pa_val = 0.20 %} 
+            {% set max_temp_safety = 240 %}
+        {% endif %}
+
+        # --- APPLY PA ---
+        {% if pa_val > 0 %}
+            SET_PRESSURE_ADVANCE ADVANCE={pa_val}
+        {% endif %}
+
+        # --- APPLY AUTO-TEMP ---
+        {% if load_k > 0 or speed_k > 0 %}
+            AT_SET_VISC_K K={load_k}               # Set TMC Sensitivity
+            AT_SET_FLOW_K K={speed_k}         # Set Speed Sensitivity
+            AT_SET_MAX MAX={max_temp_safety}  # Set Safety Ceiling
+            AT_ENABLE
+            RESPOND MSG="Material: {material} | PA: {pa_val} | Load_K: {load_k} | Speed_K: {speed_k}"
+        {% else %}
+            AT_DISABLE
+            RESPOND MSG="Material: {material} | PA: {pa_val} | Auto-Temp OFF"
+        {% endif %}
+        
+
+        # ---- 8. Purge Line ----
+        M117 Purge lines…
+        SAVE_GCODE_STATE NAME=PRIMELINE
+        G90
+        G92 E0
+        G1 X{ (x_min + 30) if (x_min + 30) > 30 else 30 } Y{y_min + 5} Z0.3 F12000
+        G91
+        G1 X220 E18 F1200
+        G1 Y1 F6000
+        G1 X-220 E9 F1200
+        G90
+        G92 E0
+        RESTORE_GCODE_STATE NAME=PRIMELINE
+
+        M117 Printing…
     ```
 
-4.  Add the following to your `PRINT_END` macro:
+4.  Add the following to your `PRINT_END` macro (or use this complete example):
 
     ```ini
     [gcode_macro PRINT_END]
     gcode:
-        # Disable Adaptive Flow
+        # 1. Disable Systems
         AT_DISABLE
+        SET_FILAMENT_SENSOR SENSOR=SFS_T0 ENABLE=0
+        TURN_OFF_HEATERS
+        M107
+
+        # 2. Safe Z Raise
+        {% set max_z = printer.toolhead.axis_maximum.z|float %}
+        {% set act_z = printer.toolhead.position.z|float %}
+        {% if act_z < (max_z - 20) %}
+            {% set z_safe = 20.0 %}
+        {% else %}
+            {% set z_safe = max_z - act_z %}
+        {% endif %}
         
-        # ... (Your parking and cooldown code) ...
+        # 3. Retract & Move
+        G91
+        G1 E-5 F3600
+        G0 Z{z_safe} F3600
+        G90
+        G0 X{printer.toolhead.axis_maximum.x - 10} Y{printer.toolhead.axis_maximum.y - 10} F12000
+        
+        # 4. Motors Off
+        M84 X Y E
+        M117 Print Complete.
     ```
 
 ---
@@ -101,7 +250,14 @@ How much temp to add if the extruder is struggling (high load).
 
 **Meaning:** If strain increases, boost temp to melt plastic faster.
 
-### 3. Crash Sensitivity
+### 3. Max Temperature Limit
+Set the maximum temperature ceiling for safety.
+
+**Command:** `AT_SET_MAX MAX=300`
+
+**Meaning:** Prevents the auto-temp system from exceeding this temperature.
+
+### 4. Crash Sensitivity
 To adjust how sensitive the crash detection is, edit `auto_flow.cfg`:
 
 *   `load_delta > 20`: Lower this number to make it more sensitive (detect smaller blobs). Raise it if you get false positives.
