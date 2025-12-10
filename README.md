@@ -32,8 +32,15 @@ This script is required to read the TMC register data.
     [save_variables]
     filename: ~/printer_data/config/sfs_auto_flow_vars.cfg
   ```
+3.  In your TMC section of your extruder add in:
+   ```
+    [tmc2209 extruder]
+    run_current: 0.650
+    stealthchop_threshold: 0
+    driver_SGTHRS: 120
+```
 
-4.  Add the following to your `PRINT_START` macro :
+5.  Add the following to your `PRINT_START` macro :
 
     ```ini
     [gcode_macro PRINT_START]
@@ -113,7 +120,7 @@ This script is required to read the TMC register data.
         {% endif %}
 
     
-5.  Add the following to your `PRINT_END` macro :
+6.  Add the following to your `PRINT_END` macro :
 
     ```ini
     [gcode_macro PRINT_END]
