@@ -1,6 +1,6 @@
 # Klipper Adaptive Flow & Crash Guard
 
-**A closed-loop flow control and artifact detection system for Klipper.**
+**A closed-loop flow control detection system for Klipper.**
 
 This system uses the TMC driver feedback from your extruder to actively manage temperature and pressure advance It requires **no external sensors** and **no slicer modifications**.
 ---
