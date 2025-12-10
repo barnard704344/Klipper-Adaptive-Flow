@@ -24,14 +24,16 @@ This script is required to read the TMC register data.
     [include auto_flow.cfg]
 
     [extruder_monitor]
-    # Change this to match your specific driver (e.g., tmc2209 extruder)
+   // This must match the name of your extruder stepper section
+    stepper: extruder
+   //Change this to match your specific driver (e.g., tmc2209 extruder)
     driver_name: tmc2209 extruder
 
     [save_variables]
     filename: ~/printer_data/config/sfs_auto_flow_vars.cfg
     ```
 
-3.  Add the following to your `PRINT_START` macro :
+4.  Add the following to your `PRINT_START` macro :
 
     ```ini
     [gcode_macro PRINT_START]
@@ -111,7 +113,7 @@ This script is required to read the TMC register data.
         {% endif %}
 
     
-4.  Add the following to your `PRINT_END` macro :
+5.  Add the following to your `PRINT_END` macro :
 
     ```ini
     [gcode_macro PRINT_END]
