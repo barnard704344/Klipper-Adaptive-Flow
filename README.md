@@ -20,7 +20,7 @@ This script is required to read the TMC register data.
 1.  Copy `auto_flow.cfg` to your configuration directory (usually `~/printer_data/config/`).
 2.  Open your `printer.cfg` and add the following:
 
-    
+...    
     [include auto_flow.cfg]
 
     [extruder_monitor]
@@ -31,7 +31,7 @@ This script is required to read the TMC register data.
 
     [save_variables]
     filename: ~/printer_data/config/sfs_auto_flow_vars.cfg
-    ```
+  
 
 4.  Add the following to your `PRINT_START` macro :
 
