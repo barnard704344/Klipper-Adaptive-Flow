@@ -86,3 +86,13 @@ class ExtruderMonitor:
 
 def load_config(config):
     return ExtruderMonitor(config)
+
+</details>
+[!IMPORTANT]
+You must restart the Klipper service after adding this file.
+sudo service klipper restart
+Step 2: Install the Configuration
+Create a file named auto_flow.cfg in your config directory: ~/printer_data/config/auto_flow.cfg
+Paste the content below into it.
+<details>
+<summary>Click to view <b>auto_flow.cfg</b></summary>
