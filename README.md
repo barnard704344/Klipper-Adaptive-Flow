@@ -154,6 +154,21 @@ To:<br/>
 {% set strain = 120 - corrected_load %}<br/>
 Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
 
+
+## ⚠️ Troubleshooting Low Values
+If your `AT_CHECK_BASELINE` returns very low numbers (e.g., **0 to 15**) even when spinning freely:
+
+1.  **Lower the Noise Filter:** The script ignores strain values under 10 by default. You must lower this to allow the script to see small changes.
+    *   Open `auto_flow.cfg`.
+    *   Find: `{% if strain < 10 %}`
+    *   Change to: `{% if strain < 2 %}`
+
+2.  **Use the Low Baseline:** Set your baseline in `auto_flow.cfg` to match your highest average reading (e.g., **14**).
+    *   Change `{% set strain = 60 - corrected_load %}` to `{% set strain = 14 - corrected_load %}`.
+
+*Note: This is common with LDO Pancake motors. For better resolution, install **Klipper TMC Autotune** (see section below).*
+
+
 ## ⚡ Optional: Improving Sensor Accuracy (TMC Autotune)
 
 If you have a **Pancake Motor** (e.g., LDO-36STH20 on a Voron CW2 or Orbiter), you might find that your `GET_EXTRUDER_LOAD` values are extremely low (0-10), even when the motor is spinning freely.
