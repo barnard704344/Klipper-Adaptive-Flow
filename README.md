@@ -103,11 +103,14 @@ These values control how aggressively the temperature boosts based on speed and 
 
 ```
 
-## 2. Calibrating Motor Baseline (Crucial)
-The script assumes a baseline motor load of **60** when extruding into thin air. If your motor is different (e.g., a strong NEMA 17 or a geared extruder), you must calibrate this number, otherwise the Viscosity Boost will be inaccurate.
+## 🛠️ Calibration: Finding Your Motor Baseline
 
-**Step 1: Run the Test**
-Add this temporary macro to your config and run `AT_CHECK_BASELINE`:
+The script relies on knowing what your motor "feels like" when it is free-spinning versus when it is pushing hard. It assumes a default baseline of **60** (SG_RESULT), but different motors and gear ratios will report different numbers.
+
+**If this baseline is wrong, the Viscosity/Strain Boost will not work.**
+
+### Step 1: Run the Test
+1.  Add this temporary macro to your `printer.cfg` (you can delete it later).
 
 ```
 [gcode_macro AT_CHECK_BASELINE]
@@ -122,14 +125,23 @@ gcode:
     GET_EXTRUDER_LOAD
     G4 P500
     GET_EXTRUDER_LOAD
-```
+
+Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).
+Run AT_CHECK_BASELINE.
+Look at the Console. You will see numbers like:
+Extruder Load (SG_RESULT): 118
+Extruder Load (SG_RESULT): 120
+Extruder Load (SG_RESULT): 119
 
 **Step 2: Update Config**
-Take the average number returned in the console (e.g., 120).
+Take the average number returned in the console (e.g., 120). <br/>
 Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:
-```
+
+Change:
 {% set strain = 60 - corrected_load %}
-Change 60 to your new number (e.g., 120).
+To:
+{% set strain = 120 - corrected_load %}
+Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
 ```
 **Step 3: Crash Sensitivity (Blob Detection)**
 If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.
