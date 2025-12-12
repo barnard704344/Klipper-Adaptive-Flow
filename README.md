@@ -127,7 +127,7 @@ gcode:
     GET_EXTRUDER_LOAD
 ```
 Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).<br/><br/>
-2. Run AT_CHECK_BASELINE.<br/>
+2. Run  **AT_CHECK_BASELINE.**<br/>
 Look at the Console. You will see numbers like:<br/>
 Extruder Load (SG_RESULT): 118<br/>
 Extruder Load (SG_RESULT): 120<br/>
