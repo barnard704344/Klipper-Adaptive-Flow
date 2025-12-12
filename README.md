@@ -212,3 +212,33 @@ Increase the 20:
 The script uses thermal compensation because stepper motors lose torque as they get hot.
 *   **EBB36 / SB2209:** The script automatically looks for a sensor named `[temperature_sensor Toolhead_Temp]`. Ensure this is defined in your `printer.cfg` for maximum accuracy.
 *   **Standard Wiring:** If no sensor is found, the script defaults to **35°C**. This is safe for all machines.
+
+
+
+## 📝 My Findings: Tuning for Pancake Motors (LDO & Generic Clones)
+
+If using a small NEMA 14 pancake motor (like the LDO-36STH20 or **Generic AliExpress Clones** found on Orbiter/Sherpa/CW2 extruders), the sensor readings will be much lower than standard NEMA 17 motors due to low inductance.
+
+**Symptoms:**
+*   `AT_CHECK_BASELINE` returns very low numbers (**0 to 18**) even when spinning freely.
+*   Extruder clicks at high speed because the default boost is too weak to react to such a small signal.
+
+**Required Changes:**
+
+### 1. Update `auto_flow.cfg`
+You must calibrate the script to work with the narrow signal window (0-16).
+
+*   **Baseline:** Change `60` to your max reading (e.g., `16`).
+    `{% set strain = 16 - corrected_load %}`
+*   **Noise Filter:** Lower it so the script doesn't ignore the small signal.
+    `{% if strain < 2 %} {% set strain = 0 %} {% endif %}`
+*   **Crash Threshold:** Lower it so it can detect blobs.
+    `{% if filament_speed > 2.0 and load_delta > 10 %}`
+
+### 2. Update `PRINT_START` (High Gain Tuning)
+Because the strain number is small (max 16), you need a **High K-Value** multiplier to get a meaningful temperature boost.
+
+*   **Load K (Viscosity):** Increase from `0.1` to **0.6 - 0.8**.
+    *   *Math:* Strain (16) * K (0.8) = **+12.8°C Boost**. (This effectively stops clicking).
+*   **Speed K (Flow):** Increase from `0.5` to **0.8 - 1.0**.
+    *   *Math:* 24mm³/s * K (0.8) = **+19.2°C Boost**. (Keeps up with high volumetric flow).
