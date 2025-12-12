@@ -188,33 +188,6 @@ Increase the 20:
 ```
 
 
-
-## ⚙️ Hardware Compatibility & Tuning
-
-This system relies on physical feedback, so different hardware configurations require slightly different tuning. Here is how to adjust for your specific machine.
-
-### 1. Motor Strength (Crash Sensitivity)
-Different motors report "Load" differently. A small pancake motor (NEMA 14) fluctuates much more than a large NEMA 17.
-
-*   **The Symptom:** If your printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle.
-*   **The Fix:** You need to make the system *less sensitive*.
-    1.  Open `auto_flow.cfg`.
-    2.  Find this line: `{% if filament_speed > 2.0 and load_delta > 20 %}`
-    3.  **Increase the `20`**.
-        *   **20:** Standard NEMA 14 (e.g., LDO-36STH20).
-        *   **30-40:** Very "noisy" or weak motors.
-        *   **10-15:** Strong NEMA 17 motors (they plow through resistance, so you need high sensitivity).
-
-### 2. Hotend Efficiency (Flow K)
-The `speed_k` value controls how much temp boost is added per mm³/s of speed. This depends on your hotend's melting capacity.
-
-*   **Standard Flow (e.g., V6, Revo, Dragon SF):**
-    *   These struggle at high speeds. They need a **Higher K** (0.5 - 1.0) to compensate for thermal lag.
-*   **High Flow (e.g., Rapido, Goliath, Dragon UHF):**
-    *   These melt plastic very efficiently. They need a **Lower K** (0.2 - 0.4). Boosting too high will cook the filament.
-
-*Adjust this in your `PRINT_START` macro under the `speed_k` variable.*
-
 ### 3. Toolhead Temperature (CAN Boards)
 The script uses thermal compensation because stepper motors lose torque as they get hot.
 *   **EBB36 / SB2209:** The script automatically looks for a sensor named `[temperature_sensor Toolhead_Temp]`. Ensure this is defined in your `printer.cfg` for maximum accuracy.
