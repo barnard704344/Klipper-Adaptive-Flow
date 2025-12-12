@@ -119,10 +119,10 @@ gcode:
     {% set temp = params.TEMP|default(220)|int %}
     M117 Heating to {temp}C...
     M109 S{temp}
-    M117 Extruding FAST...
+    M117 Extruding FAST (50mm/s)...
     G91
-    # Move faster (F1200 = 20mm/s) to trigger StallGuard
-    G1 E50 F1200 
+    # Increased speed to F3000 to wake up StallGuard
+    G1 E100 F3000 
     G90
     # Read while moving
     GET_EXTRUDER_LOAD
