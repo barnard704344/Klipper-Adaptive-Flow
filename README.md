@@ -125,24 +125,24 @@ gcode:
     GET_EXTRUDER_LOAD
     G4 P500
     GET_EXTRUDER_LOAD
-
-Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).
-Run AT_CHECK_BASELINE.
-Look at the Console. You will see numbers like:
-Extruder Load (SG_RESULT): 118
-Extruder Load (SG_RESULT): 120
-Extruder Load (SG_RESULT): 119
+```
+Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).<br/>
+Run AT_CHECK_BASELINE.<br/>
+Look at the Console. You will see numbers like:<br/>
+Extruder Load (SG_RESULT): 118<br/>
+Extruder Load (SG_RESULT): 120<br/>
+Extruder Load (SG_RESULT): 119<br/>
 
 **Step 2: Update Config**
 Take the average number returned in the console (e.g., 120). <br/>
-Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:
+Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:<br/>
 
-Change:
-{% set strain = 60 - corrected_load %}
-To:
-{% set strain = 120 - corrected_load %}
+Change:<br/>
+{% set strain = 60 - corrected_load %}<br/>
+To:<br/>
+{% set strain = 120 - corrected_load %}<br/>
 Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
-```
+
 **Step 3: Crash Sensitivity (Blob Detection)**
 If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.
 Open auto_flow.cfg.
