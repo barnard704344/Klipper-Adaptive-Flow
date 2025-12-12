@@ -133,7 +133,7 @@ Extruder Load (SG_RESULT): 118<br/>
 Extruder Load (SG_RESULT): 120<br/>
 Extruder Load (SG_RESULT): 119<br/>
 
-**Step 2: Update Config**
+### Step 2: Update Config
 Take the average number returned in the console (e.g., 120). <br/>
 Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:<br/>
 
@@ -143,8 +143,8 @@ To:<br/>
 {% set strain = 120 - corrected_load %}<br/>
 Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
 
-**Step 3: Crash Sensitivity (Blob Detection)**
-If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.
+### Step 3: Crash Sensitivity (Blob Detection)
+If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.<br/>
 Open auto_flow.cfg.<br/>
 Find this logic block:<br/>
 ```
