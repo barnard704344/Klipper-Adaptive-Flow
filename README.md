@@ -59,13 +59,14 @@ filename: ~/printer_data/config/sfs_auto_flow_vars.cfg
 ```
  --- Toolhead Temp ---<br/>
  If using EBB36/SB2209, name your temp sensor "Toolhead_Temp" for better accuracy.
-
+```
 [temperature_sensor Toolhead_Temp]
 sensor_type: temperature_mcu
 sensor_mcu: EBBCan
 ```
-```
+
 In your TMC section of your extruder place the following
+```
 [tmc2209 extruder]
 run_current: 0.650
 stealthchop_threshold: 0
