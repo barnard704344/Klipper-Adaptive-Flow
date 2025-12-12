@@ -87,25 +87,44 @@ Adapt your PRINT_START from my example.
 
 ## 🔧 Tuning Guide
 ```
-1. Flow K (Speed Boost)
-How much temp to add based on speed.
-Command: AT_SET_FLOW_K K=0.5
-Meaning: For every 1mm³/s of flow, add ~0.5°C.
+## 1. Standard Tuning (K-Values)
+These values control how aggressively the temperature boosts based on speed and resistance.
 
-2. Viscosity K (Resistance Boost)
-How much temp to add if the extruder is struggling (high load).
-Command: AT_SET_VISC_K K=0.1
-Meaning: If strain increases, boost temp to melt plastic faster.
+*   **Flow K (Speed Boost):**
+    *   **Command:** `AT_SET_FLOW_K K=0.5`
+    *   **Meaning:** For every 1mm³/s of flow, add ~0.5°C.
+    *   *Tune:* Increase if you see underextrusion on long, fast walls. Decrease if you cook filament.
 
-3. Crash Sensitivity
-To adjust how sensitive the crash detection is, edit auto_flow.cfg. Look for the logic block:
-{% if filament_speed > 2.0 and load_delta > 20 %}
-
-20: Lower this number to make it more sensitive (detect smaller blobs). Raise it if you get false positives.
+*   **Viscosity K (Resistance Boost):**
+    *   **Command:** `AT_SET_VISC_K K=0.1`
+    *   **Meaning:** If the motor works harder (strain), add temp to melt plastic faster.
+    *   *Tune:* Increase if you get clicking/skipping during fast infill.
 
 ```
 
----
+## 2. Calibrating Motor Baseline (Crucial)
+The script assumes a baseline motor load of **60** when extruding into thin air. If your motor is different (e.g., a strong NEMA 17 or a geared extruder), you must calibrate this number, otherwise the Viscosity Boost will be inaccurate.
+
+**Step 1: Run the Test**
+Add this temporary macro to your config and run `AT_CHECK_BASELINE`:
+
+```ini
+[gcode_macro AT_CHECK_BASELINE]
+gcode:
+    {% set temp = params.TEMP|default(210)|int %}
+    M109 S{temp}
+    G91
+    G1 E50 F300
+    G90
+    GET_EXTRUDER_LOAD
+    G4 P500
+    GET_EXTRUDER_LOAD
+    G4 P500
+    GET_EXTRUDER_LOAD
+
+```
+
+
 
 ## ⚙️ Hardware Compatibility & Tuning
 
