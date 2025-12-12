@@ -42,7 +42,9 @@ b: Install the Configuration <br/>
 Create a file named auto_flow.cfg in your config directory: ~/printer_data/config/auto_flow.cfg
    <br/> Copy auto_flow.cfg
 
-c: restart klipper 
+c: restart klipper <br/>
+sudo systemctl restart klipper
+
 
 ### Step 2: Edit printer.cfg
 Open your printer.cfg and add the following lines.
