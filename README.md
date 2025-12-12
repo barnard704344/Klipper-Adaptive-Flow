@@ -86,8 +86,9 @@ Adapt your PRINT_START from my example.
 
 
 ### 🔧 Tuning Guide
-```
+
 ## 1. Standard Tuning (K-Values)
+```
 These values control how aggressively the temperature boosts based on speed and resistance.
 
 *   **Flow K (Speed Boost):**
@@ -122,14 +123,15 @@ gcode:
     G4 P500
     GET_EXTRUDER_LOAD
 ```
-***Step 2: Update Config
+
+**Step 2: Update Config**
 Take the average number returned in the console (e.g., 120).
 Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:
 ```
 {% set strain = 60 - corrected_load %}
 Change 60 to your new number (e.g., 120).
 ```
-***Step 3: Crash Sensitivity (Blob Detection)
+**Step 3: Crash Sensitivity (Blob Detection)**
 If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.
 Open auto_flow.cfg.
 Find this logic block:
