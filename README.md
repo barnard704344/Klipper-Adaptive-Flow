@@ -114,17 +114,23 @@ The script relies on knowing what your motor "feels like" when it is free-spinni
 
 ```
 [gcode_macro AT_CHECK_BASELINE]
+description: Finds your motor's baseline load
 gcode:
-    {% set temp = params.TEMP|default(210)|int %}
+    {% set temp = params.TEMP|default(220)|int %}
+    M117 Heating to {temp}C...
     M109 S{temp}
+    M117 Extruding FAST...
     G91
-    G1 E50 F300
+    # Move faster (F1200 = 20mm/s) to trigger StallGuard
+    G1 E50 F1200 
     G90
+    # Read while moving
     GET_EXTRUDER_LOAD
     G4 P500
     GET_EXTRUDER_LOAD
     G4 P500
     GET_EXTRUDER_LOAD
+    M117 Done.
 ```
 Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).<br/><br/>
 2. Run  **AT_CHECK_BASELINE.**<br/>
