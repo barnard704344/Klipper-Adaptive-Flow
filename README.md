@@ -149,6 +149,31 @@ To:<br/>
 {% set strain = 120 - corrected_load %}<br/>
 Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
 
+## ⚡ Optional: Improving Sensor Accuracy (TMC Autotune)
+
+If you have a **Pancake Motor** (e.g., LDO-36STH20 on a Voron CW2 or Orbiter), you might find that your `GET_EXTRUDER_LOAD` values are extremely low (0-10), even when the motor is spinning freely.
+
+This happens because standard TMC driver settings are tuned for larger NEMA 17 motors. To fix this and get high-resolution data (40-100), you should install **Klipper TMC Autotune**.
+
+### Installation
+1.  SSH into your Raspberry Pi.
+2.  Run the installer:
+    ```bash
+    wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh
+    bash install.sh
+    ```
+3.  Add the configuration to your `printer.cfg`.
+    *(Make sure to change the `motor:` line to match your exact model)*
+
+    ```ini
+    [autotune_tmc extruder]
+    motor: ldo-36sth20-1004ahg
+    tuning_goal: performance
+    ```
+4.  **Restart Klipper** (`sudo service klipper restart`).
+
+**Result:** Your motor will run cooler, quieter, and the Load Sensor readings will likely jump from ~5 to ~60, giving the Adaptive Flow script much more data to work with.
+
 ### Step 3: Crash Sensitivity (Blob Detection)
 If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.<br/>
 Open auto_flow.cfg.<br/>
