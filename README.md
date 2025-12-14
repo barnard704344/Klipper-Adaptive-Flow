@@ -151,10 +151,13 @@ Different motors require different sensitivity settings. Update the variables at
 ---
 
 ### 3. Troubleshooting Low Values
-If your `AT_CHECK_BASELINE` returns extremely low numbers (0-10) even when spinning freely, the driver cannot detect the load.
+If your `AT_CHECK_BASELINE` returns extremely low numbers (0-10) even when spinning freely, the driver is struggling to detect the load.
 
 1.  **Install Klipper TMC Autotune:** This optimizes the driver timings for your specific motor.
     *   Run via SSH: `wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh && bash install.sh`
     *   Add `[autotune_tmc extruder]` to `printer.cfg`.
     *   Restart Klipper.
-2.  **Verify:** Run the baseline test again. If the number jumps up (e.g., to 80), update `sensor_baseline` in `auto_flow.cfg` to match the new number.
+
+2.  **Verify & Accept:** Run the baseline test again.
+    *   If the number jumps up (e.g. to 60+), great. Use that.
+    *   **Note:** Many generic/clone NEMA 14 motors will **always** read low (e.g., 12-16) even with Autotune. **This is normal.** Just set your `sensor_baseline` to 16 and your `noise_filter` to 2. The script works fine with low numbers as long as they are stable.
