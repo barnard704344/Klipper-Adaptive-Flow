@@ -85,160 +85,76 @@ Adapt your PRINT_START from my example.
 
 
 
-### 🔧 Tuning Guide
+## ⚙️ Configuration & Calibration
 
-## 1. Standard Tuning (K-Values)
-```
-These values control how aggressively the temperature boosts based on speed and resistance.
+All settings are now located at the **top** of the `auto_flow.cfg` file in the `USER CONFIGURATION` block. You do not need to search through the code logic.
 
-*   **Flow K (Speed Boost):**
-    *   **Command:** `AT_SET_FLOW_K K=0.5`
-    *   **Meaning:** For every 1mm³/s of flow, add ~0.5°C.
-    *   *Tune:* Increase if you see underextrusion on long, fast walls. Decrease if you cook filament.
+### 1. Calibrating Motor Baseline (Required)
+The script needs to know the "Baseline Load" of your motor (how it feels when spinning freely).
 
-*   **Viscosity K (Resistance Boost):**
-    *   **Command:** `AT_SET_VISC_K K=0.1`
-    *   **Meaning:** If the motor works harder (strain), add temp to melt plastic faster.
-    *   *Tune:* Increase if you get clicking/skipping during fast infill.
-
-```
-
-## 🛠️ Calibration: Finding Your Motor Baseline
-
-The script relies on knowing what your motor "feels like" when it is free-spinning versus when it is pushing hard. It assumes a default baseline of **60** (SG_RESULT), but different motors and gear ratios will report different numbers.
-
-**If this baseline is wrong, the Viscosity/Strain Boost will not work.**
-
-### Step 1: Run the Test
-1.  Add this temporary macro to your `printer.cfg` (you can delete it later)
-
-```
-[gcode_macro AT_CHECK_BASELINE]
-description: Finds your motor's baseline load
-gcode:
-    {% set temp = params.TEMP|default(220)|int %}
-    M117 Heating to {temp}C...
-    M109 S{temp}
-    M117 Extruding FAST (50mm/s)...
-    G91
-    # Increased speed to F3000 to wake up StallGuard
-    G1 E100 F3000 
-    G90
-    # Read while moving
-    GET_EXTRUDER_LOAD
-    G4 P500
-    GET_EXTRUDER_LOAD
-    G4 P500
-    GET_EXTRUDER_LOAD
-    M117 Done.
-```
-1a. Add this to your Extruder section<br/>
-```
-    max_extrude_only_distance: 101.0
-```
-
-**Lift the Z axis or remove the filament from the hotend (so it extrudes with ZERO resistance).**<br/><br/>
-2. Run  **AT_CHECK_BASELINE.**<br/>
-Look at the Console. You will see numbers like:<br/>
-Extruder Load (SG_RESULT): 118<br/>
-Extruder Load (SG_RESULT): 120<br/>
-Extruder Load (SG_RESULT): 119<br/>
-
-### Step 2: Update Config
-Take the average number returned in the console (e.g., 120). <br/>
-Open auto_flow.cfg and find this line inside _AUTO_TEMP_CORE:<br/>
-
-Change:<br/>
-{% set strain = 60 - corrected_load %}<br/>
-To:<br/>
-{% set strain = 120 - corrected_load %}<br/>
-Now the script knows that 120 is "Zero Strain". Any number lower than 120 means the motor is working hard, and it will apply the boost.
-
-
-## ⚠️ Troubleshooting Low Values
-If your `AT_CHECK_BASELINE` returns very low numbers (e.g., **0 to 15**) even when spinning freely:
-
-1.  **Lower the Noise Filter:** The script ignores strain values under 10 by default. You must lower this to allow the script to see small changes.
-    *   Open `auto_flow.cfg`.
-    *   Find: `{% if strain < 10 %}`
-    *   Change to: `{% if strain < 2 %}`
-
-2.  **Use the Low Baseline:** Set your baseline in `auto_flow.cfg` to match your highest average reading (e.g., **14**).
-    *   Change `{% set strain = 60 - corrected_load %}` to `{% set strain = 14 - corrected_load %}`.
-
-*Note: This is common with LDO Pancake motors. For better resolution, install **Klipper TMC Autotune** (see section below).*
-
-
-## ⚡ Optional: Improving Sensor Accuracy (TMC Autotune)
-
-If you have a **Pancake Motor** (e.g., LDO-36STH20 on a Voron CW2 or Orbiter), you might find that your `GET_EXTRUDER_LOAD` values are extremely low (0-10), even when the motor is spinning freely.
-
-This happens because standard TMC driver settings are tuned for larger NEMA 17 motors. To fix this and get high-resolution data (40-100), you should install **Klipper TMC Autotune**.
-
-### Installation
-1.  SSH into your Raspberry Pi.
-2.  Run the installer:
-    ```bash
-    wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh
-    bash install.sh
-    ```
-3.  Add the configuration to your `printer.cfg`.
-    *(Make sure to change the `motor:` line to match your exact model)*
-
+**Step 1: Setup the Test**
+1.  Ensure `max_extrude_only_distance: 101.0` is set in the `[extruder]` section of `printer.cfg`.
+2.  Add this temporary macro to your config:
     ```ini
-    [autotune_tmc extruder]
-    motor: ldo-36sth20-1004ahg
-    tuning_goal: performance
+    [gcode_macro AT_CHECK_BASELINE]
+    gcode:
+        {% set temp = params.TEMP|default(220)|int %}
+        M117 Heating...
+        M109 S{temp}
+        M117 Extruding...
+        G91
+        G1 E100 F3000
+        G90
+        GET_EXTRUDER_LOAD
+        G4 P500
+        GET_EXTRUDER_LOAD
+        G4 P500
+        GET_EXTRUDER_LOAD
     ```
-4.  **Restart Klipper** (`sudo service klipper restart`).
 
-**Result:** Your motor will run cooler, quieter, and the Load Sensor readings will likely jump from ~5 to ~60, giving the Adaptive Flow script much more data to work with.
+**Step 2: Run the Test**
+1.  Heat your nozzle.
+2.  Unload filament (or lift Z high so it extrudes into air).
+3.  Run `AT_CHECK_BASELINE`.
+4.  Note the **Extruder Load** number printed in the console (e.g., 16, 60, 120).
 
-### Step 3: Crash Sensitivity (Blob Detection)
-If the printer triggers the "Slowing down" recovery mode randomly when there is no actual blob or tangle, your motor signal is too noisy.<br/>
-Open auto_flow.cfg.<br/>
-Find this logic block:<br/>
-```
-{% if filament_speed > 2.0 and load_delta > 20 %}
-Increase the 20:
-20: Standard NEMA 14 (LDO-36STH20).
-30-40: Noisy/Weak motors (False positives).
-10-15: Strong NEMA 17 motors (Need high sensitivity).
+**Step 3: Update Config**
+1.  Open `auto_flow.cfg`.
+2.  Edit the `sensor_baseline` variable at the top to match your number.
 
-```
+---
 
+### 2. Motor Tuning Guidelines
 
-### 3. Toolhead Temperature (CAN Boards)
-The script uses thermal compensation because stepper motors lose torque as they get hot.
-*   **EBB36 / SB2209:** The script automatically looks for a sensor named `[temperature_sensor Toolhead_Temp]`. Ensure this is defined in your `printer.cfg` for maximum accuracy.
-*   **Standard Wiring:** If no sensor is found, the script defaults to **35°C**. This is safe for all machines.
+Different motors require different sensitivity settings. Update the variables at the top of `auto_flow.cfg` based on your hardware.
 
+#### Option A: LDO Pancake / Orbiter / Sherpa / Generic Clones
+*These motors have low inductance and often report very low sensor values (0-20).*
 
+*   **Settings (`auto_flow.cfg`):**
+    *   `sensor_baseline`: **~16** (Match your test result).
+    *   `noise_filter`: **2** (Must be low to detect small signals).
+    *   `crash_threshold`: **10** (Higher sensitivity for small jolts).
+*   **Start Macro (`PRINT_START`):**
+    *   Use **High K-Values** (Load K: 0.6 - 0.8) to compensate for the weak signal.
 
-## 📝 My Findings: Tuning for Pancake Motors (LDO & Generic Clones)
+#### Option B: Standard NEMA 17 (Clockwork 1, Bowden, etc)
+*These motors usually provide high resolution readings (60-120).*
 
-If using a small NEMA 14 pancake motor (like the LDO-36STH20 or **Generic AliExpress Clones** found on Orbiter/Sherpa/CW2 extruders), the sensor readings will be much lower than standard NEMA 17 motors due to low inductance.
+*   **Settings (`auto_flow.cfg`):**
+    *   `sensor_baseline`: **~60 - 100** (Match your test result).
+    *   `noise_filter`: **10** (Filters out vibration noise).
+    *   `crash_threshold`: **20** (Standard sensitivity).
+*   **Start Macro (`PRINT_START`):**
+    *   Use **Standard K-Values** (Load K: 0.1 - 0.2).
 
-**Symptoms:**
-*   `AT_CHECK_BASELINE` returns very low numbers (**0 to 18**) even when spinning freely.
-*   Extruder clicks at high speed because the default boost is too weak to react to such a small signal.
+---
 
-**Required Changes:**
+### 3. Troubleshooting Low Values
+If your `AT_CHECK_BASELINE` returns extremely low numbers (0-10) even when spinning freely, the driver cannot detect the load.
 
-### 1. Update `auto_flow.cfg`
-You must calibrate the script to work with the narrow signal window (0-16).
-
-*   **Baseline:** Change `60` to your max reading (e.g., `16`).
-    `{% set strain = 16 - corrected_load %}`
-*   **Noise Filter:** Lower it so the script doesn't ignore the small signal.
-    `{% if strain < 2 %} {% set strain = 0 %} {% endif %}`
-*   **Crash Threshold:** Lower it so it can detect blobs.
-    `{% if filament_speed > 2.0 and load_delta > 10 %}`
-
-### 2. Update `PRINT_START` (High Gain Tuning)
-Because the strain number is small (max 16), you need a **High K-Value** multiplier to get a meaningful temperature boost.
-
-*   **Load K (Viscosity):** Increase from `0.1` to **0.6 - 0.8**.
-    *   *Math:* Strain (16) * K (0.8) = **+12.8°C Boost**. (This effectively stops clicking).
-*   **Speed K (Flow):** Increase from `0.5` to **0.8 - 1.0**.
-    *   *Math:* 24mm³/s * K (0.8) = **+19.2°C Boost**. (Keeps up with high volumetric flow).
+1.  **Install Klipper TMC Autotune:** This optimizes the driver timings for your specific motor.
+    *   Run via SSH: `wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh && bash install.sh`
+    *   Add `[autotune_tmc extruder]` to `printer.cfg`.
+    *   Restart Klipper.
+2.  **Verify:** Run the baseline test again. If the number jumps up (e.g., to 80), update `sensor_baseline` in `auto_flow.cfg` to match the new number.
