@@ -30,6 +30,8 @@ Uses a Z-height monitor to detect layer changes automatically. You do not need t
 
 ---
 
+### Please Note: 
+
 This system is tuned and verified specifically for the following hardware ecosystem. While the logic works on any Klipper printer, the **tuning values** provided in this guide assume:
 
 *   **Hotend:** E3D Revo (High Flow or Standard).
