@@ -29,10 +29,11 @@ gcode:
         {% set max_temp_safety = 240 %}
         
     {% elif 'PETG' in material %}
-        {% set load_k = 0.15 %}
-        {% set speed_k = 0.60 %}
+        # --- AGGRESSIVE FLOW TUNING (Safe now due to Flow Gate) ---
+        {% set load_k = 0.80 %}
+        {% set speed_k = 1.20 %}  # Keep this high for the 30mm3/s sprints
         {% set pa_val = 0.060 %}
-        {% set max_temp_safety = 265 %}
+        {% set max_temp_safety = 280 %} # Ensure cap is high enough for the boost
         
     {% elif 'ABS' in material or 'ASA' in material %}
         {% set load_k = 0.20 %}
