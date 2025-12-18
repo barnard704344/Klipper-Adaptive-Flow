@@ -89,84 +89,58 @@ Adapt your PRINT_START from my example.
 
 
 
-## ⚙️ Configuration & Calibration
+## ⚙️ Configuration & Tuning
 
-All settings are now located at the **top** of the `auto_flow.cfg` file in the `USER CONFIGURATION` block. You do not need to search through the code logic.
+All settings are located at the **top** of the `auto_flow.cfg` file in the `USER CONFIGURATION` block.
 
-### 1. Calibrating Motor Baseline (Required)
-The script needs to know the "Baseline Load" of your motor (how it feels when spinning freely).
+### Step 1: Optimize Motor Drivers (Highly Recommended)
+NEMA 14 "Pancake" motors (LDO-36STH20) have very low inductance. Standard Klipper settings often cause them to run hot or report "0" load.
 
-**Step 1: Setup the Test**
-1.  Ensure `max_extrude_only_distance: 101.0` is set in the `[extruder]` section of `printer.cfg`.
-2.  Add this temporary macro to your config:
+**Install Klipper TMC Autotune** to fix the electrical timing. While this **may not increase the load number** significantly on pancake motors, it ensures the reading is stable and the motor has maximum torque.
+
+1.  **Install via SSH:**
+    ```bash
+    wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh
+    bash install.sh
+    ```
+2.  **Update `printer.cfg`:**
+    Add this section (ensure `motor:` matches your specific model):
     ```ini
-    [gcode_macro AT_CHECK_BASELINE]
-    gcode:
-        {% set temp = params.TEMP|default(220)|int %}
-        M117 Heating...
-        M109 S{temp}
-        M117 Extruding...
-        G91
-        G1 E100 F3000
-        G90
-        GET_EXTRUDER_LOAD
-        G4 P500
-        GET_EXTRUDER_LOAD
-        G4 P500
-        GET_EXTRUDER_LOAD
+    [autotune_tmc extruder]
+    motor: ldo-36sth20-1004ahg
+    tuning_goal: performance
+    ```
+3.  **Restart Klipper:** `sudo service klipper restart`
+
+---
+
+### Step 2: Calibrate Motor Baseline
+We need to tell the script what "Zero Load" looks like for your specific motor.
+
+1.  Heat your nozzle to printing temp.
+2.  Unload filament (or lift Z high so it extrudes into air).
+3.  Run the command: `AT_CHECK_BASELINE`.
+4.  Note the **Extruder Load** number printed in the console.
+    *   **Pancake Motors (LDO/Orbiter/Sherpa):** Expect low numbers (**12 - 20**). This is normal.
+    *   **Standard NEMA 17:** Expect higher numbers (**60 - 100**).
+5.  **Edit `auto_flow.cfg`**:
+    Update the `sensor_baseline` variable to match your number.
+    ```ini
+    {% set sensor_baseline = 16 %}
     ```
 
-**Step 2: Run the Test**
-1.  Heat your nozzle.
-2.  Unload filament (or lift Z high so it extrudes into air).
-3.  Run `AT_CHECK_BASELINE`.
-4.  Note the **Extruder Load** number printed in the console (e.g., 16, 60, 120).
-
-**Step 3: Update Config**
-1.  Open `auto_flow.cfg`.
-2.  Edit the `sensor_baseline` variable at the top to match your number.
-
 ---
 
-### 2. Motor Tuning Guidelines
+### Step 3: Select Nozzle Type
+The script uses different "Flow Gates" depending on your hotend geometry.
 
-Different motors require different sensitivity settings. Update the variables at the top of `auto_flow.cfg` based on your hardware.
+*   **Revo High Flow / Rapido / Volcano:**
+    Set `{% set use_high_flow_nozzle = True %}`.
+    *(Boosts start at 15mm³/s)*.
 
-#### Option A: LDO Pancake / Orbiter / Sherpa / Generic Clones
-*These motors have low inductance and often report very low sensor values (0-20).*
-
-*   **Settings (`auto_flow.cfg`):**
-    *   `sensor_baseline`: **~16** (Match your test result).
-    *   `noise_filter`: **2** (Must be low to detect small signals).
-    *   `crash_threshold`: **10** (Higher sensitivity for small jolts).
-*   **Start Macro (`PRINT_START`):**
-    *   Use **High K-Values** (Load K: 0.6 - 0.8) to compensate for the weak signal.
-
-#### Option B: Standard NEMA 17 (Clockwork 1, Bowden, etc)
-*These motors usually provide high resolution readings (60-120).*
-
-*   **Settings (`auto_flow.cfg`):**
-    *   `sensor_baseline`: **~60 - 100** (Match your test result).
-    *   `noise_filter`: **10** (Filters out vibration noise).
-    *   `crash_threshold`: **20** (Standard sensitivity).
-*   **Start Macro (`PRINT_START`):**
-    *   Use **Standard K-Values** (Load K: 0.1 - 0.2).
-
----
-
-### 3. Troubleshooting Low Values
-If your `AT_CHECK_BASELINE` returns extremely low numbers (0-10) even when spinning freely, the driver is struggling to detect the load.
-
-1.  **Install Klipper TMC Autotune:** This optimizes the driver timings for your specific motor.
-    *   Run via SSH: `wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh && bash install.sh`
-    *   Add `[autotune_tmc extruder]` to `printer.cfg`.
-    *   Restart Klipper.
-
-2.  **Verify & Accept:** Run the baseline test again.
-    *   If the number jumps up (e.g. to 60+), great. Use that.
-    *   **Note:** Many generic/clone NEMA 14 motors will **always** read low (e.g., 12-16) even with Autotune. **This is normal.** Just set your `sensor_baseline` to 16 and your `noise_filter` to 2. The script works fine with low numbers as long as they are stable.
-    *   
-
+*   **Standard Revo / V6 / Dragon SF:**
+    Set `{% set use_high_flow_nozzle = False %}`.
+    *(Boosts start at 8mm³/s to help the standard core keep up)*.
 
 ## 📊 Hardware Limits & Benchmarks
 
