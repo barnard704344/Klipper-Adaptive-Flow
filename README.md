@@ -78,6 +78,12 @@ run_current: 0.650
 stealthchop_threshold: 0
 driver_SGTHRS: 120
 ```
+In your extruder section add
+```
+[extruder]
+max_extrude_only_distance: 101.0
+```
+
 ### Step 3: If you use PrusaSlicer, SuperSlicer, or OrcaSlicer, put this in your "Machine Start G-code":
    ```
    PRINT_START BED={first_layer_bed_temperature[0]} EXTRUDER={first_layer_temperature[0]} MATERIAL={filament_type[0]}
