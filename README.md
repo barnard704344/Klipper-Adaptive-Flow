@@ -32,8 +32,16 @@ Uses a rolling average to filter out short speed spikes (like gap infill). This 
 Monitors the extruder motor for resistance spikes (blobs/tangles). If >3 spikes occur in one layer, the printer slows to 50% speed for 3 layers to recover.
 
 ### 4. Smart Cornering ("Sticky Heat")
-Prevents "Bulging Corners". The script heats up instantly but cools down *slowly*, ensuring plastic remains fluid during corner braking.
+High-speed printing often suffers from **Bulging Corners**. This happens because when the print head brakes for a corner, the pressure in the nozzle doesn't drop instantly, causing extra plastic to ooze out at the sharp turn.
 
+Standard flow compensation attempts to fix this by lowering temperature when speed drops, but this actually makes it **worse**:
+*   *Cooler plastic = Higher Viscosity = More Back-Pressure = More Bulging.*
+
+**The Solution:** This script uses an asymmetric smoothing filter.
+*   **Acceleration (Heating):** The temperature rises **instantly** (Feed-Forward) to match the speed increase.
+*   **Deceleration (Cooling):** The temperature drops **very slowly** (Linear Decay).
+    *   This keeps the nozzle hot and the plastic fluid during the braking maneuver.
+    *   The lower viscosity allows the Pressure Advance system to retract filament efficiently, resulting in sharp, clean corners without the bulge.
 ---
 
 
