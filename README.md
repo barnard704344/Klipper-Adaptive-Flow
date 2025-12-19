@@ -102,6 +102,41 @@ The system will automatically:
 - Parse upcoming G-code for lookahead
 - Adjust temperature and pressure advance in real-time
 
+### Material-Specific Pressure Advance
+
+The system includes per-material Pressure Advance with sensible defaults. You can calibrate and save your own values.
+
+#### Default PA Values
+
+| Material | Default PA |
+|----------|-----------|
+| PLA | 0.040 |
+| PETG | 0.060 |
+| ABS/ASA | 0.050 |
+| TPU | 0.200 |
+| NYLON | 0.055 |
+| PC | 0.045 |
+| HIPS | 0.045 |
+
+#### PA Commands
+
+```gcode
+AT_SET_PA MATERIAL=PLA PA=0.045   ; Save calibrated PA for a material
+AT_GET_PA MATERIAL=PETG           ; Show saved vs default PA
+AT_LIST_PA                        ; List all materials with their PA values
+```
+
+Saved PA values persist across restarts (stored in Klipper's `save_variables`). When `AT_INIT_MATERIAL` runs:
+1. If you've calibrated the material → uses your saved value
+2. Otherwise → uses the default from the table above
+
+#### How to Calibrate PA
+
+1. Print a PA calibration tower (search "Pressure Advance calibration" in your slicer)
+2. Find the best layer (smooth corners, no bulging)
+3. Note the PA value for that layer
+4. Save it: `AT_SET_PA MATERIAL=PLA PA=0.045`
+
 ### Manual Lookahead Commands
 
 You can also manually add lookahead segments (useful for testing or custom macros):
