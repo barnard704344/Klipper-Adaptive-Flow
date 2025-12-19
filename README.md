@@ -32,7 +32,7 @@ High-speed printing often involves tiny, rapid movements like **Gap Infill** or 
     *   Sustained speed (long walls/infill) triggers the full boost.
     *   Short bursts (< 0.5s) are smoothed out and ignored.
     *   This ensures the heater only reacts to moves long enough to benefit from the extra energy.
-    *   
+      
 ### 3. Extrusion Crash Detection
 Monitors the extruder motor for resistance spikes (blobs/tangles). If >3 spikes occur in one layer, the printer slows to 50% speed for 3 layers to recover.
 
