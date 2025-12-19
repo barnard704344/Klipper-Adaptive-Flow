@@ -138,16 +138,20 @@ We need to tell the script what "Zero Load" looks like for your specific motor.
 ---
 
 ### Step 3: Select Nozzle Type
-The script uses different "Flow Gates" depending on which Revo nozzle you are installed.
+The script automatically sets the "Flow Gate" based on your nozzle type to prevent boosting when it isn't needed.
+
+1.  Open `auto_flow.cfg`.
+2.  Find `use_high_flow_nozzle` at the top.
 
 *   **Revo High Flow (HF):**
     Set `{% set use_high_flow_nozzle = True %}`.
-    *(Boosts start at 15mm³/s to push past the ~25mm³ limit)*.
+    *(Sets gate to 15mm³/s)*.
 
 *   **Revo Standard (Brass/ObX):**
     Set `{% set use_high_flow_nozzle = False %}`.
-    *(Boosts start at 8mm³/s to help the standard core push past the ~11mm³ limit)*.
+    *(Sets gate to 8mm³/s)*.
 
+    
 
 ## 📊 Hardware Limits: 40W vs 60W
 
