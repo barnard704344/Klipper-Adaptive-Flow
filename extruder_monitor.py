@@ -23,6 +23,12 @@ class ExtruderMonitor:
         self._lookahead_lock = threading.Lock()
         self._lookahead = deque()  # entries are (e_delta_mm, duration_s, timestamp)
 
+        # Travel tracking for ooze prevention
+        self._travel_lock = threading.Lock()
+        self._pending_travel = 0.0  # Accumulated travel distance without extrusion (mm)
+        self._last_move_was_travel = False  # Track if last move was non-extruding
+        self._travel_start_time = None  # When travel sequence started
+
         # keep a tiny history of recent extrusion rates (mm/s) to allow basic
         # normalization when estimating future load
         self._recent_rates = deque(maxlen=20)
@@ -216,6 +222,9 @@ class ExtruderMonitor:
         except Exception:
             dist = 0.0
 
+        # Track travel vs extrusion for ooze prevention
+        has_extrusion = False
+
         # if extrusion present, compute delta
         if cur_e is not None:
             if self._relative_extrusion:
@@ -225,6 +234,10 @@ class ExtruderMonitor:
                 delta_e = cur_e
             else:
                 delta_e = cur_e - self._gcode_last_e
+
+            # Only count positive extrusion (not retractions)
+            if delta_e > 0:
+                has_extrusion = True
 
             # estimate duration
             duration = None
@@ -248,6 +261,21 @@ class ExtruderMonitor:
                         pass
                 except Exception:
                     pass
+
+        # Travel tracking for ooze prevention
+        with self._travel_lock:
+            if has_extrusion:
+                # Extrusion detected - reset travel accumulator
+                self._pending_travel = 0.0
+                self._last_move_was_travel = False
+                self._travel_start_time = None
+            elif dist > 0.1:  # Travel move (no extrusion, significant distance)
+                # Accumulate travel distance
+                if not self._last_move_was_travel:
+                    # Starting a new travel sequence
+                    self._travel_start_time = time.time()
+                self._pending_travel += dist
+                self._last_move_was_travel = True
 
         # update stored state
         if cur_e is not None:
@@ -453,6 +481,15 @@ class ExtruderMonitor:
         status['calibration_active'] = getattr(self, '_calibration_active', False)
         status['calibration_samples'] = len(getattr(self, '_calibration_samples', []))
         status['last_calibrated_baseline'] = getattr(self, '_last_calibrated_baseline', -1)
+        
+        # Travel tracking for ooze prevention
+        with self._travel_lock:
+            status['pending_travel'] = self._pending_travel
+            status['in_travel'] = self._last_move_was_travel
+            if self._travel_start_time is not None:
+                status['travel_duration'] = time.time() - self._travel_start_time
+            else:
+                status['travel_duration'] = 0.0
         
         return status
 
