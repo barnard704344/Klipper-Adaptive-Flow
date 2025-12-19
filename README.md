@@ -172,6 +172,46 @@ All user configuration is done via macro variables at the top of `auto_flow.cfg`
 | `variable_ramp_rate_rise` | `2.0` | Max temp increase per second (°C/s) |
 | `variable_ramp_rate_fall` | `0.2` | Max temp decrease per second (°C/s) |
 
+### Thermal Safety Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `variable_thermal_runaway_threshold` | `15.0` | Max °C above target before emergency (triggers after 3 consecutive faults) |
+| `variable_thermal_undertemp_threshold` | `10.0` | Max °C below target before warning and boost reduction |
+
+## Thermal Safety
+
+The system includes built-in thermal runaway protection that works alongside Klipper's native thermal monitoring.
+
+### How It Works
+
+1. **Overtemp Detection**: If actual temperature exceeds target by more than `thermal_runaway_threshold`:
+   - First fault: Warns user, resets boost to 0, drops to base temp
+   - 3 consecutive faults: **Emergency shutdown** (heater off, print paused)
+
+2. **Undertemp Detection**: If actual temperature falls below target by more than `thermal_undertemp_threshold`:
+   - Logs a notice
+   - Reduces boost by 50% to ease heater demand
+
+3. **Fault Recovery**: If temperature returns to safe range, fault counter resets
+
+### Thermal Commands
+
+```gcode
+AT_THERMAL_STATUS    ; Display current thermal status and fault count
+AT_RESET_STATE       ; Reset all state including thermal fault counter
+```
+
+### Emergency Response
+
+When a thermal emergency triggers:
+- Heater is turned OFF (`M104 S0`)
+- Print is PAUSED
+- Auto-Temp is DISABLED
+- Error messages are displayed
+
+Before resuming, check your hotend and thermistor for issues.
+
 ### Lookahead Boost
 
 In `auto_flow.cfg`, the lookahead boost multiplier can be adjusted:
