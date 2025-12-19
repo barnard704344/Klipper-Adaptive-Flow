@@ -30,6 +30,11 @@ class ExtruderMonitor:
         self._gcode_pos = {'X': None, 'Y': None, 'Z': None}
         self._gcode_last_e = None
         self._gcode_last_f = None
+        self._relative_extrusion = False  # M83 sets True, M82 sets False
+        
+        # Pre-compile regex for performance
+        import re
+        self._param_re = re.compile(r'([A-Za-z])([-+]?[0-9]*\.?[0-9]+)')
 
     def handle_connect(self):
         try:
@@ -95,10 +100,9 @@ class ExtruderMonitor:
         if not line:
             return
         up = line.upper().strip()
-        if not (up.startswith('G0') or up.startswith('G1')):
-            return
-        # Delegate to the existing parser logic
-        self._parse_gcode_move(line)
+        # Handle G0/G1 moves and M82/M83 extrusion mode commands
+        if up.startswith('G0') or up.startswith('G1') or up.startswith('M82') or up.startswith('M83'):
+            self._parse_gcode_move(line)
 
     # Public lookahead API (can be called from other modules)
     def add_lookahead_segment(self, e_delta_mm, duration_s):
@@ -164,33 +168,49 @@ class ExtruderMonitor:
 
     def _parse_gcode_move(self, line):
         """Parse a G0/G1 move and add to lookahead if it contains extrusion."""
-        import re
-        param_re = re.compile(r'([A-Za-z])([-+]?[0-9]*\.?[0-9]+)')
+        # Check for extrusion mode commands
+        up = line.upper().strip()
+        if up.startswith('M83'):
+            self._relative_extrusion = True
+            return
+        elif up.startswith('M82'):
+            self._relative_extrusion = False
+            return
+        
         params = {}
-        for m in param_re.finditer(line):
+        for m in self._param_re.finditer(line):
             params[m.group(1).upper()] = float(m.group(2))
 
         cur_e = params.get('E', None)
         cur_f = params.get('F', None)
 
-        # compute Euclidean distance if coordinates available
+        # compute Euclidean distance if coordinates available (works with X/Y only)
         dist = 0.0
         coords = {}
         for axis in ('X', 'Y', 'Z'):
             coords[axis] = params.get(axis, self._gcode_pos.get(axis))
 
-        if coords['X'] is not None and coords['Y'] is not None and coords['Z'] is not None:
-            try:
-                dx = coords['X'] - (self._gcode_pos['X'] if self._gcode_pos['X'] is not None else coords['X'])
-                dy = coords['Y'] - (self._gcode_pos['Y'] if self._gcode_pos['Y'] is not None else coords['Y'])
-                dz = coords['Z'] - (self._gcode_pos['Z'] if self._gcode_pos['Z'] is not None else coords['Z'])
-                dist = (dx*dx + dy*dy + dz*dz) ** 0.5
-            except Exception:
-                dist = 0.0
+        # Calculate distance with available axes (don't require all 3)
+        try:
+            dx = 0.0
+            dy = 0.0
+            dz = 0.0
+            if coords['X'] is not None and self._gcode_pos['X'] is not None:
+                dx = coords['X'] - self._gcode_pos['X']
+            if coords['Y'] is not None and self._gcode_pos['Y'] is not None:
+                dy = coords['Y'] - self._gcode_pos['Y']
+            if coords['Z'] is not None and self._gcode_pos['Z'] is not None:
+                dz = coords['Z'] - self._gcode_pos['Z']
+            dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+        except Exception:
+            dist = 0.0
 
         # if extrusion present, compute delta
         if cur_e is not None:
-            if self._gcode_last_e is None:
+            if self._relative_extrusion:
+                # In relative mode, E value IS the delta
+                delta_e = cur_e
+            elif self._gcode_last_e is None:
                 delta_e = cur_e
             else:
                 delta_e = cur_e - self._gcode_last_e
