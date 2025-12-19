@@ -49,6 +49,17 @@ class ExtruderMonitor:
                                desc="Add upcoming extrusion segment: SET_LOOKAHEAD E=<mm> D=<s> or SET_LOOKAHEAD CLEAR")
         gcode.register_command("GET_PREDICTED_LOAD", self.cmd_GET_PREDICTED_LOAD,
                                desc="Get predicted extrusion rate and estimated load using lookahead")
+        gcode.register_command("CALIBRATE_BASELINE", self.cmd_CALIBRATE_BASELINE,
+                               desc="Start baseline calibration - clears sample buffer")
+        gcode.register_command("SAMPLE_LOAD", self.cmd_SAMPLE_LOAD,
+                               desc="Add a load sample to calibration buffer")
+        gcode.register_command("FINISH_CALIBRATION", self.cmd_FINISH_CALIBRATION,
+                               desc="Calculate and save baseline from collected samples")
+        
+        # Calibration state
+        self._calibration_samples = []
+        self._calibration_active = False
+        self._last_calibrated_baseline = -1
 
         # Attempt to attach a live G-code listener using multiple methods
         hook_installed = False
@@ -365,6 +376,68 @@ class ExtruderMonitor:
         except Exception as e:
             gcmd.respond_info(f"Error reading TMC: {str(e)}")
 
+    def cmd_CALIBRATE_BASELINE(self, gcmd):
+        """Start baseline calibration - clears sample buffer."""
+        self._calibration_samples = []
+        self._calibration_active = True
+        gcmd.respond_info('Baseline calibration started. Samples will be collected.')
+        gcmd.respond_info('Run SAMPLE_LOAD during extrusion, then FINISH_CALIBRATION when done.')
+
+    def cmd_SAMPLE_LOAD(self, gcmd):
+        """Take a load sample and add to calibration buffer."""
+        if not self._calibration_active:
+            gcmd.respond_info('No calibration in progress. Run CALIBRATE_BASELINE first.')
+            return
+        try:
+            val = self._read_current_load()
+            if val >= 0:
+                self._calibration_samples.append(val)
+                gcmd.respond_info(f'Sample {len(self._calibration_samples)}: SG_RESULT={val}')
+            else:
+                gcmd.respond_info('Failed to read load (got -1)')
+        except Exception as e:
+            gcmd.respond_info(f'Error sampling: {str(e)}')
+
+    def cmd_FINISH_CALIBRATION(self, gcmd):
+        """Calculate baseline from collected samples and report result."""
+        if not self._calibration_active:
+            gcmd.respond_info('No calibration in progress.')
+            return
+        
+        if len(self._calibration_samples) < 3:
+            gcmd.respond_info(f'Need at least 3 samples (have {len(self._calibration_samples)}). Keep sampling.')
+            return
+        
+        # Calculate statistics
+        samples = self._calibration_samples
+        avg = sum(samples) / len(samples)
+        min_val = min(samples)
+        max_val = max(samples)
+        
+        # Remove outliers (values outside 2 std dev) and recalculate
+        if len(samples) >= 5:
+            std_dev = (sum((x - avg) ** 2 for x in samples) / len(samples)) ** 0.5
+            filtered = [x for x in samples if abs(x - avg) <= 2 * std_dev]
+            if len(filtered) >= 3:
+                avg = sum(filtered) / len(filtered)
+                gcmd.respond_info(f'Filtered {len(samples) - len(filtered)} outlier(s)')
+        
+        baseline = int(round(avg))
+        
+        self._calibration_active = False
+        self._last_calibrated_baseline = baseline
+        
+        gcmd.respond_info('=' * 50)
+        gcmd.respond_info(f'CALIBRATION COMPLETE')
+        gcmd.respond_info(f'Samples: {len(samples)} | Min: {min_val} | Max: {max_val}')
+        gcmd.respond_info(f'>>> BASELINE: {baseline} <<<')
+        gcmd.respond_info('')
+        gcmd.respond_info('To apply, run:')
+        gcmd.respond_info(f'  SAVE_VARIABLE VARIABLE=sensor_baseline VALUE={baseline}')
+        gcmd.respond_info('Or update auto_flow.cfg:')
+        gcmd.respond_info(f'  variable_sensor_baseline: {baseline}')
+        gcmd.respond_info('=' * 50)
+
     def get_status(self, eventtime):
         # Called by Klippy status updates; include predicted rate if available
         status = {'load': -1}
@@ -375,6 +448,12 @@ class ExtruderMonitor:
 
         pred_rate = self._predicted_extrusion_rate()
         status['predicted_extrusion_rate'] = pred_rate
+        
+        # Include calibration info
+        status['calibration_active'] = getattr(self, '_calibration_active', False)
+        status['calibration_samples'] = len(getattr(self, '_calibration_samples', []))
+        status['last_calibrated_baseline'] = getattr(self, '_last_calibrated_baseline', -1)
+        
         return status
 
 

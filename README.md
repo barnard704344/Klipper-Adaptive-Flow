@@ -1,5 +1,7 @@
 # Klipper Adaptive Flow — Lookahead Branch
 
+> **Note:** This system is designed for **E3D Revo hotends only** (Revo HF and Revo Standard).
+
 This branch adds **live G-code lookahead** to the Adaptive Flow system, enabling predictive temperature and pressure advance adjustments based on upcoming extrusion moves.
 
 ## What's New in This Branch
@@ -14,6 +16,8 @@ The `lookahead-feature` branch extends the original Adaptive Flow with:
 | **Predicted extrusion rate** | Calculates expected mm/s based on buffered moves |
 | **Proactive temp boost** | Raises temperature *before* high-flow sections arrive |
 | **Smoother transitions** | Reduces under-extrusion at flow ramp-ups |
+| **Relative extrusion support** | Handles both M82 (absolute) and M83 (relative) extrusion modes |
+| **Single-point configuration** | All user settings are macro variables at the top of `auto_flow.cfg` |
 
 ## How It Works
 
@@ -109,7 +113,66 @@ GET_PREDICTED_LOAD           ; Query predicted extrusion rate and load
 GET_EXTRUDER_LOAD            ; Query current TMC StallGuard value
 ```
 
+## Baseline Calibration
+
+The sensor baseline is the StallGuard reading when extruding freely with no resistance. Accurate calibration is essential for load detection.
+
+### Automatic Calibration (Recommended)
+
+Run the automatic calibration macro:
+
+```gcode
+AT_AUTO_CALIBRATE TEMP=220 LENGTH=50 SAMPLES=10
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `TEMP` | 220 | Temperature for calibration |
+| `LENGTH` | 50 | Total mm of filament to extrude |
+| `SAMPLES` | 10 | Number of SG readings to average |
+
+The macro will:
+1. Heat to the specified temperature
+2. Extrude filament while sampling SG_RESULT
+3. Filter outliers and calculate the average
+4. Display the recommended baseline value
+
+After calibration, save the value:
+```gcode
+SAVE_VARIABLE VARIABLE=sensor_baseline VALUE=16
+```
+
+### Manual Calibration (Legacy)
+
+For manual calibration, use:
+```gcode
+AT_CHECK_BASELINE TEMP=220
+```
+This extrudes 100mm at 50mm/s and displays raw SG values. Note the average and update `variable_sensor_baseline` in `auto_flow.cfg`.
+
 ## Tuning
+
+All user configuration is done via macro variables at the top of `auto_flow.cfg`:
+
+### Hotend & Sensor Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `variable_use_high_flow_nozzle` | `True` | `True` for Revo HF, `False` for Revo Standard |
+| `variable_sensor_baseline` | `16` | StallGuard baseline (run `AT_AUTO_CALIBRATE` to find yours) |
+| `variable_noise_filter` | `2` | Min strain delta before applying load boost (2 for Pancake, 10 for NEMA17) |
+| `variable_crash_threshold` | `10` | Load delta that triggers blob detection (10 for Pancake, 20 for NEMA17) |
+
+### Advanced Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `variable_flow_smoothing` | `0.5` | Exponential smoothing factor (0.0-1.0, higher = smoother) |
+| `variable_max_boost_limit` | `50.0` | Maximum temp boost above base (°C) |
+| `variable_ramp_rate_rise` | `2.0` | Max temp increase per second (°C/s) |
+| `variable_ramp_rate_fall` | `0.2` | Max temp decrease per second (°C/s) |
+
+### Lookahead Boost
 
 In `auto_flow.cfg`, the lookahead boost multiplier can be adjusted:
 ```jinja
@@ -127,10 +190,12 @@ max_age = 2.0  # seconds
 
 ## Compatibility
 
-- Requires TMC driver with StallGuard (e.g., TMC2209, TMC2130, TMC5160)
-- Tested on Klipper with Raspberry Pi
-- Minimal CPU overhead (host-side parsing only)
-- Works with Mainsail, Fluidd, and OctoPrint
+- **Hotend:** E3D Revo only (Revo HF or Revo Standard)
+- **TMC Driver:** Requires StallGuard support (TMC2209, TMC2130, TMC5160)
+- **Extrusion Mode:** Supports both absolute (M82) and relative (M83) extrusion
+- **Platform:** Tested on Klipper with Raspberry Pi
+- **Overhead:** Minimal CPU usage (host-side parsing only)
+- **Interfaces:** Works with Mainsail, Fluidd, and OctoPrint
 
 ## Troubleshooting
 
