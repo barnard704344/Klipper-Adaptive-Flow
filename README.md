@@ -4,7 +4,7 @@
 
 This system dynamically adjusts nozzle temperature based on real-time extrusion flow rate and upcoming G-code moves. It is specifically tuned for **E3D Revo** hotends.
 
-> **Zero TMC/StallGuard required** — Works with any printer using Klipper's native velocity tracking and G-code parsing.
+
 
 ---
 
