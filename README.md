@@ -44,9 +44,8 @@ a. Create a file named `extruder_monitor.py` in your extras directory: `~/klippe
 
 b. Install the Configuration <br/>
     - Create a file named `auto_flow.cfg` in your config directory: `~/printer_data/config/auto_flow.cfg` <br/>
-    - Copy auto_flow.cfg <br/>
-        - Note: This file contains a USER CONFIGURATION section at the top.  <br/>
-
+    - Copy auto_flow.cfg 
+    
 c. Restart klipper <br/>
     - `sudo systemctl restart klipper`
 
