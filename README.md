@@ -26,7 +26,7 @@ Automatically raises the temperature as flow rate increases.
     *   **High Flow Nozzle:** Boosts start > 15mm³/s.
 
 ### 2. Burst Protection (Noise Filtering)
-High-speed printing often involves tiny, rapid movements like **Gap Infill** or **Small Text**.
+High-speed printing often involves tiny, rapid movements like **Gap Infill**.
 *   **The Problem:** Without filtering, the script sees a 0.1-second spike to 300mm/s and immediately commands a +20°C boost. Since the move is over before the heater can react, the nozzle just overheats while idle.
 *   **The Solution:** The script applies a **Rolling Weighted Average** to the flow calculation.
     *   Sustained speed (long walls/infill) triggers the full boost.
