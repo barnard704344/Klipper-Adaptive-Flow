@@ -39,14 +39,14 @@ Automatically **lowers** Pressure Advance (PA) as the temperature rises, prevent
 ### Step 1: Install the Python Extension
 This script is required to read the TMC register data directly.
 
-a.  Create a file named `extruder_monitor.py` in your extras directory: `~/klipper/klippy/extras/extruder_monitor.py`
+a. Create a file named `extruder_monitor.py` in your extras directory: `~/klipper/klippy/extras/extruder_monitor.py`
     - Copy the extruder_monitor.py
 
-b: Install the Configuration <br/>
+b. Install the Configuration <br/>
     - Create a file named auto_flow.cfg in your config directory: ~/printer_data/config/auto_flow.cfg
     - Copy auto_flow.cfg <br/>
         - Note: This file contains a USER CONFIGURATION section at the top.  
-c: restart klipper <br/>
+c. Restart klipper <br/>
     - sudo systemctl restart klipper
 
 
