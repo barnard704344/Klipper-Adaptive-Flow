@@ -269,25 +269,26 @@ gcode:
 
 All settings are located at the **top** of `auto_flow.cfg` in the USER CONFIGURATION block.
 
-### Step 1: Optimize Motor Drivers (Highly Recommended)
+### Step 1: Install TMC Autotune (Required)
 
-NEMA 14 "Pancake" motors (LDO-36STH20) have very low inductance. Standard Klipper settings often cause them to run hot or report "0" load.
+> ⚠️ **This step is required.** NEMA 14 "Pancake" motors (LDO-36STH20) have very low inductance. Without TMC Autotune, StallGuard will report "0" load and Adaptive Flow cannot function.
 
-**Install Klipper TMC Autotune** to fix the electrical timing:
+**Install Klipper TMC Autotune:**
 
 ```bash
+cd ~
 wget https://raw.githubusercontent.com/andrewmcgr/klipper_tmc_autotune/main/install.sh
 bash install.sh
 ```
 
-Add to `printer.cfg`:
+**Add to `printer.cfg`:**
 ```ini
 [autotune_tmc extruder]
 motor: ldo-36sth20-1004ahg
 tuning_goal: performance
 ```
 
-Restart Klipper: `sudo service klipper restart`
+Restart Klipper: `sudo systemctl restart klipper`
 
 ### Step 2: Calibrate Motor Baseline
 
