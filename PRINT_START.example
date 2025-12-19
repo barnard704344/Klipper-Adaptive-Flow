@@ -5,11 +5,11 @@ gcode:
     {% set target_extruder = params.EXTRUDER|default(200)|int %}
     {% set material        = params.MATERIAL|default("PLA")|string %}
     
-    # 2. Reset
+    # 2. Reset & Prep
     AT_RESET_STATE
     AT_DISABLE
-
-    # 3. Prepare Machine (Mesh, Home, Heat)
+    
+    # 3. Standard Start Routine
     M117 Homing...
     G28
     G90
@@ -18,18 +18,20 @@ gcode:
     M140 S{target_bed}
     TEMPERATURE_WAIT SENSOR=heater_bed MINIMUM={target_bed}
 
-    M117 Meshing...
-    # (Insert your mesh code here, e.g., BED_MESH_CALIBRATE ADAPTIVE=1)
+    # Optional: Insert Mesh Logic Here
+    # BED_MESH_CALIBRATE ADAPTIVE=1
 
     M117 Heating Nozzle...
     M109 S{target_extruder}
 
-    # 4. INITIALIZE ADAPTIVE FLOW (One-Line Magic)
+    # 4. INITIALIZE ADAPTIVE FLOW (The Magic Line)
+    # This automatically sets K-Values and PA based on material
     AT_INIT_MATERIAL MATERIAL={material}
 
     # 5. Print
     M117 Printing...
-    # (Insert Prime Line code here)
+    # (Insert your preferred Prime Line code here)
+
 
 
 [gcode_macro PRINT_END]
