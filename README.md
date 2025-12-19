@@ -120,18 +120,11 @@ Works in tandem with Smart Cornering. As the temperature boosts, the plastic bec
 The system parses upcoming G-code moves to predict flow changes *before* they happen.
 - **Proactive Boosting:** Raises temperature before high-flow sections arrive
 - **Smoother Transitions:** Eliminates under-extrusion at flow ramp-ups
-- **Ooze Prevention:** Drops temp during long travels when no extrusion is coming
 
-### 7. Ooze Prevention
-Automatically drops temperature during long travel moves to reduce stringing and oozing.
-
-### 8. Smart Retraction
-Dynamic retraction distance based on current temperature boost — hotter plastic needs more retraction.
-
-### 9. Thermal Safety
+### 7. Thermal Safety
 Built-in runaway protection with emergency shutdown if temperature exceeds safe limits.
 
-### 10. Self-Learning K-Values
+### 8. Self-Learning K-Values
 The system monitors thermal response and gradually optimizes boost aggressiveness over time.
 
 ---
@@ -392,10 +385,6 @@ The system monitors thermal response and adjusts:
 
 | Command | Description |
 |---------|-------------|
-| `AT_OOZE_PREVENTION ENABLE=1/0` | Toggle ooze prevention |
-| `AT_SMART_RETRACTION ENABLE=1/0` | Toggle smart retraction |
-| `AT_SMART_RETRACT` | Perform dynamic retraction |
-| `AT_SMART_UNRETRACT` | Unretract |
 | `AT_THERMAL_STATUS` | Show thermal safety status |
 
 ### Diagnostic Commands

@@ -23,7 +23,7 @@ class ExtruderMonitor:
         self._lookahead_lock = threading.Lock()
         self._lookahead = deque()  # entries are (e_delta_mm, duration_s, timestamp)
 
-        # Travel tracking for ooze prevention
+        # Travel tracking for diagnostics
         self._travel_lock = threading.Lock()
         self._pending_travel = 0.0  # Accumulated travel distance without extrusion (mm)
         self._last_move_was_travel = False  # Track if last move was non-extruding
@@ -222,7 +222,7 @@ class ExtruderMonitor:
         except Exception:
             dist = 0.0
 
-        # Track travel vs extrusion for ooze prevention
+        # Track travel vs extrusion for diagnostics
         has_extrusion = False
 
         # if extrusion present, compute delta
@@ -262,7 +262,7 @@ class ExtruderMonitor:
                 except Exception:
                     pass
 
-        # Travel tracking for ooze prevention
+        # Travel tracking for diagnostics
         with self._travel_lock:
             if has_extrusion:
                 # Extrusion detected - reset travel accumulator
@@ -490,7 +490,7 @@ class ExtruderMonitor:
         status['calibration_samples'] = len(getattr(self, '_calibration_samples', []))
         status['last_calibrated_baseline'] = getattr(self, '_last_calibrated_baseline', -1)
         
-        # Travel tracking for ooze prevention
+        # Travel tracking for diagnostics
         with self._travel_lock:
             status['pending_travel'] = self._pending_travel
             status['in_travel'] = self._last_move_was_travel
