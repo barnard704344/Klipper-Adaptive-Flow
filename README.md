@@ -151,7 +151,20 @@ The script automatically sets the "Flow Gate" based on your nozzle type to preve
     Set `{% set use_high_flow_nozzle = False %}`.
     *(Sets gate to 8mm³/s)*.
 
-    
+
+## 🌡️ Recommended Base Temperatures
+
+When using this script, set your Slicer temperature to a standard **"Quality"** temperature (what you would use for slow perimeters or bridges).
+
+**Do not** set your slicer to a high-speed temperature (e.g., don't set PETG to 270°C). If you do, the script will try to boost on top of that, hitting the 300°C safety limit and causing errors.
+
+| Material | Slicer Base Temp | Max Safety Cap (`PRINT_START`) | Notes |
+| :--- | :--- | :--- | :--- |
+| **PLA** | **210°C** | 235°C | Best balance of cooling vs flow. |
+| **PETG** | **240°C - 245°C** | 275°C | 245°C ensures good layer bond at low speeds. |
+| **ABS / ASA** | **250°C** | 290°C | Needs heat. Boost takes it to ~275°C for strength. |
+| **PC / Nylon** | **270°C** | 300°C | **Warning:** Revo max is 300°C. Ensure `max_temp` in config allows this. |
+| **TPU** | **230°C** | 240°C | Auto-Flow is usually disabled for TPU to prevent foaming. |    
 
 ## 📊 Hardware Limits: 40W vs 60W
 
