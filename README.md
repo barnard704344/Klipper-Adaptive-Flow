@@ -138,23 +138,49 @@ The system monitors thermal response and gradually optimizes boost aggressivenes
 
 ## 📦 Installation
 
-### Step 1: Install the Python Extensions
+### Step 1: Download the Files
 
-Copy both Python modules to your Klipper extras directory:
-
+**Option A: Clone the repository (recommended)**
 ```bash
+cd ~
+git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
+cd Klipper-Adaptive-Flow
+
+# Copy Python modules to Klipper extras
 cp gcode_interceptor.py ~/klipper/klippy/extras/
 cp extruder_monitor.py ~/klipper/klippy/extras/
-```
 
-Copy the macro file to your config directory:
-
-```bash
+# Copy macro file to your config
 cp auto_flow.cfg ~/printer_data/config/
 ```
 
-Restart Klipper:
+**Option B: Download files directly**
+```bash
+# Python modules
+cd ~/klipper/klippy/extras/
+wget https://raw.githubusercontent.com/barnard704344/Klipper-Adaptive-Flow/main/gcode_interceptor.py
+wget https://raw.githubusercontent.com/barnard704344/Klipper-Adaptive-Flow/main/extruder_monitor.py
 
+# Macro file
+cd ~/printer_data/config/
+wget https://raw.githubusercontent.com/barnard704344/Klipper-Adaptive-Flow/main/auto_flow.cfg
+```
+
+**Option C: Manual creation (if wget unavailable)**
+
+Create each file using nano:
+```bash
+nano ~/klipper/klippy/extras/gcode_interceptor.py
+# Paste contents from GitHub, save with Ctrl+X, Y, Enter
+
+nano ~/klipper/klippy/extras/extruder_monitor.py
+# Paste contents from GitHub, save with Ctrl+X, Y, Enter
+
+nano ~/printer_data/config/auto_flow.cfg
+# Paste contents from GitHub, save with Ctrl+X, Y, Enter
+```
+
+Restart Klipper:
 ```bash
 sudo systemctl restart klipper
 ```
