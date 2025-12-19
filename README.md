@@ -189,6 +189,34 @@ When using this script, set your Slicer temperature to a standard **"Quality"** 
 
 
 
+## ✂️ Slicer Configuration
+
+Because this system manages Pressure Advance dynamically, you must configure your slicer specifically to avoid conflicts.
+
+### 1. Pressure Advance (Critical)
+**Disable Pressure Advance in your Slicer.**
+*   **Orca Slicer:** Set "Pressure Advance" to `0` in Filament Settings.
+*   **Prusa Slicer:** Remove any `M572` or `SET_PRESSURE_ADVANCE` commands from custom G-code.
+
+**Why?**
+The script defines the **Base PA** inside the `AT_INIT_MATERIAL` macro (found in `auto_flow.cfg`).
+1.  Open `auto_flow.cfg`.
+2.  Scroll to the bottom (`AT_INIT_MATERIAL`).
+3.  Update the `pa_val` for each material to match your calibrated values.
+    *   *Example:* If your calibrated PA for PETG is 0.055, change `{% set pa_val = 0.060 %}` to `0.055`.
+
+### 2. Max Volumetric Speed (Safety Caps)
+To ensure the script works within safe physical limits, set the **Max Volumetric Speed** in your Slicer's Filament Settings based on your hardware combination:
+
+| Heater Core | Nozzle Type | Recommended Slicer Limit | Bottleneck |
+| :--- | :--- | :--- | :--- |
+| **40W** | Standard (Brass) | **18 mm³/s** | Melt Zone Geometry |
+| **60W** | Standard (Brass) | **20 mm³/s** | Melt Zone Geometry |
+| **40W** | **High Flow (HF)** | **24 mm³/s** | Heater Power (Watts) |
+| **60W** | **High Flow (HF)** | **32 mm³/s** | *Maximum Performance* |
+
+*Note: These values are higher than official E3D ratings because the Adaptive Flow script actively overrides thermal limitations.*
+
 
 
 ## 📊 Hardware Limits: 40W vs 60W
