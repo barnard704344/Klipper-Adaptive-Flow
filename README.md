@@ -138,26 +138,32 @@ We need to tell the script what "Zero Load" looks like for your specific motor.
 ---
 
 ### Step 3: Select Nozzle Type
-The script uses different "Flow Gates" depending on your hotend geometry.
+The script uses different "Flow Gates" depending on which Revo nozzle you are installed.
 
-*   **Revo High Flow / Rapido / Volcano:**
+*   **Revo High Flow (HF):**
     Set `{% set use_high_flow_nozzle = True %}`.
-    *(Boosts start at 15mm³/s)*.
+    *(Boosts start at 15mm³/s to push past the ~25mm³ limit)*.
 
-*   **Standard Revo / V6 / Dragon SF:**
+*   **Revo Standard (Brass/ObX):**
     Set `{% set use_high_flow_nozzle = False %}`.
-    *(Boosts start at 8mm³/s to help the standard core keep up)*.
+    *(Boosts start at 8mm³/s to help the standard core push past the ~11mm³ limit)*.
 
-## 📊 Hardware Limits & Benchmarks
 
-The Adaptive Flow script works by demanding **extra heat** during fast moves. However, it cannot create energy that your hardware is unable to supply. If your heater hits 100% duty cycle, the temperature will drop regardless of what the script commands.
+## 📊 Hardware Limits: 40W vs 60W
 
-### Case Study: E3D Revo High Flow (40W)
-*   **Setup:** Revo HF 0.4mm Nozzle + **40W** HeaterCore.
-*   **Material:** PETG.
-*   **Script Settings:** Standard Auto-Flow defaults.
-*   **Result:** Flow remains stable up to **~26 mm³/s**.
-*   **The Ceiling:** Above 26 mm³/s, the 40W heater saturates (hits 100% power). It physically cannot generate enough heat to maintain the temperature, let alone boost it.
+This script functions by commanding a **Temperature Spike** during high-speed moves. For this to work, your heater must have **"Headroom"** (unused power capacity). If your heater is already running at 100% power just to maintain the base temperature, the script cannot add more heat, and the temperature will drop.
+
+### The Revo Benchmark (PETG / 0.4mm Nozzle)
+
+*   **Scenario A: 40W HeaterCore**
+    *   At **~26 mm³/s**, the 40W heater hits 100% Duty Cycle.
+    *   **Result:** The script attempts to boost the temperature, but the heater physically cannot supply more energy.
+    *   **Hard Limit:** 26 mm³/s.
+
+*   **Scenario B: 60W HeaterCore**
+    *   At **~26 mm³/s**, the 60W heater is likely running at only 70% Duty Cycle.
+    *   **Result:** When the script demands a boost for a 300mm/s sprint, the heater has the **reserve power** to deliver that heat instantly.
+    *   **New Limit:** ~32+ mm³/s.
 
 **Conclusion:**
-To push reliably past **30 mm³/s** while using this script, a **60W HeaterCore** is required. The 60W core provides the necessary "headroom" for the script to apply Turbo/Boost commands during high-speed maneuvers without bottoming out the temperature.
+To reliably print above **26 mm³/s** with this system, the **60W HeaterCore** is mandatory. The 40W core simply lacks the overhead required for dynamic temperature boosting at those flow rates.
