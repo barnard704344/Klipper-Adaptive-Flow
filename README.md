@@ -36,15 +36,6 @@ Add to your `printer.cfg`:
 
 ## Usage
 
-### Option 1: Direct (simple)
-
-Add to your **slicer start G-code** (after heating commands):
-```gcode
-AT_START
-```
-
-### Option 2: PRINT_START macro (recommended)
-
 **OrcaSlicer/PrusaSlicer start G-code:**
 ```gcode
 PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer] MATERIAL=[filament_type]
@@ -69,8 +60,6 @@ gcode:
 ```gcode
 AT_END
 ```
-
-Material is auto-detected from temperature, but you can pass it explicitly if preferred.
 
 ## Configuration
 
