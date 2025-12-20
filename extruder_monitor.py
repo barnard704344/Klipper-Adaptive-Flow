@@ -6,7 +6,7 @@ import os
 from collections import deque
 
 # Community defaults configuration
-COMMUNITY_DEFAULTS_URL = "https://raw.githubusercontent.com/CaptainKirk7/Klipper-Adaptive-Flow/main/community_defaults.json"
+COMMUNITY_DEFAULTS_URL = "https://raw.githubusercontent.com/barnard704344/Klipper-Adaptive-Flow/main/community_defaults.json"
 CACHE_FILE = "~/printer_data/config/adaptive_flow_community_cache.json"
 CACHE_MAX_AGE_HOURS = 24
 

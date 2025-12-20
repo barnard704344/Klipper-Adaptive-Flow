@@ -370,7 +370,7 @@ GET_COMMUNITY_DEFAULTS MATERIAL=PETG HF=1
 ```
 
 The community defaults file is located at:
-`https://github.com/CaptainKirk7/Klipper-Adaptive-Flow/blob/main/community_defaults.json`
+`https://github.com/barnard704344/Klipper-Adaptive-Flow/blob/main/community_defaults.json`
 
 ---
 
