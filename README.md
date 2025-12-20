@@ -114,6 +114,8 @@ All other settings auto-configure based on material detection.
 | `AT_SET_PA MATERIAL=PLA PA=0.045` | Save calibrated PA value |
 | `AT_LIST_PA` | List saved PA values |
 
+📄 **[Pressure Advance Guide](docs/pressure-advance.md)** — Default values, auto-learning, and PA commands
+
 ---
 
 ## Self-Learning
