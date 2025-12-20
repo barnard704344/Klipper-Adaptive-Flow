@@ -7,6 +7,7 @@ Automatic temperature control for E3D Revo hotends on Klipper. Dynamically boost
 - **Boosts temperature** when flow rate increases (fast infill, thick lines)
 - **Maintains heat** through corners to prevent bulging
 - **Pre-heats** before high-flow sections using G-code lookahead
+- **Skips first layer** to preserve consistent squish
 - **Monitors heater duty cycle** to prevent requesting more than your heater can deliver
 - **Learns optimal values** over time for your printer
 
