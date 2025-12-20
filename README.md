@@ -69,18 +69,6 @@ Edit `auto_flow.cfg` — the only setting most users need to change:
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
 ```
 
-### Material Detection
-
-Based on your slicer temperature:
-
-| Temperature | Material |
-|-------------|----------|
-| 280°C+ | PC |
-| 240-280°C | ABS/ASA/NYLON |
-| 220-240°C | PETG |
-| 180-220°C | PLA |
-| <180°C | TPU |
-
 ### Default Pressure Advance
 
 Applied automatically if you haven't calibrated:
