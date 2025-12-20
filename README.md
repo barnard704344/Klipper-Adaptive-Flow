@@ -47,7 +47,7 @@ AT_START
 
 **OrcaSlicer/PrusaSlicer start G-code:**
 ```gcode
-PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer]
+PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer] MATERIAL=[filament_type]
 ```
 
 **In printer.cfg:**
@@ -56,6 +56,7 @@ PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperat
 gcode:
     {% set BED = params.BED|default(60)|int %}
     {% set EXTRUDER = params.EXTRUDER|default(200)|int %}
+    {% set MATERIAL = params.MATERIAL|default("PLA")|string %}
     
     G28                      ; Home
     M190 S{BED}              ; Wait for bed
@@ -69,7 +70,7 @@ gcode:
 AT_END
 ```
 
-Material is auto-detected from the extruder temperature — no need to pass it.
+Material is auto-detected from temperature, but you can pass it explicitly if preferred.
 
 ## Configuration
 
