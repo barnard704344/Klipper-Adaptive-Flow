@@ -38,8 +38,6 @@ Automatically adjusts nozzle temperature based on real-time extrusion flow — h
 
 5. **Restart Klipper and print.** That's it.
 
-📄 **[Slicer Configuration Guide](docs/slicer-configuration.md)** — Complete setup for PrusaSlicer, Cura, OrcaSlicer
-
 ---
 
 ## How It Works
@@ -104,8 +102,6 @@ All other settings auto-configure based on material detection.
 | 180-220°C | PLA |
 | <180°C | TPU |
 
-📄 **[Materials & Temperature Guide](docs/materials-temperature.md)** — Flow gates, K-values, thermal behavior, and safety
-
 ---
 
 ## Commands
@@ -117,8 +113,6 @@ All other settings auto-configure based on material detection.
 | `AT_STATUS` | Show current state, flow, boost level |
 | `AT_SET_PA MATERIAL=PLA PA=0.045` | Save calibrated PA value |
 | `AT_LIST_PA` | List saved PA values |
-
-📄 **[Pressure Advance Guide](docs/pressure-advance.md)** — Default values, auto-learning, and PA commands
 
 ---
 
