@@ -1,118 +1,68 @@
 # Klipper Adaptive Flow
 
-Automatic temperature control for E3D Revo hotends on Klipper. Dynamically boosts nozzle temperature during high-flow sections and maintains heat through corners — no manual tuning required.
+Automatic temperature control for E3D Revo hotends on Klipper. Dynamically boosts nozzle temperature during high-flow sections — no manual tuning required.
 
-## What It Does
+## Features
 
-- **Boosts temperature** when flow rate increases (fast infill, thick lines)
-- **Maintains heat** through corners to prevent bulging
-- **Pre-heats** before high-flow sections using G-code lookahead
-- **Skips first layer** to preserve consistent squish
-- **Monitors heater duty cycle** to prevent requesting more than your heater can deliver
-- **Learns optimal values** over time for your printer
+- **Flow-based boost** — increases temp for fast infill/thick lines
+- **Speed-based boost** — increases temp for fast thin walls
+- **First layer skip** — consistent squish on layer 1
+- **Heater monitoring** — won't request more than your heater can deliver
+- **Self-learning** — optimizes over time
 
 ## Installation
 
 ```bash
-# On your Klipper host (Pi, etc.)
-cd ~
-git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
+cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
 cd Klipper-Adaptive-Flow
-
-# Install
 cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
 cp auto_flow.cfg ~/printer_data/config/
-
-# Restart Klipper
 sudo systemctl restart klipper
 ```
 
-Add to your `printer.cfg`:
-
+Add to `printer.cfg`:
 ```ini
 [include auto_flow.cfg]
 [gcode_interceptor]
 [extruder_monitor]
 ```
 
-## Usage
+## Slicer Setup
 
-**OrcaSlicer/PrusaSlicer start G-code:**
+**Start G-code:**
 ```gcode
 PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer] MATERIAL=[filament_type]
 ```
 
-**OrcaSlicer/PrusaSlicer end G-code:**
+**End G-code:**
 ```gcode
 PRINT_END
 ```
 
-See example macros:
-- [PRINT_START.example](PRINT_START.example) — Generic
-- [PRINT_START_VORON24.example](PRINT_START_VORON24.example) — Voron 2.4 with QGL, Eddy, SFS
+See [PRINT_START.example](PRINT_START.example) or [PRINT_START_VORON24.example](PRINT_START_VORON24.example).
 
 ## Configuration
 
-Edit `auto_flow.cfg` — the only setting most users need to change:
-
+One setting for most users — edit `auto_flow.cfg`:
 ```ini
-variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
+variable_use_high_flow_nozzle: True   # False for standard Revo
 ```
 
-### Default Pressure Advance
-
-Applied automatically if you haven't calibrated:
-
-| Material | PA |
-|----------|-----|
-| PLA | 0.040 |
-| PETG | 0.060 |
-| ABS/ASA | 0.050 |
-| TPU | 0.200 |
-
-Save your own calibrated values:
-```gcode
-AT_SET_PA MATERIAL=PLA PA=0.045
-```
+**[Full configuration reference →](docs/CONFIGURATION.md)**
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `AT_START` | Enable adaptive flow (after heating) |
-| `AT_END` | Disable and save learned values |
-| `AT_STATUS` | Show current state, flow rate, boost |
+| `AT_STATUS` | Show current state, flow, boost |
 | `AT_SET_PA MATERIAL=X PA=Y` | Save calibrated PA |
-| `AT_LIST_PA` | Show all saved PA values |
-
-## How It Works
-
-1. Monitors live extrusion velocity from Klipper
-2. Parses upcoming G-code to predict flow changes
-3. Calculates temperature boost: `flow_rate × material_k_value`
-4. Only boosts above material-specific thresholds (flow gates)
-5. Heats fast, cools slow to maintain heat through corners
-6. Watches heater PWM — freezes boost at 95%, reduces at 99%
-7. Self-learns optimal K-values (only when heater isn't saturated)
+| `AT_LIST_PA` | Show all PA values |
 
 ## Requirements
 
-- **E3D Revo** hotend (High Flow or Standard)
-- **Klipper** firmware
-- 40W or 60W heater core
-
-No TMC StallGuard required — uses velocity data only.
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `auto_flow.cfg` | Klipper macros and settings |
-| `extruder_monitor.py` | G-code parsing and lookahead |
-| `gcode_interceptor.py` | Hooks into Klipper G-code stream |
-| `community_defaults.json` | Shared material settings |
-| `PRINT_START.example` | Generic PRINT_START/END macros |
-| `PRINT_START_VORON24.example` | Voron 2.4 specific macros |
+- E3D Revo hotend (HF or Standard)
+- Klipper firmware
+- 40W or 60W heater
 
 ## License
 
