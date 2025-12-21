@@ -430,9 +430,9 @@ class ExtruderMonitor:
 
     def _predicted_extrusion_rate(self):
         """Return predicted extrusion rate in mm/s computed from current lookahead."""
-        # Expire stale entries older than 2 seconds
+        # Expire stale entries older than 5 seconds
         now = time.time()
-        max_age = 2.0
+        max_age = 5.0
         with self._lookahead_lock:
             # Remove expired entries from the front of the deque
             while self._lookahead and (now - self._lookahead[0][2]) > max_age:
