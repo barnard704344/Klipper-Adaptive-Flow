@@ -41,6 +41,7 @@ CONFIG = {
     'auto_apply': False,  # Set True to auto-apply safe suggestions
     'notify_console': True,  # Send results to Klipper console
     'log_file': os.path.expanduser('~/printer_data/logs/adaptive_flow_hook.log'),
+    'provider': None,  # LLM provider: openai, anthropic, gemini, github, ollama, openrouter
 }
 
 # Setup logging
@@ -72,11 +73,13 @@ def send_console_message(message):
         logger.debug(f"Console message failed: {e}")
 
 
-def run_analysis(auto_apply=False):
+def run_analysis(auto_apply=False, provider=None):
     """Run the print analysis script."""
     cmd = [sys.executable, CONFIG['analyze_script']]
     if auto_apply:
         cmd.append('--auto')
+    if provider:
+        cmd.extend(['--provider', provider])
     
     try:
         result = subprocess.run(
@@ -143,7 +146,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         
                         # Run analysis
                         send_console_message("AF: Analyzing print session...")
-                        run_analysis(auto_apply=CONFIG['auto_apply'])
+                        run_analysis(auto_apply=CONFIG['auto_apply'], provider=CONFIG['provider'])
                     
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in webhook body: {body}")
@@ -175,8 +178,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
             
             params = parse_qs(parsed.query)
             auto_apply = params.get('auto', ['0'])[0] == '1'
+            provider = params.get('provider', [CONFIG['provider']])[0]
             
-            success = run_analysis(auto_apply=auto_apply)
+            success = run_analysis(auto_apply=auto_apply, provider=provider)
             
             self.send_response(200 if success else 500)
             self.send_header('Content-Type', 'application/json')
@@ -204,7 +208,7 @@ def monitor_print_state():
                 logger.info("Print completed (detected via polling)")
                 time.sleep(3)  # Let logs flush
                 send_console_message("AF: Analyzing print session...")
-                run_analysis(auto_apply=CONFIG['auto_apply'])
+                run_analysis(auto_apply=CONFIG['auto_apply'], provider=CONFIG['provider'])
             
             last_state = state
             
@@ -217,19 +221,40 @@ def monitor_print_state():
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Adaptive Flow Moonraker Integration')
+    parser = argparse.ArgumentParser(
+        description='Adaptive Flow Moonraker Integration',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+LLM Providers:
+  openai      GPT-4 (set OPENAI_API_KEY)
+  anthropic   Claude (set ANTHROPIC_API_KEY)
+  gemini      Google Gemini (set GOOGLE_API_KEY)
+  github      GitHub Models (set GITHUB_TOKEN) - free!
+  ollama      Local Ollama (free, no key)
+  openrouter  Multi-model (set OPENROUTER_API_KEY)
+
+Examples:
+  python3 moonraker_hook.py --provider github
+  python3 moonraker_hook.py --provider ollama --auto-apply
+        """
+    )
     parser.add_argument('--mode', choices=['webhook', 'poll'], default='poll',
                         help='webhook=listen for notifications, poll=check print state')
     parser.add_argument('--port', type=int, default=CONFIG['listen_port'],
                         help='Port for webhook listener')
     parser.add_argument('--auto-apply', action='store_true',
                         help='Auto-apply safe suggestions')
+    parser.add_argument('--provider', '-p',
+                        choices=['openai', 'anthropic', 'gemini', 'github', 'ollama', 'openrouter'],
+                        help='LLM provider to use')
     args = parser.parse_args()
     
     CONFIG['auto_apply'] = args.auto_apply
     CONFIG['listen_port'] = args.port
+    CONFIG['provider'] = args.provider
     
-    logger.info(f"Starting Adaptive Flow hook (mode={args.mode}, auto_apply={args.auto_apply})")
+    provider_str = args.provider or 'default (set ADAPTIVE_FLOW_API_KEY)'
+    logger.info(f"Starting Adaptive Flow hook (mode={args.mode}, provider={provider_str}, auto_apply={args.auto_apply})")
     
     if args.mode == 'webhook':
         server = HTTPServer(('0.0.0.0', args.port), WebhookHandler)
