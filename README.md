@@ -7,7 +7,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Dynamic temperature** — flow/speed/acceleration-based boost
 - **Dynamic PA** — scales with temperature boost automatically
 - **5-second lookahead** — pre-heats before flow spikes
-- **Per-material profiles** — PLA, PETG, ABS, TPU, Nylon, PC (user-editable)
+- **Per-material profiles** — PLA, PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
 - **Self-learning** — optimizes K-values and PA over time
