@@ -151,12 +151,19 @@ The Adaptive Flow system dynamically adjusts extruder temperature based on:
 {csv_sample}
 ```
 
+## Klipper Log Issues (if any)
+Relevant warnings/errors from klippy.log during this print:
+```
+{klippy_issues}
+```
+
 ## Analysis Tasks
 1. **Thermal Response**: Is the heater keeping up? (Look at avg_pwm, max_pwm)
 2. **Boost Effectiveness**: Is boost appropriate for the flow rates seen?
 3. **Under-extrusion Risk**: High speed + low boost = possible under-extrusion
 4. **Over-heating Risk**: High boost + high PWM = heater saturated
 5. **PA Adjustment**: Is dynamic PA helping or hurting?
+6. **Klipper Issues**: Any timing, communication, or hardware issues in the log?
 
 ## Output Format
 Provide your analysis in this exact JSON format:
@@ -176,6 +183,7 @@ Provide your analysis in this exact JSON format:
         }
     ],
     "print_quality_prediction": "excellent|good|fair|poor",
+    "klippy_concerns": "Any concerns from the Klipper log, or 'none'",
     "notes": "Any additional observations"
 }
 ```
@@ -216,6 +224,100 @@ def load_csv_sample(csv_path, max_rows=100):
         return f"Error reading CSV: {e}"
 
 
+def extract_klippy_issues(start_time_str, duration_min):
+    """Extract relevant warnings/errors from klippy.log during the print.
+    
+    Looks for:
+    - Thermal warnings (heater, temp)
+    - Timing issues (Timer too close, MCU)
+    - Motor/driver issues (stepper, tmc)
+    - Print issues (pause, resume, error)
+    - Any !! error lines
+    """
+    import re
+    from datetime import datetime, timedelta
+    
+    klippy_log = os.path.expanduser('~/printer_data/logs/klippy.log')
+    if not os.path.exists(klippy_log):
+        return "klippy.log not found"
+    
+    # Parse start time
+    try:
+        start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+    except:
+        return "Could not parse print start time"
+    
+    end_dt = start_dt + timedelta(minutes=duration_min + 5)  # Add 5 min buffer
+    
+    # Keywords to look for (case insensitive)
+    issue_patterns = [
+        r'!!',  # Error prefix
+        r'thermal',
+        r'heater',
+        r'temp.*error',
+        r'temp.*warning',
+        r'timer too close',
+        r'mcu.*error',
+        r'mcu.*timeout',
+        r'stepper',
+        r'tmc.*error',
+        r'driver',
+        r'pause',
+        r'shutdown',
+        r'lost communication',
+        r'overdue',
+    ]
+    pattern = re.compile('|'.join(issue_patterns), re.IGNORECASE)
+    
+    # Klipper log timestamp format: "Stats 1703350000.123"
+    # We need to match this to print time
+    issues = []
+    
+    try:
+        # Only read last 2MB of log to stay reasonable
+        max_bytes = 2 * 1024 * 1024
+        file_size = os.path.getsize(klippy_log)
+        
+        with open(klippy_log, 'r', errors='ignore') as f:
+            if file_size > max_bytes:
+                f.seek(file_size - max_bytes)
+                f.readline()  # Skip partial line
+            
+            for line in f:
+                # Check if line matches any issue pattern
+                if pattern.search(line):
+                    # Try to extract timestamp
+                    ts_match = re.search(r'Stats (\d+\.\d+)', line)
+                    if ts_match:
+                        try:
+                            log_dt = datetime.fromtimestamp(float(ts_match.group(1)))
+                            # Check if within print window
+                            if start_dt <= log_dt <= end_dt:
+                                # Clean up the line
+                                clean_line = line.strip()[:200]  # Limit length
+                                if clean_line not in issues:  # Dedupe
+                                    issues.append(clean_line)
+                        except:
+                            pass
+                    elif '!!' in line:
+                        # Always include error lines
+                        clean_line = line.strip()[:200]
+                        if clean_line not in issues:
+                            issues.append(clean_line)
+        
+        # Limit to most relevant issues
+        if len(issues) > 30:
+            issues = issues[:30] + [f"... and {len(issues) - 30} more issues"]
+        
+        if not issues:
+            return "No issues found in klippy.log during print"
+        
+        return '\n'.join(issues)
+        
+    except Exception as e:
+        return f"Error reading klippy.log: {e}"
+
+
 def find_latest_summary():
     """Find the most recent summary JSON file."""
     pattern = os.path.join(CONFIG['log_dir'], '*_summary.json')
@@ -229,7 +331,7 @@ def find_latest_summary():
     return files[0]
 
 
-def call_llm_api(prompt, summary_json, csv_sample):
+def call_llm_api(prompt, summary_json, csv_sample, klippy_issues=""):
     """Call the LLM API with the analysis prompt."""
     import urllib.request
     import ssl
@@ -247,6 +349,7 @@ def call_llm_api(prompt, summary_json, csv_sample):
     # Build the full prompt
     full_prompt = ANALYSIS_PROMPT.replace('{summary_json}', json.dumps(summary_json, indent=2))
     full_prompt = full_prompt.replace('{csv_sample}', csv_sample)
+    full_prompt = full_prompt.replace('{klippy_issues}', klippy_issues or "No issues extracted")
     
     # Prepare API request
     headers = {
@@ -431,17 +534,30 @@ Examples:
     csv_path = summary_path.replace('_summary.json', '.csv')
     csv_sample = load_csv_sample(csv_path)
     
+    # Extract klippy.log issues for this print
+    start_time = summary.get('start_time', '')
+    duration_min = summary.get('duration_min', 60)
+    klippy_issues = extract_klippy_issues(start_time, duration_min)
+    
     # Print quick stats
     print(f"Material: {summary.get('material', 'Unknown')}")
     print(f"Duration: {summary.get('duration_min', 0)} minutes")
     print(f"Samples: {summary.get('samples', 0)}")
     print(f"Avg Boost: {summary.get('avg_boost', 0)}°C, Max: {summary.get('max_boost', 0)}°C")
     print(f"Avg PWM: {summary.get('avg_pwm', 0):.1%}, Max: {summary.get('max_pwm', 0):.1%}")
+    
+    # Show klippy issues if any
+    if "No issues" not in klippy_issues and "not found" not in klippy_issues:
+        issue_count = klippy_issues.count('\n') + 1
+        print(f"Klippy Issues: {issue_count} relevant log entries found")
+    else:
+        print(f"Klippy Issues: None")
+    
     print("-" * 60)
     print("Sending to LLM for analysis...")
     
     # Call LLM
-    response = call_llm_api(ANALYSIS_PROMPT, summary, csv_sample)
+    response = call_llm_api(ANALYSIS_PROMPT, summary, csv_sample, klippy_issues)
     
     if not response:
         return 1
@@ -472,6 +588,11 @@ Examples:
             severity = issue.get('severity', 'unknown').upper()
             icon = '🔴' if severity == 'HIGH' else '🟡' if severity == 'MEDIUM' else '🟢'
             print(f"  {icon} [{severity}] {issue.get('description', '')}")
+    
+    # Show klippy concerns from log analysis
+    klippy_concerns = analysis.get('klippy_concerns', '')
+    if klippy_concerns and klippy_concerns.lower() != 'none':
+        print(f"\n🔧 Klipper Log Concerns: {klippy_concerns}")
     
     suggestions = analysis.get('suggestions', [])
     if suggestions:
