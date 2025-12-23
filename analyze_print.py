@@ -94,6 +94,36 @@ CONFIG = {
 }
 
 
+def save_analysis_results(analysis, summary_file, provider, model):
+    """Save analysis results to a JSON file alongside the print data."""
+    try:
+        # Create analysis filename based on the print summary file
+        if summary_file:
+            base_name = os.path.basename(summary_file).replace('print_', 'analysis_').replace('.json', '')
+        else:
+            base_name = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        analysis_file = os.path.join(CONFIG['log_dir'], f"{base_name}.json")
+        
+        # Add metadata
+        result = {
+            'analyzed_at': datetime.now().isoformat(),
+            'provider': provider,
+            'model': model,
+            'source_file': summary_file,
+            'analysis': analysis
+        }
+        
+        with open(analysis_file, 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        print(f"\n💾 Analysis saved to: {analysis_file}")
+        return analysis_file
+    except Exception as e:
+        print(f"\n⚠️  Failed to save analysis: {e}")
+        return None
+
+
 def configure_provider(provider_name):
     """Configure API settings for a specific provider."""
     if provider_name not in PROVIDERS:
@@ -572,6 +602,11 @@ Examples:
     
     if not analysis:
         return 1
+    
+    # Save analysis results
+    provider_name = args.provider if args.provider else 'custom'
+    model_name = CONFIG.get('model', 'unknown')
+    save_analysis_results(analysis, summary_file, provider_name, model_name)
     
     # Display results
     print("\n" + "=" * 60)
