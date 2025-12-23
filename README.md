@@ -42,11 +42,13 @@ PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperat
 PRINT_END
 ```
 
+**Important:** Disable Pressure Advance in your slicer — this system handles PA dynamically.
+
 See [PRINT_START.example](PRINT_START.example) for a complete example.
 
 ## Printer Macros
 
-Add `AT_START MATERIAL=` after heating and `AT_END` at print end:
+Add `AT_START` after heating and `AT_END` at print end. The `MATERIAL=` parameter is optional but recommended:
 
 ```ini
 [gcode_macro PRINT_START]

@@ -176,23 +176,34 @@ variable_pa_learning_rate: 0.002       # PA adjustment rate
 
 ---
 
-## Slicer Material Parameter
+## Slicer Setup
 
-Pass the material from your slicer to get the correct profile:
+### Material Parameter (Optional)
+
+Pass the material from your slicer for accurate profile selection. If omitted, the system auto-detects from extruder temperature.
 
 **OrcaSlicer / PrusaSlicer / SuperSlicer:**
 ```gcode
-AT_START MATERIAL={filament_type[0]}
+PRINT_START ... MATERIAL={filament_type[0]}
 ```
 
 **Cura:**
 ```gcode
-AT_START MATERIAL={material_type}
+PRINT_START ... MATERIAL={material_type}
 ```
 
-**BambuStudio:**
-```gcode
-AT_START MATERIAL={filament_type[0]}
+### Disable Slicer Pressure Advance
+
+**Important:** This system handles Pressure Advance dynamically. Disable PA in your slicer to avoid conflicts:
+
+| Slicer | Setting |
+|--------|---------|
+| OrcaSlicer | Printer Settings → Advanced → Enable pressure advance = OFF |
+| PrusaSlicer | Not applicable (PA is in firmware) |
+| Cura | Disable any PA plugin |
+| SuperSlicer | Printer Settings → Extruder → Pressure Advance = 0 |
+
+The system uses `default_pa` from the material profile (or your calibrated value via `AT_SET_PA`).
 ```
 
 The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base profiles.
