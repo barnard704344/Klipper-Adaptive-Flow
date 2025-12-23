@@ -19,44 +19,76 @@ Everything else auto-configures based on your material.
 ### Temperature Control
 - **Flow boost**: Temperature increases with volumetric flow (mm³/s)
 - **Speed boost**: Extra heating for high-speed thin walls (>100mm/s)
-- **Acceleration boost**: Detects corners via motion analysis
+- **Acceleration boost**: Detects flow changes via motion analysis
 - **Lookahead**: 5-second prediction buffer for pre-heating
 
 ### Dynamic Pressure Advance
 PA automatically scales with temperature boost:
 ```
-PA_adjusted = PA_base × (1 - boost × 0.01)
+PA_adjusted = PA_base - (boost × pa_boost_k)
 ```
 
-Example: Base PA 0.060, +20°C boost → PA becomes 0.048
+Example: Base PA 0.060, +20°C boost, pa_boost_k 0.001 → PA becomes 0.040
 
 Higher temperature = lower filament viscosity = less PA needed.
 
 ---
 
-## Material Settings
+## Material Profiles
 
-### Per-Material Defaults
+### User-Editable Profiles
 
-These are applied automatically when `AT_START` detects your material:
+Material profiles are defined in `material_profiles.cfg`. Edit this file to customize boost curves for your filaments.
 
-| Material | Flow K | Flow Gate | Max Temp | PA | Ramp Rise | Ramp Fall |
-|----------|--------|-----------|----------|-----|-----------|-----------|
-| PLA | 0.80 (HF) / 0.40 (Std) | 10 / 8 mm³/s | 235°C | 0.040 | 4.0°C/s | 1.0°C/s |
-| PETG | 2.00 (HF) / 1.80 (Std) | 14 / 10 mm³/s | 280°C | 0.060 | 4.0°C/s | 1.5°C/s |
-| ABS/ASA | 0.80 | 12 / 9 mm³/s | 290°C | 0.050 | 4.0°C/s | 1.0°C/s |
-| TPU | 0.00 (disabled) | 5 mm³/s | 240°C | 0.200 | 2.0°C/s | 0.5°C/s |
-| NYLON | 0.90 | 12 / 9 mm³/s | 275°C | 0.055 | 4.0°C/s | 1.0°C/s |
-| PC | 0.70 | 11 / 8 mm³/s | 300°C | 0.045 | 4.0°C/s | 1.0°C/s |
+Each profile is a Klipper macro:
+```ini
+[gcode_macro _AF_PROFILE_PETG]
+variable_flow_k: 1.20           # Temp boost per mm³/s of flow
+variable_speed_boost_k: 0.08    # Temp boost per mm/s above 100mm/s
+variable_max_boost: 40.0        # Maximum temp boost cap (°C)
+variable_max_temp: 280          # Absolute temp safety limit
+variable_flow_gate: 14.0        # Flow threshold for HF nozzle (mm³/s)
+variable_flow_gate_std: 10.0    # Flow threshold for std nozzle (mm³/s)
+variable_pa_boost_k: 0.0012     # PA reduction per °C of boost
+variable_ramp_rise: 4.0         # Heat up rate (°C/s)
+variable_ramp_fall: 1.5         # Cool down rate (°C/s)
+variable_default_pa: 0.060      # Default PA if not calibrated
+gcode:
+```
 
-### What Each Setting Does
+### Default Profiles
 
-- **Flow K**: Temperature boost per mm³/s of flow (higher = more aggressive)
-- **Flow Gate**: Minimum flow to trigger boost (based on E3D Revo datasheet)
-- **Max Temp**: Safety limit for that material
-- **PA**: Default Pressure Advance value
-- **Ramp Rise**: How fast temperature increases (°C/second)
-- **Ramp Fall**: How fast temperature decreases (°C/second) — higher = less corner bulging
+| Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA |
+|----------|--------|---------|-----------|----------|----------|------------|
+| **PLA** | 0.80 | 0.06 | 25°C | 235°C | 4.0/2.0 | 0.040 |
+| **PETG** | 1.20 | 0.08 | 40°C | 280°C | 4.0/1.5 | 0.060 |
+| **ABS** | 0.80 | 0.10 | 50°C | 290°C | 5.0/3.0 | 0.050 |
+| **ASA** | 0.80 | 0.10 | 50°C | 295°C | 5.0/3.0 | 0.050 |
+| **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.200 |
+| **Nylon** | 0.90 | 0.07 | 35°C | 275°C | 3.0/1.5 | 0.055 |
+| **PC** | 0.70 | 0.10 | 50°C | 310°C | 5.0/2.5 | 0.045 |
+
+### What Each Parameter Does
+
+| Parameter | Effect |
+|-----------|--------|
+| `flow_k` | °C boost per mm³/s of volumetric flow above gate |
+| `speed_boost_k` | °C boost per mm/s of linear speed above 100mm/s |
+| `max_boost` | Hard cap on total temperature boost |
+| `max_temp` | Absolute max temperature (safety limit) |
+| `flow_gate` | Minimum flow to trigger boost (HF nozzle) |
+| `flow_gate_std` | Minimum flow to trigger boost (standard nozzle) |
+| `pa_boost_k` | PA reduction per °C of boost |
+| `ramp_rise` | How fast temp can increase (°C/s) |
+| `ramp_fall` | How fast temp can decrease (°C/s) |
+| `default_pa` | PA value if user hasn't calibrated |
+
+### Adding Custom Materials
+
+1. Copy any profile in `material_profiles.cfg`
+2. Rename to `[gcode_macro _AF_PROFILE_YOURMATERIAL]`
+3. Adjust the values
+4. Use: `AT_START MATERIAL=YOURMATERIAL`
 
 ---
 
@@ -64,24 +96,24 @@ These are applied automatically when `AT_START` detects your material:
 
 Edit these variables in `auto_flow.cfg` if needed:
 
-### Temperature Control
+### Global Limits
 
 ```ini
-variable_max_boost_limit: 50.0        # Max boost above base temp (°C)
-variable_ramp_rate_rise: 4.0          # Heat up speed (°C/s)
-variable_ramp_rate_fall: 1.0          # Cool down speed (°C/s) — increase to reduce corner bulging
+variable_max_boost_limit: 50.0        # Global max boost (°C) - overridden by material
+variable_ramp_rate_rise: 4.0          # Default heat up speed (°C/s)
+variable_ramp_rate_fall: 1.0          # Default cool down speed (°C/s)
 ```
 
-### Speed-Based Boost
+### Speed Boost
 
 For high-speed thin walls that don't trigger flow-based boost:
 
 ```ini
 variable_speed_boost_threshold: 100.0  # Linear speed (mm/s) to trigger boost
-variable_speed_boost_k: 0.05           # °C per mm/s above threshold
+variable_speed_boost_k: 0.08           # Default °C per mm/s above threshold
 ```
 
-Example: 200mm/s outer walls → `(200-100) × 0.05 = +5°C` boost
+Example at 300mm/s: `(300-100) × 0.08 = +16°C` boost
 
 ### Flow Smoothing
 
@@ -96,28 +128,12 @@ variable_first_layer_skip: True        # Disable boost on first layer
 variable_first_layer_height: 0.3       # Z height considered "first layer"
 ```
 
-First layer detection uses Z height as fallback when slicer layer info is unavailable.
-
 ### Thermal Safety
 
 ```ini
 variable_thermal_runaway_threshold: 15.0   # Max overshoot before emergency
 variable_thermal_undertemp_threshold: 10.0 # Max undershoot before warning
 ```
-
-### Heater Duty Cycle Limits
-
-Automatically managed — no config needed:
-- **95%+ PWM**: Freeze boost at current level
-- **99%+ PWM**: Actively reduce boost
-- **<90% PWM**: Safe for K-value learning
-
-### Lookahead Settings
-
-Configured in `extruder_monitor.py`:
-- **Buffer size**: 5 seconds of predicted flow
-- **Update rate**: 1 second loop
-- **Weight**: 0.8 (80% confidence in prediction)
 
 ### Self-Learning
 
@@ -136,8 +152,8 @@ variable_pa_learning_rate: 0.002       # PA adjustment rate
 
 | Command | Description |
 |---------|-------------|
-| `AT_START` | Enable adaptive flow (call after heating) |
-| `AT_END` | Stop loop, save learned values (call before TURN_OFF_HEATERS) |
+| `AT_START MATERIAL=X` | Enable adaptive flow with material profile |
+| `AT_END` | Stop loop, save learned values |
 | `AT_STATUS` | Show current state, flow, boost, PA, PWM |
 
 ### PA Commands
@@ -160,44 +176,26 @@ variable_pa_learning_rate: 0.002       # PA adjustment rate
 
 ---
 
-## AT_STATUS Output Explained
+## Slicer Material Parameter
 
+Pass the material from your slicer to get the correct profile:
+
+**OrcaSlicer / PrusaSlicer / SuperSlicer:**
+```gcode
+AT_START MATERIAL={filament_type[0]}
 ```
-╔═══════════════════════════════════════════╗
-║      ADAPTIVE FLOW STATUS                 ║
-╠═══════════════════════════════════════════╣
-║ System: ✓ ENABLED                         ║  # Is the system active?
-║ Hotend: Revo HF (High Flow)               ║  # Which nozzle type
-╠═══════════════════════════════════════════╣
-║ TEMPERATURE                               ║
-╠═══════════════════════════════════════════╣
-║ Actual:     252.1°C                       ║  # Current hotend temp
-║ Target:     252.0°C                       ║  # What we're requesting
-║ Base:       230.0°C                       ║  # Slicer's base temp
-║ Boost:     +22.0°C                        ║  # Current boost amount
-║ Max Limit:  280°C                         ║  # Safety cap
-╠═══════════════════════════════════════════╣
-║ FLOW & SPEED                              ║
-╠═══════════════════════════════════════════╣
-║ Flow K:       2.00                        ║  # Boost multiplier
-║ Flow Gate:   14.0 mm³/s                   ║  # Min flow for boost
-║ Current Flow: 8.34 mm³/s                  ║  # Live volumetric flow
-║ Toolhead:   169.2 mm/s (>100)             ║  # Linear speed
-║ Predicted:    9.63 mm/s                   ║  # 5s lookahead prediction
-╠═══════════════════════════════════════════╣
-║ PRESSURE ADVANCE                          ║
-╠═══════════════════════════════════════════╣
-║ Base PA:     0.060                        ║  # Material default
-║ Current PA:  0.048                        ║  # Adjusted for temp boost
-╠═══════════════════════════════════════════╣
-║ SAFETY                                    ║
-╠═══════════════════════════════════════════╣
-║ Heater PWM:    86%                        ║  # Heater duty cycle
-║ Z Height:     9.43 mm                     ║  # Current Z
-║ First Layer: NO                           ║  # First layer mode?
-║ Thermal Faults: 0/3                       ║  # Fault counter
-╚═══════════════════════════════════════════╝
+
+**Cura:**
+```gcode
+AT_START MATERIAL={material_type}
 ```
+
+**BambuStudio:**
+```gcode
+AT_START MATERIAL={filament_type[0]}
+```
+
+The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base profiles.
 
 ---
 
@@ -210,33 +208,32 @@ variable_pa_learning_rate: 0.002       # PA adjustment rate
 - Is heater at 95%+ PWM? (boost frozen)
 
 ### Corner bulging
-- Increase `ramp_rate_fall` (faster cooldown) — PETG defaults to 1.5°C/s
-- Check PA is being applied (AT_STATUS shows current PA)
-- Reduce `speed_k` for less aggressive boost
+- Increase `ramp_fall` in material profile (faster cooldown)
+- PETG defaults to 1.5°C/s, try 2.0°C/s
+- Check PA is being applied (`AT_STATUS` shows current PA)
 
 ### Under-extrusion at high speed
-- Speed boost should help (default: +5°C at 200mm/s)
-- Increase `speed_boost_k` if needed
+- Speed boost should help (PETG: +16°C at 300mm/s)
+- Increase `speed_boost_k` in material profile
 - Check heater isn't saturated (PWM < 95%)
 
-### PA showing 0.000
-- Fixed in latest version — update `auto_flow.cfg`
-- Run `AT_LIST_PA` to verify defaults are set
+### Stringing on PETG
+- Decrease `ramp_fall` (slower cooldown prevents ooze)
+- Increase `speed_boost_k` for more heat during fast moves
 
 ### Heaters stay on after print
-- Fixed in latest version — `AT_END` now stops the control loop immediately
 - Ensure `AT_END` is called before `TURN_OFF_HEATERS` in PRINT_END
 
 ---
 
 ## Data Sources
 
-### Native Klipper (no Python required)
-- `printer.motion_report.live_extruder_velocity` → volumetric flow
+### Native Klipper
+- `printer.motion_report.live_extruder_velocity` → filament speed
 - `printer.motion_report.live_velocity` → toolhead speed
 - `printer.extruder.power` → heater PWM %
 - `printer.toolhead.position.z` → Z height
 
-### Python Extras (enhanced features)
-- `extruder_monitor.py` → 5-second lookahead, corner detection
+### Python Extras
+- `extruder_monitor.py` → 5-second lookahead, logging
 - `gcode_interceptor.py` → G-code stream parsing

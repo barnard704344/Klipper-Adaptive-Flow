@@ -645,11 +645,6 @@ class ExtruderMonitor:
             status['last_corner_angle'] = 0
             status['last_corner_age'] = -1
         
-        # Community defaults status
-        status['community_defaults_loaded'] = self._community_defaults is not None
-        if self._community_defaults:
-            status['community_defaults_version'] = self._community_defaults.get('_version', 'unknown')
-        
         return status
 
 

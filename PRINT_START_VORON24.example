@@ -52,8 +52,8 @@ gcode:
     G90
     G92 E0
     
-    # Enable Adaptive Flow
-    AT_START
+    # Enable Adaptive Flow with material from slicer
+    AT_START MATERIAL={MATERIAL}
 
 
 [gcode_macro PRINT_END]
