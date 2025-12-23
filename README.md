@@ -48,21 +48,22 @@ See [PRINT_START.example](PRINT_START.example) for a complete example.
 
 ## Printer Macros
 
-Add `AT_START` after heating and `AT_END` at print end. The `MATERIAL=` parameter is optional but recommended:
+Add `AT_START` after heating and `AT_END` at print end:
 
 ```ini
 [gcode_macro PRINT_START]
 gcode:
-    {% set MATERIAL = params.MATERIAL|default("PLA")|string %}
     # ... your heating, homing, leveling ...
-    AT_START MATERIAL={MATERIAL}      # Enable adaptive flow
+    AT_START MATERIAL={params.MATERIAL}   # Enable adaptive flow
 
 [gcode_macro PRINT_END]
 gcode:
-    AT_END                            # Stop loop, save learned values
-    TURN_OFF_HEATERS                  # Must come AFTER AT_END
+    AT_END                                # Stop loop, save learned values
+    TURN_OFF_HEATERS                      # Must come AFTER AT_END
     # ... your cooldown, park, etc ...
 ```
+
+The slicer passes MATERIAL directly — AT_START handles it. If not provided, falls back to temperature detection.
 
 > **Important:** Call `AT_END` *before* `TURN_OFF_HEATERS` to ensure the control loop stops first.
 
