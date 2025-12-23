@@ -122,6 +122,8 @@ python3 analyze_print.py --provider github   # Uses GitHub Copilot (free)
 
 Supports: OpenAI, Anthropic, Google Gemini, GitHub Models, Ollama (local), OpenRouter
 
+**[Full analysis documentation →](docs/ANALYSIS.md)**
+
 ## Requirements
 
 - E3D Revo hotend (HF or Standard)
