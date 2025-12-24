@@ -49,7 +49,7 @@ class ExtruderMonitor:
         import re
         self._param_re = re.compile(r'([A-Za-z])([-+]?[0-9]*\.?[0-9]+)')
         
-        # Corner detection for PA learning
+        # Corner detection for analysis
         self._last_move_vector = None  # (dx, dy) of previous move
         self._corner_events = deque(maxlen=50)  # (timestamp, angle_degrees, had_extrusion)
         self._corner_lock = threading.Lock()
@@ -294,7 +294,7 @@ class ExtruderMonitor:
                 self._pending_travel += dist
                 self._last_move_was_travel = True
 
-        # Corner detection for PA learning
+        # Corner detection for analysis
         # Only track corners during extrusion moves with significant XY movement
         if has_extrusion and dist > 0.5:
             current_vector = (dx, dy)
@@ -635,7 +635,7 @@ class ExtruderMonitor:
             else:
                 status['travel_duration'] = 0.0
         
-        # Corner detection for PA learning
+        # Corner detection for analysis
         status['corner_count_5s'] = self.get_corner_count(5.0)
         recent_corners = self.get_recent_corners(5.0)
         if recent_corners:

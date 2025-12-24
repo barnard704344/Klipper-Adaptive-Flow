@@ -320,7 +320,8 @@ Examples:
     CONFIG['provider'] = args.provider
     
     provider_str = args.provider or 'auto-detect from API key'
-    config_path = os.path.join(SCRIPT_DIR, 'analysis_config.cfg')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, 'analysis_config.cfg')
     if os.path.exists(config_path):
         logger.info(f"Config loaded from: {config_path}")
     logger.info(f"Starting Adaptive Flow hook (mode={args.mode}, provider={provider_str}, auto_apply={args.auto_apply})")

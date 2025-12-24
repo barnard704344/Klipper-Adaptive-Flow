@@ -135,15 +135,6 @@ variable_thermal_runaway_threshold: 15.0   # Max overshoot before emergency
 variable_thermal_undertemp_threshold: 10.0 # Max undershoot before warning
 ```
 
-### Self-Learning
-
-```ini
-variable_self_learning_enabled: True   # Auto-adjust K-values over time
-variable_learning_rate: 0.05           # How aggressively to adjust
-variable_pa_auto_learning: True        # Experimental PA auto-tuning
-variable_pa_learning_rate: 0.002       # PA adjustment rate
-```
-
 ---
 
 ## Commands Reference
@@ -153,7 +144,7 @@ variable_pa_learning_rate: 0.002       # PA adjustment rate
 | Command | Description |
 |---------|-------------|
 | `AT_START MATERIAL=X` | Enable adaptive flow with material profile |
-| `AT_END` | Stop loop, save learned values |
+| `AT_END` | Stop adaptive flow loop |
 | `AT_STATUS` | Show current state, flow, boost, PA, PWM |
 
 ### PA Commands

@@ -10,8 +10,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Per-material profiles** — PLA, PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
-- **Self-learning** — optimizes K-values and PA over time
-- **Print analysis** — LLM-powered tuning suggestions (optional)
+- **Print analysis** — AI-powered tuning suggestions (optional)
 
 ## Installation
 
