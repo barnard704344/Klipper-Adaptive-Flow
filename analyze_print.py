@@ -508,8 +508,10 @@ def call_llm_api(prompt, summary_json, csv_sample, klippy_issues=""):
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(CONFIG['api_url'], data=data, headers=headers)
         
-        # Longer timeout for local Ollama which can be slow
-        timeout = 180 if 'ollama' in CONFIG.get('api_url', '') or 'localhost:11434' in CONFIG.get('api_url', '') else 60
+        # Longer timeout for local Ollama which can be slow on large prompts
+        api_url = CONFIG.get('api_url', '')
+        is_ollama = ':11434' in api_url or CONFIG.get('ollama_url')
+        timeout = 300 if is_ollama else 60
         ctx = ssl.create_default_context()
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:
             result = json.loads(response.read().decode('utf-8'))
