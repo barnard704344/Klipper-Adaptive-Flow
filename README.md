@@ -114,15 +114,20 @@ High flow detected → Boost +20°C → Temp 250°C, PA 0.048
 
 ## Optional: Print Analysis
 
-After printing, analyze performance with LLM-powered suggestions:
+After printing, get AI-powered suggestions to improve your settings:
+
 ```bash
 cd ~/Klipper-Adaptive-Flow
-python3 analyze_print.py --provider github   # Uses GitHub Copilot (free)
+python3 analyze_print.py
 ```
 
-Supports: OpenAI, Anthropic, Google Gemini, GitHub Models, Ollama (local), OpenRouter
+The AI analyzes your print data and suggests parameter adjustments:
+- Suggestions marked **[✓ SAFE]** can be auto-applied
+- Suggestions marked **[⚠ MANUAL]** require your review
 
-**[Full analysis documentation →](docs/ANALYSIS.md)**
+**Providers:** GitHub Models (free), OpenAI, Anthropic
+
+**[Setup guide →](docs/ANALYSIS.md)**
 
 ## Requirements
 

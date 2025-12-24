@@ -39,21 +39,50 @@ python3 analyze_print.py
 That's it! You'll see suggestions like:
 
 ```
-💡 SUGGESTIONS
-┌─────────────────┬─────────┬───────────┬──────────────────────────┐
-│ Parameter       │ Current │ Suggested │ Reason                   │
-├─────────────────┼─────────┼───────────┼──────────────────────────┤
-│ speed_boost_k   │ 0.08    │ 0.10      │ Better heat at high speed│
-└─────────────────┴─────────┴───────────┴──────────────────────────┘
+💡 Suggestions (2):
+
+  1. speed_boost_k
+     Current: 0.08 → Suggested: 0.10
+     Reason: Better heat at high speed
+     [⚠ MANUAL]
+
+  2. ramp_rate_fall  
+     Current: 1.0 → Suggested: 1.5
+     Reason: Smoother temperature transitions
+     [✓ SAFE]
 ```
+
+### Understanding Suggestion Types
+
+| Tag | Meaning | Action |
+|-----|---------|--------|
+| **[✓ SAFE]** | Conservative change, low risk | Can be auto-applied |
+| **[⚠ MANUAL]** | Significant change | Review and apply manually |
+
+Safe changes are small adjustments that won't cause print failures. Manual changes are larger or affect critical parameters.
+
+---
+
+## Auto-Apply Safe Suggestions
+
+To automatically apply safe suggestions after analysis:
+
+```ini
+[analysis]
+auto_apply: true
+```
+
+When enabled:
+- **[✓ SAFE]** suggestions → Applied to your config automatically
+- **[⚠ MANUAL]** suggestions → Shown for you to review
 
 ---
 
 ## Other Providers
 
-If you prefer to use a paid provider for higher quality analysis:
+If you prefer a paid provider:
 
-**OpenAI** (paid):
+**OpenAI / ChatGPT** (paid):
 ```ini
 [analysis]
 provider: openai
