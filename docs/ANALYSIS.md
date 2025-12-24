@@ -175,13 +175,19 @@ All settings are in `analysis_config.cfg`:
 
 ```ini
 [analysis]
-# Which AI service to use
+# Which AI service to use (github, ollama, openai, anthropic, gemini, openrouter)
 provider: github
 
-# Your API key
+# Your API key (not needed for ollama)
 api_key: ghp_your_token
 
-# Automatically apply safe suggestions (optional)
+# Model to use (optional - uses provider default if blank)
+model: 
+
+# Ollama server URL (only if running on another machine)
+ollama_url: http://localhost:11434
+
+# Automatically apply safe suggestions
 auto_apply: false
 
 # Show results in Klipper console
