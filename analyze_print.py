@@ -3,27 +3,21 @@
 Adaptive Flow Print Analyzer
 
 Analyzes print session logs and provides tuning suggestions via LLM.
-Works with OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, and more.
+Uses high-quality LLM providers for accurate, reliable analysis.
 
 Usage:
-    python3 analyze_print.py                    # Analyze most recent print
-    python3 analyze_print.py <summary.json>     # Analyze specific print
-    python3 analyze_print.py --auto             # Auto-apply safe suggestions
-    python3 analyze_print.py --provider gemini  # Use specific provider
+    python3 analyze_print.py                     # Analyze most recent print
+    python3 analyze_print.py <summary.json>      # Analyze specific print
+    python3 analyze_print.py --auto              # Auto-apply safe suggestions
+    python3 analyze_print.py --provider openai   # Use specific provider
     
 Configuration:
-    Set environment variables or edit CONFIG below:
-    - ADAPTIVE_FLOW_API_KEY: Your API key
-    - ADAPTIVE_FLOW_API_URL: API endpoint (or use --provider)
-    - ADAPTIVE_FLOW_MODEL: Model name
+    Edit analysis_config.cfg with your provider and API key.
     
 Supported providers (use --provider flag):
-    openai      - OpenAI GPT-4 (requires OPENAI_API_KEY or ADAPTIVE_FLOW_API_KEY)
-    anthropic   - Anthropic Claude (requires ANTHROPIC_API_KEY)
-    gemini      - Google Gemini (requires GOOGLE_API_KEY or GEMINI_API_KEY)
-    github      - GitHub Copilot/Models (requires GITHUB_TOKEN)
-    ollama      - Local Ollama (free, no key needed)
-    openrouter  - OpenRouter multi-model (requires OPENROUTER_API_KEY)
+    github      - GitHub Models (FREE, recommended) - requires GITHUB_TOKEN
+    openai      - OpenAI GPT-4o-mini - requires OPENAI_API_KEY
+    anthropic   - Anthropic Claude - requires ANTHROPIC_API_KEY
 """
 
 import os
@@ -36,43 +30,25 @@ from datetime import datetime
 # =============================================================================
 # PROVIDER CONFIGURATIONS
 # =============================================================================
+# Only quality LLM providers that produce reliable, accurate analysis
 PROVIDERS = {
+    'github': {
+        'api_url': 'https://models.inference.ai.azure.com/chat/completions',
+        'model': 'gpt-4o-mini',
+        'key_env': ['GITHUB_TOKEN', 'GH_TOKEN'],
+        'format': 'openai',
+    },
     'openai': {
         'api_url': 'https://api.openai.com/v1/chat/completions',
         'model': 'gpt-4o-mini',
-        'key_env': ['OPENAI_API_KEY', 'ADAPTIVE_FLOW_API_KEY'],
+        'key_env': ['OPENAI_API_KEY'],
         'format': 'openai',
     },
     'anthropic': {
         'api_url': 'https://api.anthropic.com/v1/messages',
         'model': 'claude-3-haiku-20240307',
-        'key_env': ['ANTHROPIC_API_KEY', 'ADAPTIVE_FLOW_API_KEY'],
+        'key_env': ['ANTHROPIC_API_KEY'],
         'format': 'anthropic',
-    },
-    'gemini': {
-        'api_url': 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-        'model': 'gemini-2.0-flash-exp',
-        'key_env': ['GOOGLE_API_KEY', 'GEMINI_API_KEY', 'ADAPTIVE_FLOW_API_KEY'],
-        'format': 'openai',  # Gemini supports OpenAI-compatible format
-    },
-    'github': {
-        'api_url': 'https://models.inference.ai.azure.com/chat/completions',
-        'model': 'gpt-4o-mini',  # GitHub Models offers various models
-        'key_env': ['GITHUB_TOKEN', 'GH_TOKEN', 'ADAPTIVE_FLOW_API_KEY'],
-        'format': 'openai',
-    },
-    'ollama': {
-        'api_url': 'http://localhost:11434/v1/chat/completions',
-        'model': 'llama3.1',
-        'key_env': [],  # No key needed
-        'format': 'openai',
-        'default_key': 'ollama',
-    },
-    'openrouter': {
-        'api_url': 'https://openrouter.ai/api/v1/chat/completions',
-        'model': 'anthropic/claude-3-haiku',
-        'key_env': ['OPENROUTER_API_KEY', 'ADAPTIVE_FLOW_API_KEY'],
-        'format': 'openai',
     },
 }
 
@@ -144,8 +120,7 @@ def load_config_file():
                                 CONFIG['analyze_klippy_log'] = value
                             elif key == 'max_csv_rows' and isinstance(value, int):
                                 CONFIG['max_csv_rows'] = value
-                            elif key == 'ollama_url':
-                                CONFIG['ollama_url'] = value
+
                 
                 return config_path
             except Exception as e:
@@ -222,12 +197,7 @@ def configure_provider(provider_name):
     if not CONFIG.get('model'):
         CONFIG['model'] = provider['model']
     
-    # Use custom Ollama URL if configured
-    if provider_name == 'ollama' and CONFIG.get('ollama_url'):
-        ollama_base = CONFIG['ollama_url'].rstrip('/')
-        CONFIG['api_url'] = f"{ollama_base}/v1/chat/completions"
-    
-    # API key priority: config file > environment variable > default
+    # API key priority: config file > environment variable
     # Config file key is already in CONFIG['api_key'] from load_config_file()
     if not CONFIG.get('api_key'):
         # Fall back to environment variables
@@ -236,13 +206,9 @@ def configure_provider(provider_name):
             if key:
                 CONFIG['api_key'] = key
                 break
-        
-        # Last resort: provider default (e.g., 'ollama' for ollama provider)
-        if not CONFIG.get('api_key'):
-            CONFIG['api_key'] = provider.get('default_key', '')
     
-    if not CONFIG.get('api_key') and provider_name != 'ollama':
-        print(f"Warning: No API key found for {provider_name}")
+    if not CONFIG.get('api_key'):
+        print(f"Error: No API key found for {provider_name}")
         print(f"Set 'api_key' in analysis_config.cfg or environment variable")
         return False
     
@@ -463,12 +429,12 @@ def call_llm_api(prompt, summary_json, csv_sample, klippy_issues=""):
     
     if not CONFIG['api_key']:
         print("ERROR: No API key configured.")
-        print("Set ADAPTIVE_FLOW_API_KEY environment variable or use --provider flag.")
+        print("Edit analysis_config.cfg or use --provider flag.")
         print("\nAvailable providers:")
         for name, info in PROVIDERS.items():
             key_vars = ', '.join(info.get('key_env', ['none']))
             print(f"  --provider {name:12} (keys: {key_vars})")
-        print("\nFor free local analysis: --provider ollama (requires Ollama installed)")
+        print("\nRecommended: --provider github (free with any GitHub account)")
         return None
     
     # Build the full prompt
@@ -508,17 +474,13 @@ def call_llm_api(prompt, summary_json, csv_sample, klippy_issues=""):
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(CONFIG['api_url'], data=data, headers=headers)
         
-        # Longer timeout for local Ollama which can be slow on large prompts
-        api_url = CONFIG.get('api_url', '')
-        is_ollama = ':11434' in api_url or CONFIG.get('ollama_url')
-        timeout = 300 if is_ollama else 60
         ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
             result = json.loads(response.read().decode('utf-8'))
         
         # Extract content based on API format
         if 'choices' in result:
-            # OpenAI format (also used by Gemini, GitHub, Ollama)
+            # OpenAI format (GitHub, OpenAI)
             content = result['choices'][0]['message']['content']
         elif 'content' in result:
             # Anthropic format
@@ -606,20 +568,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Providers:
-  openai      GPT-4 (set OPENAI_API_KEY)
-  anthropic   Claude (set ANTHROPIC_API_KEY)  
-  gemini      Google Gemini (set GOOGLE_API_KEY or GEMINI_API_KEY)
-  github      GitHub Models (set GITHUB_TOKEN) - free with GitHub account!
-  ollama      Local Ollama (free, no key needed)
-  openrouter  Multi-model (set OPENROUTER_API_KEY)
+  github      GitHub Models (FREE!) - set GITHUB_TOKEN
+  openai      GPT-4o-mini - set OPENAI_API_KEY
+  anthropic   Claude - set ANTHROPIC_API_KEY  
 
 Configuration:
-  Edit analysis_config.cfg to set provider and API key, or use --provider flag.
+  Edit analysis_config.cfg to set provider and API key.
 
 Examples:
   python3 analyze_print.py                     # Uses config file
-  python3 analyze_print.py --provider github   # Override provider
-  python3 analyze_print.py --provider ollama --auto
+  python3 analyze_print.py --provider github   # Use GitHub Models
+  python3 analyze_print.py --auto              # Auto-apply safe suggestions
         """
     )
     parser.add_argument('summary_file', nargs='?', help='Path to summary JSON (default: most recent)')
@@ -637,7 +596,7 @@ Examples:
         for name, info in PROVIDERS.items():
             key_vars = ', '.join(info.get('key_env', ['none needed']))
             has_key = any(os.environ.get(k) for k in info.get('key_env', []))
-            status = "✓ configured" if has_key or name == 'ollama' else "✗ no key"
+            status = "✓ configured" if has_key else "✗ no key"
             print(f"  {name:12} model: {info['model']:30} [{status}]")
             print(f"               keys: {key_vars}")
         if config_file:

@@ -41,7 +41,7 @@ CONFIG = {
     'auto_apply': False,  # Set True to auto-apply safe suggestions
     'notify_console': True,  # Send results to Klipper console
     'log_file': os.path.expanduser('~/printer_data/logs/adaptive_flow_hook.log'),
-    'provider': None,  # LLM provider: openai, anthropic, gemini, github, ollama, openrouter
+    'provider': None,  # LLM provider: github (free), openai, anthropic
     'hook_mode': 'poll',  # poll or webhook
 }
 
@@ -287,16 +287,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 LLM Providers:
-  openai      GPT-4 (set OPENAI_API_KEY)
-  anthropic   Claude (set ANTHROPIC_API_KEY)
-  gemini      Google Gemini (set GOOGLE_API_KEY)
-  github      GitHub Models (set GITHUB_TOKEN) - free!
-  ollama      Local Ollama (free, no key)
-  openrouter  Multi-model (set OPENROUTER_API_KEY)
+  github      GitHub Models (FREE!) - set GITHUB_TOKEN
+  openai      GPT-4o-mini - set OPENAI_API_KEY
+  anthropic   Claude - set ANTHROPIC_API_KEY
 
 Examples:
   python3 moonraker_hook.py --provider github
-  python3 moonraker_hook.py --provider ollama --auto-apply
+  python3 moonraker_hook.py --auto-apply
         """
     )
     
@@ -313,7 +310,7 @@ Examples:
     parser.add_argument('--auto-apply', action='store_true', default=default_auto_apply,
                         help=f'Auto-apply safe suggestions (default: {default_auto_apply})')
     parser.add_argument('--provider', '-p',
-                        choices=['openai', 'anthropic', 'gemini', 'github', 'ollama', 'openrouter'],
+                        choices=['github', 'openai', 'anthropic'],
                         default=default_provider,
                         help='LLM provider to use (from config or env)')
     args = parser.parse_args()

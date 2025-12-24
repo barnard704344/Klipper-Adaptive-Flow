@@ -49,14 +49,22 @@ That's it! You'll see suggestions like:
 
 ---
 
-## Alternative: Use Ollama (100% Local, No Internet)
+## Other Providers
 
-**Running Ollama on another computer?** Add the URL:
+If you prefer to use a paid provider for higher quality analysis:
 
+**OpenAI** (paid):
 ```ini
 [analysis]
-provider: ollama
-ollama_url: http://192.168.1.100:11434
+provider: openai
+api_key: sk-your-openai-key
+```
+
+**Anthropic Claude** (paid):
+```ini
+[analysis]
+provider: anthropic
+api_key: sk-ant-your-anthropic-key
 ```
 
 ---
@@ -148,17 +156,14 @@ All settings are in `analysis_config.cfg`:
 
 ```ini
 [analysis]
-# Which AI service to use (github, ollama, openai, anthropic, gemini, openrouter)
+# Which AI service to use: github (FREE), openai, anthropic
 provider: github
 
-# Your API key (not needed for ollama)
+# Your API key
 api_key: ghp_your_token
 
 # Model to use (optional - uses provider default if blank)
 model: 
-
-# Ollama server URL (only if running on another machine)
-ollama_url: http://localhost:11434
 
 # Automatically apply safe suggestions
 auto_apply: false
@@ -186,18 +191,6 @@ Your API key might be wrong. Double-check:
 1. No extra spaces in `analysis_config.cfg`
 2. Token hasn't expired (GitHub tokens can expire)
 3. Token was copied completely
-
-### Ollama not working
-
-Make sure Ollama is running:
-```bash
-ollama list
-```
-
-If it shows models, it's working. If not:
-```bash
-ollama serve
-```
 
 ### Need More Help?
 
