@@ -288,7 +288,7 @@ def main():
         epilog="""
 LLM Providers:
   github      GitHub Models (FREE!) - set GITHUB_TOKEN
-  openai      GPT-4o-mini - set OPENAI_API_KEY
+  openai      ChatGPT / GPT-4o-mini - set OPENAI_API_KEY
   anthropic   Claude - set ANTHROPIC_API_KEY
 
 Examples:

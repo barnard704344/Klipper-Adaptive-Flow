@@ -16,7 +16,7 @@ Configuration:
     
 Supported providers (use --provider flag):
     github      - GitHub Models (FREE, recommended) - requires GITHUB_TOKEN
-    openai      - OpenAI GPT-4o-mini - requires OPENAI_API_KEY
+    openai      - ChatGPT / OpenAI GPT-4o-mini - requires OPENAI_API_KEY  
     anthropic   - Anthropic Claude - requires ANTHROPIC_API_KEY
 """
 
@@ -569,7 +569,7 @@ def main():
         epilog="""
 Providers:
   github      GitHub Models (FREE!) - set GITHUB_TOKEN
-  openai      GPT-4o-mini - set OPENAI_API_KEY
+  openai      ChatGPT / GPT-4o-mini - set OPENAI_API_KEY
   anthropic   Claude - set ANTHROPIC_API_KEY  
 
 Configuration:
