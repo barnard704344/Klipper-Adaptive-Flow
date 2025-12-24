@@ -1,204 +1,113 @@
-# Print Analysis (LLM-Powered)
+# Print Analysis
 
-Analyze your print sessions using AI to get tuning suggestions for Adaptive Flow parameters.
+After each print, you can get AI-powered suggestions to improve your settings. The AI looks at your print data and tells you what to adjust.
 
-## Quick Start
+---
+
+## Quick Setup (5 minutes)
+
+### Step 1: Get a Free API Key
+
+The easiest option is **GitHub Models** (free):
+
+1. Go to https://github.com/settings/tokens
+2. Click "Generate new token (classic)"
+3. Give it a name like "Adaptive Flow"
+4. Don't check any boxes - no permissions needed
+5. Click "Generate token"
+6. Copy the token (starts with `ghp_`)
+
+### Step 2: Add Your Key
+
+Edit the file `analysis_config.cfg` in your Klipper-Adaptive-Flow folder:
+
+```ini
+[analysis]
+provider: github
+api_key: ghp_paste_your_token_here
+```
+
+### Step 3: Run Analysis
+
+After a print completes:
 
 ```bash
 cd ~/Klipper-Adaptive-Flow
-python3 analyze_print.py --provider github   # Uses GitHub Models (free)
-```
-
----
-
-## Supported LLM Providers
-
-| Provider | Cost | API Key Environment Variable |
-|----------|------|------------------------------|
-| **GitHub Models** | Free | `GITHUB_TOKEN` |
-| **Ollama** | Free (local) | None required |
-| **OpenAI** | Paid | `OPENAI_API_KEY` |
-| **Anthropic** | Paid | `ANTHROPIC_API_KEY` |
-| **Google Gemini** | Free tier | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
-| **OpenRouter** | Pay-per-use | `OPENROUTER_API_KEY` |
-
-### Setting API Keys
-
-You can set API keys in two ways:
-
-**Option 1: Configuration File (Recommended)**
-
-Edit `analysis_config.cfg` in the project root:
-```ini
-[analysis]
-provider: github
-api_key: ghp_your_token_here
-```
-
-**Option 2: Environment Variables**
-
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-export GITHUB_TOKEN="ghp_your_token_here"
-export OPENAI_API_KEY="sk-your-key-here"
-```
-
-Or set before running:
-```bash
-GITHUB_TOKEN=ghp_xxx python3 analyze_print.py --provider github
-```
-
----
-
-## Configuration File
-
-All analysis settings can be configured in `analysis_config.cfg`:
-
-```ini
-[analysis]
-# LLM provider: github, ollama, openai, anthropic, gemini, openrouter
-provider: github
-
-# API key (overrides environment variables)
-api_key: 
-
-# Model name (optional - uses provider default if blank)
-model: 
-
-# Auto-apply safe suggestions
-auto_apply: false
-
-# Show analysis in Klipper console
-notify_console: true
-
-# Moonraker URL
-moonraker_url: http://localhost:7125
-
-# Hook mode: poll or webhook
-hook_mode: poll
-
-# Webhook port
-webhook_port: 7126
-
-# Log directory
-log_dir: ~/printer_data/logs/adaptive_flow
-
-# Max log files to keep
-max_log_files: 20
-
-# Include klippy.log in analysis
-analyze_klippy_log: true
-
-# Max CSV rows to send to LLM
-max_csv_rows: 100
-```
-
----
-
-## Usage
-
-### Analyze Most Recent Print
-
-```bash
 python3 analyze_print.py
-python3 analyze_print.py --provider github
-python3 analyze_print.py --provider ollama   # Local, no API key
 ```
 
-### Analyze Specific Print
-
-```bash
-python3 analyze_print.py ~/printer_data/logs/adaptive_flow/20231215_143022_benchy_summary.json
-```
-
-### Auto-Apply Safe Suggestions
-
-```bash
-python3 analyze_print.py --auto
-```
-
-Only applies changes marked `safe_to_auto_apply: true` by the LLM.
-
----
-
-## What Gets Analyzed
-
-The system analyzes:
-
-1. **Print Session Summary** (`*_summary.json`)
-   - Duration, material, temperatures
-   - Average/max boost, PWM, flow
-   - Thermal lag measurements
-
-2. **Detailed CSV Data** (`*.csv`)
-   - Per-second: temp, boost, flow, speed, PWM, PA, Z
-   - Last 100 rows sampled for LLM context
-
-3. **Klipper Log** (`klippy.log`)
-   - Thermal warnings
-   - Timer/MCU errors
-   - Driver issues
-   - Any `!!` error lines
-
----
-
-## Example Output
+That's it! You'll see suggestions like:
 
 ```
-╔═══════════════════════════════════════════════════════╗
-║          ADAPTIVE FLOW PRINT ANALYSIS                 ║
-╠═══════════════════════════════════════════════════════╣
-║ Provider: GitHub Models (gpt-4o-mini)                 ║
-║ Print: benchy.gcode                                   ║
-║ Duration: 45.2 min                                    ║
-╠═══════════════════════════════════════════════════════╣
-
-📊 ASSESSMENT
-Good thermal response. Heater kept up well with avg 68% PWM.
-Minor improvements possible for high-speed sections.
-
-⚠️ ISSUES FOUND
-[medium] Speed boost may be insufficient at 250mm/s moves
-[low] Slight thermal lag on rapid flow transitions
-
 💡 SUGGESTIONS
 ┌─────────────────┬─────────┬───────────┬──────────────────────────┐
 │ Parameter       │ Current │ Suggested │ Reason                   │
 ├─────────────────┼─────────┼───────────┼──────────────────────────┤
-│ speed_boost_k   │ 0.08    │ 0.10      │ Better heat at 250mm/s   │
-│ ramp_rate_rise  │ 4.0     │ 5.0       │ Faster response to flow  │
+│ speed_boost_k   │ 0.08    │ 0.10      │ Better heat at high speed│
 └─────────────────┴─────────┴───────────┴──────────────────────────┘
-
-🎯 QUALITY PREDICTION: good
-
-💾 Analysis saved to: ~/printer_data/logs/adaptive_flow/analysis_20231215_143022_benchy.json
 ```
 
 ---
 
-## Auto-Analysis After Prints
+## Alternative: Use Ollama (100% Local, No Internet)
 
-Use `moonraker_hook.py` to automatically analyze every print.
+If you prefer to run AI locally on your own computer:
 
-### Option 1: Polling Mode (Simplest)
+### Step 1: Install Ollama
 
 ```bash
-python3 moonraker_hook.py --provider github
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Runs in foreground, polls Moonraker for print completion.
+### Step 2: Download a Model
 
-### Option 2: Systemd Service (Recommended)
+```bash
+ollama pull llama3.1
+```
 
-1. Configure `analysis_config.cfg` with your API key and settings
+This downloads about 4GB - only needed once.
 
-2. Create `/etc/systemd/system/adaptive-flow-hook.service`:
+### Step 3: Configure
+
+Edit `analysis_config.cfg`:
+
+```ini
+[analysis]
+provider: ollama
+```
+
+No API key needed!
+
+**Running Ollama on another computer?** Add the URL:
+
+```ini
+[analysis]
+provider: ollama
+ollama_url: http://192.168.1.100:11434
+```
+
+---
+
+## Auto-Analyze Every Print
+
+Want analysis to run automatically after each print? Set it up as a background service.
+
+### Step 1: Make Sure Your Config is Set
+
+Edit `analysis_config.cfg` with your provider and API key (see above).
+
+### Step 2: Create the Service
+
+```bash
+sudo nano /etc/systemd/system/adaptive-flow-hook.service
+```
+
+Paste this (change `pi` to your username if different):
 
 ```ini
 [Unit]
-Description=Adaptive Flow Print Analyzer Hook
+Description=Adaptive Flow Print Analyzer
 After=moonraker.service
-Requires=moonraker.service
 
 [Service]
 Type=simple
@@ -212,149 +121,108 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Note: All settings (provider, auto-apply, etc.) come from `analysis_config.cfg`.
+Save with Ctrl+O, Enter, Ctrl+X.
 
-3. Enable and start:
+### Step 3: Start It
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable adaptive-flow-hook
 sudo systemctl start adaptive-flow-hook
 ```
 
-Check status:
+Now every print will be analyzed automatically!
+
+### Check If It's Running
+
 ```bash
 sudo systemctl status adaptive-flow-hook
-journalctl -u adaptive-flow-hook -f
 ```
 
-### Option 3: Webhook Mode
+---
 
-If you prefer webhooks over polling, add to `moonraker.conf`:
+## What Does the AI Analyze?
+
+The AI looks at data from your print:
+
+- **Temperature**: Did the heater keep up? Was it working too hard?
+- **Flow Rate**: How much plastic was being pushed through
+- **Print Speed**: How fast the toolhead was moving
+- **Any Errors**: Problems in the Klipper log
+
+Based on this, it suggests changes to make your prints better.
+
+---
+
+## Understanding the Suggestions
+
+The AI might suggest changing values in your config. Here's what they mean:
+
+| Setting | What It Does | When to Increase |
+|---------|--------------|------------------|
+| `flow_k` | Adds heat when pushing more plastic | Heater can't keep up during infill |
+| `speed_boost_k` | Adds heat at high speeds | Underextrusion on fast moves |
+| `ramp_rate_rise` | How fast temp goes up | Slow response to speed changes |
+| `max_boost` | Maximum extra temperature | Need more heat headroom |
+
+**Don't worry about memorizing these** - the AI explains why it's suggesting each change.
+
+---
+
+## Configuration Options
+
+All settings are in `analysis_config.cfg`:
 
 ```ini
-[notifier print_complete]
-url: json://localhost:7126/server/custom/adaptive_flow_analyze
-events: complete
-body: {"filename": "{event_args[0].filename}", "status": "{event_args[0].state}"}
+[analysis]
+# Which AI service to use
+provider: github
+
+# Your API key
+api_key: ghp_your_token
+
+# Automatically apply safe suggestions (optional)
+auto_apply: false
+
+# Show results in Klipper console
+notify_console: true
 ```
-
-Then run:
-```bash
-python3 moonraker_hook.py --mode webhook --port 7126
-```
-
----
-
-## Moonraker Hook Options
-
-```bash
-python3 moonraker_hook.py --help
-```
-
-| Flag | Description |
-|------|-------------|
-| `--provider X` | LLM provider (github, ollama, openai, etc.) |
-| `--mode poll` | Poll Moonraker for print state (default) |
-| `--mode webhook` | Listen for Moonraker notifications |
-| `--port N` | Port for webhook listener (default: 7126) |
-| `--auto-apply` | Auto-apply safe suggestions |
-
----
-
-## Analysis Results
-
-Results are saved as JSON alongside print logs:
-
-```
-~/printer_data/logs/adaptive_flow/
-├── 20231215_143022_benchy.csv           # Raw data
-├── 20231215_143022_benchy_summary.json  # Print summary
-└── analysis_20231215_143022_benchy.json # LLM analysis
-```
-
-### Analysis JSON Format
-
-```json
-{
-  "analyzed_at": "2023-12-15T15:30:22",
-  "provider": "github",
-  "model": "gpt-4o-mini",
-  "source_file": "20231215_143022_benchy_summary.json",
-  "analysis": {
-    "assessment": "Good thermal response overall...",
-    "issues": [
-      {"severity": "medium", "description": "Speed boost insufficient at 250mm/s"}
-    ],
-    "suggestions": [
-      {
-        "parameter": "speed_boost_k",
-        "current": "0.08",
-        "suggested": "0.10",
-        "reason": "Better heating for high-speed moves",
-        "safe_to_auto_apply": true
-      }
-    ],
-    "print_quality_prediction": "good",
-    "klippy_concerns": "none",
-    "notes": "Consider increasing ramp rate for faster flow transitions"
-  }
-}
-```
-
----
-
-## Tunable Parameters
-
-The LLM can suggest changes to these `auto_flow.cfg` variables:
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `speed_boost_k` | °C per mm/s above 100mm/s | 0.08 |
-| `speed_boost_threshold` | Speed to trigger boost | 100.0 |
-| `ramp_rate_rise` | Heat-up rate (°C/s) | 4.0 |
-| `ramp_rate_fall` | Cool-down rate (°C/s) | 1.0 |
-| `max_boost_limit` | Maximum temp boost | 50.0 |
-| `flow_smoothing` | Flow EMA factor | 0.15 |
-
-Material-specific parameters in `material_profiles.cfg`:
-
-| Parameter | Description |
-|-----------|-------------|
-| `flow_k` | °C per mm³/s of flow |
-| `max_boost` | Per-material boost cap |
-| `pa_boost_k` | PA reduction per °C |
-| `ramp_rise` / `ramp_fall` | Material ramp rates |
 
 ---
 
 ## Troubleshooting
 
-### No logs found
-Check that logging is working:
+### "No logs found"
+
+The analysis needs print data. Make sure you've completed at least one print with Adaptive Flow enabled.
+
+Check if logs exist:
 ```bash
-ls -la ~/printer_data/logs/adaptive_flow/
+ls ~/printer_data/logs/adaptive_flow/
 ```
 
-If empty, ensure `AT_LOG_START` is being called (happens automatically in `AT_START`).
+### "API key error" or "Unauthorized"
 
-### API key errors
+Your API key might be wrong. Double-check:
+1. No extra spaces in `analysis_config.cfg`
+2. Token hasn't expired (GitHub tokens can expire)
+3. Token was copied completely
+
+### Ollama not working
+
+Make sure Ollama is running:
 ```bash
-# Test your key
-echo $GITHUB_TOKEN
-python3 -c "import os; print(os.environ.get('GITHUB_TOKEN', 'NOT SET'))"
+ollama list
 ```
 
-### Ollama not responding
+If it shows models, it's working. If not:
 ```bash
-# Check Ollama is running
-curl http://localhost:11434/api/tags
-
-# Pull a model
-ollama pull llama3.1
+ollama serve
 ```
 
-### Hook not detecting print completion
-```bash
-# Test Moonraker connection
-curl http://localhost:7125/printer/objects/query?print_stats
-```
+### Need More Help?
+
+Open an issue on GitHub with:
+1. The error message you see
+2. Which provider you're using
+3. Your `analysis_config.cfg` (remove your API key first!)
