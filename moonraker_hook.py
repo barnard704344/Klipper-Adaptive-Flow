@@ -117,19 +117,42 @@ if _config_file:
     logger.info(f"Loaded config from {_config_file}")
 
 
-def send_console_message(message):
-    """Send a message to Klipper console via Moonraker."""
+def send_console_message(message, max_line_length=100):
+    """Send a message to Klipper console via Moonraker.
+    
+    Long messages are split into multiple lines to avoid truncation.
+    """
     try:
         # Escape the message for G-code
-        safe_msg = message.replace('"', "'").replace('\n', ' ')[:100]
-        gcode = f'RESPOND MSG="{safe_msg}"'
+        safe_msg = message.replace('"', "'").replace('\n', ' ')
+        
+        # Split long messages into multiple lines
+        if len(safe_msg) <= max_line_length:
+            lines = [safe_msg]
+        else:
+            # Word-wrap the message
+            lines = []
+            words = safe_msg.split(' ')
+            current_line = ''
+            for word in words:
+                if len(current_line) + len(word) + 1 <= max_line_length:
+                    current_line = f"{current_line} {word}".strip()
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
         
         url = f"{CONFIG['moonraker_url']}/printer/gcode/script"
-        data = json.dumps({'script': gcode}).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
         
-        with urllib.request.urlopen(req, timeout=5) as response:
-            pass
+        for line in lines:
+            gcode = f'RESPOND MSG="{line}"'
+            data = json.dumps({'script': gcode}).encode('utf-8')
+            req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                pass
     except Exception as e:
         logger.debug(f"Console message failed: {e}")
 
