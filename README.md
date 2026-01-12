@@ -121,130 +121,33 @@ High flow detected → Boost +20°C → Temp 250°C, PA 0.048
 
 DynZ is an intelligent learning system that detects and adapts to challenging print geometries like convex surfaces, domes, and spheres.
 
-### The Problem
+- **Learning**: Divides Z-height into bins and tracks stress conditions
+- **Detection**: Flags when speed is high + flow is low + heater is working hard
+- **Relief**: Reduces acceleration to ease thermal demand in stress zones
+- **Memory**: Stress patterns persist, so it "remembers" where domes start
 
-Convex surfaces create "stress zones" where:
-- High toolhead speed (rapid direction changes)
-- Low volumetric flow (short segments)
-- High heater demand (constant temp adjustments)
-
-This combination can cause thermal lag, inconsistent extrusion, and surface artifacts.
-
-### How DynZ Works
-
-1. **Learning**: DynZ divides Z-height into bins (default 1mm) and tracks stress conditions in each
-2. **Detection**: When speed is high, flow is low, and heater PWM is high simultaneously, it's flagged as stress
-3. **Scoring**: Each Z bin accumulates a stress score over time (scores decay when conditions improve)
-4. **Relief**: When a bin's score exceeds the threshold, DynZ reduces acceleration to ease thermal demand
-5. **Memory**: Stress patterns persist across layers, so the system "remembers" where domes start
-
-### Configuration
-
-DynZ is enabled by default. To customize, edit `auto_flow.cfg`:
-
-```ini
-# Enable/disable DynZ
-variable_dynz_enable: True
-
-# Z bin size (1.0mm = stable, 0.5mm = more sensitive)
-variable_dynz_bin_height: 1.0
-
-# Stress detection thresholds
-variable_dynz_speed_thresh: 80.0      # mm/s toolhead speed
-variable_dynz_flow_max: 8.0           # mm³/s volumetric flow
-variable_dynz_pwm_thresh: 0.70        # heater duty cycle (0-1)
-
-# Score thresholds
-variable_dynz_activate_score: 4.0     # score to trigger relief
-variable_dynz_deactivate_score: 1.5   # score to exit relief
-
-# Acceleration during stress relief
-variable_dynz_accel_relief: 3200      # mm/s² (lower = gentler moves)
-```
-
-### Monitoring
-
-Check DynZ status during a print:
+Check status during a print:
 ```
 AT_DYNZ_STATUS
 ```
 
-Output:
-```
-DynZ: ENABLED
-State: ACTIVE (accel relief applied)
-Z Height: 45.20 mm
-Z Bin: 45 (bin height 1.0 mm)
-Bin Score: 5.23
-Accel (current): 3200 mm/s²
-Mode: CLAMPING (convex stress detected)
-```
+**[Full DynZ documentation →](docs/DYNZ.md)**
 
 ## Smart Cooling
 
-Smart Cooling automatically adjusts the part cooling fan based on flow rate and layer time, optimizing print quality without manual fan speed management.
+Smart Cooling automatically adjusts the part cooling fan based on flow rate and layer time.
 
-### How It Works
+- **Flow-based**: Reduces fan at high flow (fast-moving plastic creates its own airflow)
+- **Layer time**: Boosts fan for short/fast layers (prevents heat buildup)
+- **Lookahead**: Pre-adjusts fan 5 seconds ahead of flow changes
+- **Material-aware**: Each profile has its own min/max fan limits
 
-1. **Flow-based reduction**: At high flow rates, the fast-moving plastic creates its own airflow and needs less fan cooling. Smart Cooling reduces fan speed proportionally.
-
-2. **Layer time boost**: Short layers (fast prints or small features) don't have enough time to cool between layers. Smart Cooling increases fan speed for these quick layers.
-
-3. **Material awareness**: Each material profile has its own cooling preferences (PLA wants high cooling, ABS wants minimal).
-
-### Configuration
-
-Smart Cooling is enabled by default. To customize, edit `auto_flow.cfg`:
-
-```ini
-# Enable/disable Smart Cooling
-variable_sc_enable: True
-
-# Flow threshold where cooling reduction starts (mm³/s)
-variable_sc_flow_gate: 8.0
-
-# Fan reduction per mm³/s above flow_gate (0-1 scale)
-variable_sc_flow_k: 0.03
-
-# Layer time threshold - layers faster than this get extra cooling
-variable_sc_short_layer_time: 15.0
-
-# Min/max fan limits (0.0-1.0 = 0-100%)
-variable_sc_min_fan: 0.20
-variable_sc_max_fan: 1.00
-
-# First layer fan (usually 0 for bed adhesion)
-variable_sc_first_layer_fan: 0.0
-```
-
-### Material Profile Overrides
-
-Each material in `material_profiles.cfg` has its own cooling settings:
-
-| Material | Min Fan | Max Fan | Notes |
-|----------|---------|---------|-------|
-| PLA | 50% | 100% | Needs aggressive cooling |
-| PETG | 30% | 70% | Too much causes layer adhesion issues |
-| ABS/ASA | 0% | 40% | Minimal cooling to prevent warping |
-| TPU | 10% | 50% | Low cooling for layer adhesion |
-| Nylon | 10% | 50% | Warps easily with too much cooling |
-| PC | 0% | 30% | Very low cooling, high temps |
-
-### Monitoring
-
-Check Smart Cooling status during a print:
+Check status during a print:
 ```
 AT_SC_STATUS
 ```
 
-Output:
-```
-Smart Cooling: ENABLED
-Current Fan: 65%
-Layer Time: 12.3s
-Fan Range: 30% - 70%
-Flow Gate: 10.0 mm³/s
-```
+**[Full Smart Cooling documentation →](docs/SMART_COOLING.md)**
 
 ## Optional: Print Analysis
 
