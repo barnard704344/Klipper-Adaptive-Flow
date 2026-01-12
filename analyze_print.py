@@ -290,80 +290,94 @@ def configure_provider(provider_name):
 # =============================================================================
 # ANALYSIS PROMPT - The secret sauce
 # =============================================================================
-ANALYSIS_PROMPT = """You are an expert 3D printing engineer analyzing thermal control data from a Klipper printer running Adaptive Flow temperature control.
+ANALYSIS_PROMPT = """You are an expert 3D printing engineer analyzing thermal control data from a Klipper printer running Adaptive Flow.
 
 ## System Overview
-The Adaptive Flow system dynamically adjusts extruder temperature based on:
-- **Flow boost**: Temperature increases with volumetric flow (mm³/s)
-- **Speed boost**: Extra heating for high linear speeds (>100mm/s)
-- **Dynamic PA**: Pressure Advance scales with temperature boost
-- **Dynamic Z-Window (DynZ)**: Learns stress zones (convex surfaces) and reduces acceleration
+Adaptive Flow dynamically adjusts:
+- **Temperature**: Boosts hotend temp based on volumetric flow (mm³/s) and speed
+- **Pressure Advance**: Reduces PA as temperature increases (lower viscosity = less PA needed)
+- **DynZ**: Detects convex surface stress and reduces acceleration
+- **Smart Cooling**: Adjusts fan based on flow rate and layer time
 
-## Current Configuration
-- speed_boost_k: 0.08 (°C per mm/s above 100mm/s threshold)
-- Max boost: 50°C above base temperature
-- Loop interval: 1 second
-- Ramp rate (rise): 4.0°C/s
-- Ramp rate (fall): 1.0°C/s for PLA, 1.5°C/s for PETG
-- DynZ: Reduces accel to 3200mm/s² when stress detected
-
-## Print Session Data
+## Print Session Summary
 ```json
 {summary_json}
 ```
 
-## Detailed CSV Sample (last 100 rows if available)
-The CSV includes columns: elapsed_s, temp_actual, temp_target, boost, flow, speed, pwm, pa, z_height, predicted_flow, dynz_active (0/1), accel
+## CSV Data Sample (time-series)
+Columns: elapsed_s, temp_actual, temp_target, boost, flow, speed, pwm, pa, z_height, predicted_flow, dynz_active, accel, fan_pct
 ```csv
 {csv_sample}
 ```
 
-## Klipper Log Issues (if any)
-Relevant warnings/errors from klippy.log during this print:
+## Klipper Log (errors/warnings during print)
 ```
 {klippy_issues}
 ```
 
-## Analysis Tasks
-1. **Thermal Response**: Is the heater keeping up? (Look at avg_pwm, max_pwm)
-2. **Boost Effectiveness**: Is boost appropriate for the flow rates seen?
-3. **Under-extrusion Risk**: High speed + low boost = possible under-extrusion
-4. **Over-heating Risk**: High boost + high PWM = heater saturated
-5. **PA Adjustment**: Is dynamic PA helping or hurting?
-6. **DynZ Effectiveness**: Check dynz_active_pct - if high (>10%), stress zones were detected. If accel_min is low, relief was applied.
-7. **Klipper Issues**: Any timing, communication, or hardware issues in the log?
+## Analysis Guidelines
+
+IMPORTANT: Only report issues that are actually present in the data. A successful print should have NO issues.
+
+**What's NORMAL (not issues):**
+- avg_pwm 0.3-0.7 = heater has headroom ✓
+- max_pwm = 1.0 momentarily = NORMAL during temp ramps ✓
+- avg_thermal_lag < 3°C = good response ✓
+- max_boost < max_boost_limit = within limits ✓
+- Low avg_boost (1-5°C) = print had low flow demand, this is FINE ✓
+- fan_min < fan_max = Smart Cooling is modulating ✓
+- dynz_active_pct 0-5% = minimal stress ✓
+- max_speed high but avg_flow low = travel moves, not extrusion ✓
+
+**Potential Issues (only flag if ALL conditions met):**
+- Heater saturated: avg_pwm > 0.85 AND avg_thermal_lag > 5°C (not just max_pwm = 1.0)
+- Under-extrusion risk: avg_flow > 10 mm³/s AND avg_boost < 5°C AND avg_pwm > 0.8 (all three required)
+- Thermal runaway risk: avg_thermal_lag > 8°C sustained
+- Fan not modulating: fan_min = fan_max (constant, no variation)
+- Excessive DynZ: dynz_active_pct > 30% (too much relief applied)
+
+**FALSE POSITIVES to avoid:**
+- max_pwm = 1.0 is NOT overheating (momentary spikes are normal)
+- max_speed = 300mm/s is NOT under-extrusion risk (that's travel speed, look at avg_flow instead)
+- Low avg_boost is NOT a problem (means the print didn't need much boost)
+- High max_speed + low boost is normal for travel moves or low-flow sections
+
+**Do NOT report as issues:**
+- Normal PWM values (0.4-0.7 is healthy)
+- Normal thermal lag (1-3°C is expected)
+- Low/zero boost (means print didn't need it)
+- DynZ not activating (means no stress zones detected)
 
 ## Output Format
-Provide your analysis in this exact JSON format:
-```json
+Return ONLY valid JSON (no markdown, no explanation):
 {
-    "assessment": "Brief 1-2 sentence overall assessment",
+    "assessment": "1-2 sentence summary. Start with quality prediction.",
     "issues": [
-        {"severity": "high|medium|low", "description": "Issue description"}
+        {"severity": "high|medium|low", "description": "Specific issue with data reference"}
     ],
     "suggestions": [
         {
-            "parameter": "parameter_name",
-            "current": "current_value",
+            "parameter": "exact_variable_name",
+            "current": "value_from_data",
             "suggested": "new_value", 
-            "reason": "Why this change helps",
+            "reason": "Brief explanation",
             "safe_to_auto_apply": true|false
         }
     ],
     "print_quality_prediction": "excellent|good|fair|poor",
-    "klippy_concerns": "Any concerns from the Klipper log, or 'none'",
-    "notes": "Any additional observations"
+    "klippy_concerns": "Specific concern or 'none'",
+    "notes": "Optional additional observations or empty string"
 }
-```
 
-Be specific with parameter names that match the auto_flow.cfg variables:
-- speed_boost_k, speed_boost_threshold
-- ramp_rate_rise, ramp_rate_fall
-- max_boost_limit
-- flow_smoothing
-- dynz_enable, dynz_accel_relief, dynz_activate_score
+**Parameter names** (use exactly):
+Temperature: flow_k, speed_boost_k, max_boost_limit, ramp_rate_rise, ramp_rate_fall
+DynZ: dynz_enable, dynz_accel_relief, dynz_activate_score, dynz_speed_thresh
+Smart Cooling: sc_enable, sc_flow_gate, sc_flow_k, sc_min_fan, sc_max_fan
 
-Only mark safe_to_auto_apply=true for conservative changes that won't cause print failures."""
+**safe_to_auto_apply=true** only for: ramp_rate_rise, ramp_rate_fall, sc_flow_k, sc_short_layer_time
+**safe_to_auto_apply=false** for: max_boost_limit, dynz_accel_relief, sc_min_fan, sc_max_fan
+
+If the print data looks good, return an empty issues array and "excellent" or "good" prediction."""
 
 
 def load_summary(summary_path):
