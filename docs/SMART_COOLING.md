@@ -106,6 +106,34 @@ Short Layer Threshold: 15.0s
 
 ## Slicer Integration
 
+### OrcaSlicer / PrusaSlicer / SuperSlicer
+
+With Smart Cooling enabled, simplify your filament cooling settings:
+
+#### Keep These Settings
+| Setting | Value | Why |
+|---------|-------|-----|
+| No cooling for the first | **1 layer** | SC also skips layer 1 |
+| Keep fan always on | ☑️ **ON** | Let SC have control |
+| Force cooling for overhangs and bridges | ☑️ **ON** | SC doesn't detect overhangs |
+| Overhangs/bridges fan speed | **100%** | SC won't override bridge moves |
+
+#### Change These Settings
+| Setting | Change To | Why |
+|---------|-----------|-----|
+| Min fan speed threshold | **100%** | Let SC handle reduction |
+| Max fan speed threshold | **100%** | Same as min (constant base) |
+| Full fan speed at layer | **2** | SC takes over after layer 1 |
+| Slow printing down for better layer cooling | ☐ **OFF** | SC boosts fan instead of slowing |
+
+#### Doesn't Matter (SC overrides these)
+- Layer time thresholds
+- Fan speed curves
+
+#### Don't Change
+- Auxiliary part cooling fan (separate fan, not controlled by SC)
+- Ironing fan speed (SC doesn't run during ironing)
+
 ### Option 1: Let Smart Cooling Handle Everything (Recommended)
 
 Set a **single constant fan speed** in your slicer as the baseline:
