@@ -18,23 +18,16 @@ class ExtruderMonitor:
     This module provides a small lookahead buffer that can be fed with
     upcoming extrusion segments (E delta in mm and duration in seconds).
     It exposes G-code commands to add/clear segments and to query the
-    predicted extrusion rate and an estimated load based on current SG.
+    predicted extrusion rate.
     """
 
     def __init__(self, config):
         self.printer = config.get_printer()
-        self.driver_name = config.get("driver_name", None)  # Optional - not required for velocity-based mode
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
 
         # lookahead buffer and bookkeeping
         self._lookahead_lock = threading.Lock()
         self._lookahead = deque()  # entries are (e_delta_mm, duration_s, timestamp)
-
-        # Travel tracking for diagnostics
-        self._travel_lock = threading.Lock()
-        self._pending_travel = 0.0  # Accumulated travel distance without extrusion (mm)
-        self._last_move_was_travel = False  # Track if last move was non-extruding
-        self._travel_start_time = None  # When travel sequence started
 
         # keep a tiny history of recent extrusion rates (mm/s) to allow basic
         # normalization when estimating future load
@@ -49,11 +42,6 @@ class ExtruderMonitor:
         import re
         self._param_re = re.compile(r'([A-Za-z])([-+]?[0-9]*\.?[0-9]+)')
         
-        # Corner detection for analysis
-        self._last_move_vector = None  # (dx, dy) of previous move
-        self._corner_events = deque(maxlen=50)  # (timestamp, angle_degrees, had_extrusion)
-        self._corner_lock = threading.Lock()
-        
         # Print session logging
         self._log_lock = threading.Lock()
         self._log_file = None
@@ -63,15 +51,6 @@ class ExtruderMonitor:
         self._log_stats = {}  # Running stats for summary
 
     def handle_connect(self):
-        # TMC driver is optional - only needed for load sensing (deprecated)
-        self.tmc = None
-        if self.driver_name:
-            try:
-                self.tmc = self.printer.lookup_object(self.driver_name)
-            except Exception:
-                logging.getLogger('ExtruderMonitor').info(
-                    f"TMC driver '{self.driver_name}' not found - load sensing disabled (velocity mode only)")
-
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command("SET_LOOKAHEAD", self.cmd_SET_LOOKAHEAD,
                                desc="Add upcoming extrusion segment: SET_LOOKAHEAD E=<mm> D=<s> or SET_LOOKAHEAD CLEAR")
@@ -279,36 +258,6 @@ class ExtruderMonitor:
                 except Exception:
                     pass
 
-        # Travel tracking for diagnostics
-        with self._travel_lock:
-            if has_extrusion:
-                # Extrusion detected - reset travel accumulator
-                self._pending_travel = 0.0
-                self._last_move_was_travel = False
-                self._travel_start_time = None
-            elif dist > 0.1:  # Travel move (no extrusion, significant distance)
-                # Accumulate travel distance
-                if not self._last_move_was_travel:
-                    # Starting a new travel sequence
-                    self._travel_start_time = time.time()
-                self._pending_travel += dist
-                self._last_move_was_travel = True
-
-        # Corner detection for analysis
-        # Only track corners during extrusion moves with significant XY movement
-        if has_extrusion and dist > 0.5:
-            current_vector = (dx, dy)
-            if self._last_move_vector is not None:
-                # Calculate angle between vectors
-                angle = self._calculate_corner_angle(self._last_move_vector, current_vector)
-                if angle is not None and angle > 45:  # Sharp corner threshold
-                    with self._corner_lock:
-                        self._corner_events.append((time.time(), angle, True))
-            self._last_move_vector = current_vector
-        elif not has_extrusion:
-            # Reset vector tracking on travel moves
-            self._last_move_vector = None
-
         # update stored state
         if cur_e is not None:
             self._gcode_last_e = cur_e
@@ -317,39 +266,6 @@ class ExtruderMonitor:
         for axis in ('X','Y','Z'):
             if axis in params:
                 self._gcode_pos[axis] = params[axis]
-
-    def _calculate_corner_angle(self, v1, v2):
-        """Calculate angle between two 2D vectors in degrees. Returns None if invalid."""
-        import math
-        try:
-            # Normalize vectors
-            mag1 = math.sqrt(v1[0]**2 + v1[1]**2)
-            mag2 = math.sqrt(v2[0]**2 + v2[1]**2)
-            if mag1 < 0.01 or mag2 < 0.01:
-                return None
-            
-            # Dot product gives cos(angle)
-            dot = (v1[0]*v2[0] + v1[1]*v2[1]) / (mag1 * mag2)
-            # Clamp to [-1, 1] to avoid math domain errors
-            dot = max(-1.0, min(1.0, dot))
-            angle_rad = math.acos(dot)
-            angle_deg = math.degrees(angle_rad)
-            
-            # Return the deviation from straight (180° = straight, 90° = right angle)
-            return 180.0 - angle_deg
-        except Exception:
-            return None
-    
-    def get_recent_corners(self, max_age=5.0):
-        """Return list of recent corner events within max_age seconds."""
-        now = time.time()
-        with self._corner_lock:
-            return [(ts, angle, ext) for ts, angle, ext in self._corner_events 
-                    if (now - ts) <= max_age]
-    
-    def get_corner_count(self, max_age=5.0):
-        """Return count of corners detected in the last max_age seconds."""
-        return len(self.get_recent_corners(max_age))
 
     def _predicted_extrusion_rate(self):
         """Return predicted extrusion rate in mm/s computed from current lookahead."""
@@ -805,25 +721,6 @@ class ExtruderMonitor:
 
         pred_rate = self._predicted_extrusion_rate()
         status['predicted_extrusion_rate'] = pred_rate
-        
-        # Travel tracking for diagnostics
-        with self._travel_lock:
-            status['pending_travel'] = self._pending_travel
-            status['in_travel'] = self._last_move_was_travel
-            if self._travel_start_time is not None:
-                status['travel_duration'] = time.time() - self._travel_start_time
-            else:
-                status['travel_duration'] = 0.0
-        
-        # Corner detection for analysis
-        status['corner_count_5s'] = self.get_corner_count(5.0)
-        recent_corners = self.get_recent_corners(5.0)
-        if recent_corners:
-            status['last_corner_angle'] = recent_corners[-1][1]
-            status['last_corner_age'] = eventtime - recent_corners[-1][0] if hasattr(eventtime, '__float__') else time.time() - recent_corners[-1][0]
-        else:
-            status['last_corner_angle'] = 0
-            status['last_corner_age'] = -1
         
         return status
 

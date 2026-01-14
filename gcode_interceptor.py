@@ -18,9 +18,6 @@ class GCodeInterceptor:
         # List of callback functions to notify
         self._subscribers = []
         
-        # Store original handler reference
-        self._original_process = None
-        
         # Register event for when Klippy is ready
         self.printer.register_event_handler('klippy:ready', self._handle_ready)
 
