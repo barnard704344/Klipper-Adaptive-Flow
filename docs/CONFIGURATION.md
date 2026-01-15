@@ -60,13 +60,23 @@ gcode:
 
 | Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA |
 |----------|--------|---------|-----------|----------|----------|------------|
-| **PLA** | 0.80 | 0.06 | 25°C | 235°C | 4.0/2.0 | 0.040 |
-| **PETG** | 1.20 | 0.08 | 40°C | 280°C | 4.0/1.5 | 0.060 |
+| **PLA** | 1.00 | 0.08 | 30°C | 245°C | 5.0/2.5 | 0.035 |
+| **PETG** | 1.40 | 0.08 | 40°C | 280°C | 4.0/1.5 | 0.060 |
 | **ABS** | 0.80 | 0.10 | 50°C | 290°C | 5.0/3.0 | 0.050 |
 | **ASA** | 0.80 | 0.10 | 50°C | 295°C | 5.0/3.0 | 0.050 |
 | **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.200 |
 | **Nylon** | 0.90 | 0.07 | 35°C | 275°C | 3.0/1.5 | 0.055 |
 | **PC** | 0.70 | 0.10 | 50°C | 310°C | 5.0/2.5 | 0.045 |
+
+> **Note:** The PLA profile is tuned for high-flow variants (PLA+, PLA HF) commonly used with Revo HF nozzles. At 18mm³/s with a 215°C base temp, the system will boost to ~233°C. See recommended base temps below.
+
+### Recommended PLA Base Temperatures
+
+| Flow Rate | Slicer Temp | Why |
+|-----------|-------------|-----|
+| Low (<10mm³/s) | 205-210°C | Standard printing |
+| Medium (10-15mm³/s) | 215-220°C | Fast perimeters/infill |
+| High (15-20mm³/s) | 220-225°C | Speed printing with HF filament |
 
 ### What Each Parameter Does
 

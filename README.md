@@ -9,7 +9,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Smart Cooling** — adjusts part fan based on flow rate and layer time
 - **5-second lookahead** — pre-heats before flow spikes
 - **Dynamic Z-Window (DynZ)** — learns and adapts to convex surfaces
-- **Per-material profiles** — PLA, PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
+- **Per-material profiles** — PLA (tuned for HF), PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
 - **Print analysis** — AI-powered tuning suggestions (optional)
@@ -83,14 +83,17 @@ variable_use_high_flow_nozzle: True   # False for standard Revo
 
 Edit `material_profiles.cfg` to customize per-material boost curves:
 ```ini
-[gcode_macro _AF_PROFILE_PETG]
-variable_flow_k: 1.20           # Temp boost per mm³/s flow
+[gcode_macro _AF_PROFILE_PLA]
+variable_flow_k: 1.00           # Temp boost per mm³/s flow
 variable_speed_boost_k: 0.08    # Temp boost per mm/s above 100
-variable_max_boost: 40.0        # Max temp increase cap (°C)
-variable_ramp_rise: 4.0         # Heat up rate (°C/s)
-variable_ramp_fall: 1.5         # Cool down rate (°C/s)
+variable_max_boost: 30.0        # Max temp increase cap (°C)
+variable_max_temp: 245          # Absolute max (HF PLA tolerates higher)
+variable_ramp_rise: 5.0         # Heat up rate (°C/s)
+variable_ramp_fall: 2.5         # Cool down rate (°C/s)
 ...
 ```
+
+> **PLA Tuned for High Flow:** The default PLA profile is optimized for high-flow variants (PLA+, PLA HF). At 18mm³/s with 215°C base → boosts to 233°C. Use 215-220°C base temp in your slicer for high-speed printing.
 
 **[Full configuration reference →](docs/CONFIGURATION.md)**
 
