@@ -152,7 +152,6 @@ Prevents thermal runaway when printing multiple objects sequentially:
 ```ini
 variable_multi_object_temp_wait: True      # Enable automatic temp stabilization
 variable_temp_wait_tolerance: 5.0          # Temperature tolerance (°C)
-variable_temp_wait_timeout: 300            # Reserved for future use
 ```
 
 **How it works:**

@@ -159,7 +159,7 @@ When printing multiple objects sequentially, the nozzle temperature from the fir
 
 - **Automatic**: Works with EXCLUDE_OBJECT (modern slicers) and M486 (legacy)
 - **Smart waiting**: Only pauses if temperature difference exceeds tolerance (default ±5°C)
-- **Safe timeout**: Won't wait forever (default 300s timeout)
+- **Safe**: Waits until temperature stabilizes (no timeout risk)
 - **Zero config**: Enabled by default, works with OrcaSlicer, PrusaSlicer, SuperSlicer
 
 ### Configuration
@@ -169,7 +169,6 @@ Edit `auto_flow.cfg` to customize:
 ```ini
 variable_multi_object_temp_wait: True     # Enable/disable feature
 variable_temp_wait_tolerance: 5.0         # Temperature tolerance (°C)
-variable_temp_wait_timeout: 300           # Reserved for future use
 ```
 
 ### Slicer Setup
