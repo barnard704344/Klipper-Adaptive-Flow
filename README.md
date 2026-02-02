@@ -9,6 +9,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Smart Cooling** — adjusts part fan based on flow rate and layer time
 - **5-second lookahead** — pre-heats before flow spikes
 - **Dynamic Z-Window (DynZ)** — learns and adapts to convex surfaces
+- **Multi-object temperature management** — prevents thermal runaway between sequential objects
 - **Per-material profiles** — PLA (tuned for HF), PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
@@ -151,6 +152,34 @@ AT_SC_STATUS
 ```
 
 **[Full Smart Cooling documentation →](docs/SMART_COOLING.md)**
+
+## Multi-Object Temperature Management
+
+When printing multiple objects sequentially, the nozzle temperature from the first object may be higher than the target for the next object, potentially triggering Klipper's thermal runaway protection. This feature automatically pauses between objects to allow temperature stabilization.
+
+- **Automatic**: Works with EXCLUDE_OBJECT (modern slicers) and M486 (legacy)
+- **Smart waiting**: Only pauses if temperature difference exceeds tolerance (default ±5°C)
+- **Safe timeout**: Won't wait forever (default 300s timeout)
+- **Zero config**: Enabled by default, works with OrcaSlicer, PrusaSlicer, SuperSlicer
+
+### Configuration
+
+Edit `auto_flow.cfg` to customize:
+
+```ini
+variable_multi_object_temp_wait: True     # Enable/disable feature
+variable_temp_wait_tolerance: 5.0         # Temperature tolerance (°C)
+variable_temp_wait_timeout: 300           # Max wait time (seconds, 0=infinite)
+```
+
+### Slicer Setup
+
+Enable object labeling in your slicer:
+
+**OrcaSlicer/PrusaSlicer**: Print Settings → Output options → Label objects
+**SuperSlicer**: Print Settings → Output options → Exclude objects
+
+This feature works automatically—no G-code changes needed.
 
 ## Optional: Print Analysis
 

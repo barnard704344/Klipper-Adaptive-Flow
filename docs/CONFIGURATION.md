@@ -145,6 +145,29 @@ variable_thermal_runaway_threshold: 15.0   # Max overshoot before emergency
 variable_thermal_undertemp_threshold: 10.0 # Max undershoot before warning
 ```
 
+### Multi-Object Temperature Management
+
+Prevents thermal runaway when printing multiple objects sequentially:
+
+```ini
+variable_multi_object_temp_wait: True      # Enable automatic temp stabilization
+variable_temp_wait_tolerance: 5.0          # Temperature tolerance (°C)
+variable_temp_wait_timeout: 300            # Max wait time (seconds, 0=infinite)
+```
+
+**How it works:**
+- When starting a new object, checks if current temperature differs from target by more than tolerance
+- If yes, pauses and waits for temperature to stabilize within tolerance range
+- Prevents thermal runaway shutdowns when previous object ended at higher temperature
+- Works automatically with EXCLUDE_OBJECT (OrcaSlicer, PrusaSlicer) and M486 (legacy)
+
+**Example scenario:**
+1. Object 1 finishes at 253°C (boosted from 220°C base)
+2. Object 2 starts with 220°C target
+3. System detects 33°C difference (> 5°C tolerance)
+4. Pauses and waits for cooldown to 215-225°C range (220°C ± 5°C)
+5. Continues printing once temperature stabilizes
+
 ---
 
 ## Commands Reference
