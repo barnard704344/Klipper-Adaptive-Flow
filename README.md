@@ -94,6 +94,26 @@ variable_ramp_fall: 2.5         # Cool down rate (°C/s)
 ...
 ```
 
+### Recommended Start Temperatures
+
+Set these base temperatures in your slicer. The system will automatically boost during high-flow sections.
+
+| Material | Low Flow<br>(<10mm³/s) | Medium Flow<br>(10-15mm³/s) | High Flow<br>(15-20mm³/s) | Notes |
+|----------|----------------------|---------------------------|-------------------------|-------|
+| **PLA** | 205-210°C | 215-220°C | 220-225°C | Tuned for high-flow variants (PLA+, PLA HF) |
+| **PETG** | — | 240°C | — | Start at 240°C for most use cases |
+| **ABS** | 235-240°C | 245-250°C | 250-255°C | Requires enclosure for best results |
+| **ASA** | 240-245°C | 250-255°C | 255-260°C | Similar to ABS, slightly higher temps |
+| **TPU** | 215-220°C | 220-225°C | 225-230°C | Keep speeds low, gentle ramps |
+| **Nylon** | 240-245°C | 250-255°C | 255-260°C | Dry filament thoroughly before printing |
+| **PC** | 265-270°C | 275-280°C | 280-285°C | Requires high-temp hotend and enclosure |
+| **HIPS** | 220-225°C | 230-235°C | 235-240°C | Support material, similar to ABS |
+
+**Flow Rate Guide:**
+- **Low flow** (<10mm³/s): Standard detail prints, slower speeds
+- **Medium flow** (10-15mm³/s): General purpose, balanced speed/quality
+- **High flow** (15-20mm³/s): Speed printing with high-flow filaments
+
 > **PLA Tuned for High Flow:** The default PLA profile is optimized for high-flow variants (PLA+, PLA HF). At 18mm³/s with 215°C base → boosts to 233°C. Use 215-220°C base temp in your slicer for high-speed printing.
 
 **[Full configuration reference →](docs/CONFIGURATION.md)**

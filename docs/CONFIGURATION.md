@@ -61,16 +61,44 @@ gcode:
 | Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA |
 |----------|--------|---------|-----------|----------|----------|------------|
 | **PLA** | 1.00 | 0.08 | 30°C | 245°C | 5.0/2.5 | 0.035 |
-| **PETG** | 1.40 | 0.08 | 40°C | 280°C | 4.0/1.5 | 0.060 |
+| **PETG** | 1.10 | 0.10 | 40°C | 280°C | 5.0/2.0 | 0.060 |
 | **ABS** | 0.80 | 0.10 | 50°C | 290°C | 5.0/3.0 | 0.050 |
 | **ASA** | 0.80 | 0.10 | 50°C | 295°C | 5.0/3.0 | 0.050 |
 | **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.200 |
 | **Nylon** | 0.90 | 0.07 | 35°C | 275°C | 3.0/1.5 | 0.055 |
 | **PC** | 0.70 | 0.10 | 50°C | 310°C | 5.0/2.5 | 0.045 |
+| **HIPS** | 0.75 | 0.08 | 45°C | 250°C | 4.0/2.0 | 0.045 |
 
 > **Note:** The PLA profile is tuned for high-flow variants (PLA+, PLA HF) commonly used with Revo HF nozzles. At 18mm³/s with a 215°C base temp, the system will boost to ~233°C. See recommended base temps below.
 
-### Recommended PLA Base Temperatures
+### Recommended Base Temperatures
+
+Set these start temperatures in your slicer. The system will automatically boost temperature during high-flow sections.
+
+| Material | Low Flow<br>(<10mm³/s) | Medium Flow<br>(10-15mm³/s) | High Flow<br>(15-20mm³/s) | Special Considerations |
+|----------|----------------------|---------------------------|-------------------------|------------------------|
+| **PLA** | 205-210°C | 215-220°C | 220-225°C | High-flow variants (PLA+, PLA HF). Standard PLA: use 200-210°C |
+| **PETG** | — | 240°C | — | Start at 240°C for most printing. Boost handles high flow automatically |
+| **ABS** | 235-240°C | 245-250°C | 250-255°C | Requires heated chamber/enclosure. Keep consistent for layer adhesion |
+| **ASA** | 240-245°C | 250-255°C | 255-260°C | Similar to ABS but more UV-resistant. Needs enclosure |
+| **TPU** | 215-220°C | 220-225°C | 225-230°C | Keep print speeds low (20-40mm/s). Gentle ramps prevent degradation |
+| **Nylon** | 240-245°C | 250-255°C | 255-260°C | MUST be dried thoroughly. Hygroscopic - absorbs moisture quickly |
+| **PC** | 265-270°C | 275-280°C | 280-285°C | Requires all-metal hotend, high-temp thermistor, and enclosure |
+| **HIPS** | 220-225°C | 230-235°C | 235-240°C | Commonly used as support for ABS. Dissolves in limonene |
+
+**Flow Rate Guidelines:**
+- **Low flow** (<10mm³/s): Detailed prints, fine features, slower speeds (30-80mm/s)
+- **Medium flow** (10-15mm³/s): General purpose printing, balanced speed and quality (80-150mm/s)
+- **High flow** (15-20mm³/s): Speed-focused printing with high-flow filament and nozzles (150-300mm/s)
+
+**Temperature Boost Examples:**
+- PLA at 18mm³/s: 215°C base + (18 × 1.00) = 233°C final
+- PETG at 18mm³/s: 240°C base + (18 × 1.10) = 259.8°C final
+- ABS at 15mm³/s: 245°C base + (15 × 0.80) = 257°C final
+
+### Additional PLA Temperature Details
+
+For PLA specifically, more granular temperature recommendations based on exact flow rates:
 
 | Flow Rate | Slicer Temp | Why |
 |-----------|-------------|-----|
