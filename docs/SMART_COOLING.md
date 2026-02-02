@@ -1,6 +1,6 @@
 # Smart Cooling
 
-Smart Cooling automatically adjusts the part cooling fan based on flow rate and layer time, optimizing print quality without manual fan speed management.
+Smart Cooling automatically adjusts the part cooling fan based on flow rate, layer time, and heater performance, optimizing print quality without manual fan speed management.
 
 ## How It Works
 
@@ -11,6 +11,8 @@ Smart Cooling automatically adjusts the part cooling fan based on flow rate and 
 3. **Lookahead**: Uses the same 5-second lookahead as temperature control to pre-adjust the fan before high-flow sections arrive.
 
 4. **Material awareness**: Each material profile has its own cooling preferences (PLA wants high cooling, ABS wants minimal).
+
+5. **Heater-adaptive feedback** (NEW): When the heater struggles to reach target temperature (>90% duty cycle), Smart Cooling automatically reduces fan speed to help the heater. This prevents high-power CPAP fans from overwhelming the heater at high temps.
 
 ## Configuration
 
@@ -42,6 +44,16 @@ variable_sc_max_fan: 1.00
 
 # First layer fan (usually 0 for bed adhesion)
 variable_sc_first_layer_fan: 0.0
+
+# Heater-adaptive fan control (enabled by default)
+variable_sc_heater_adaptive: True
+
+# Heater wattage profile (NEW - recommended)
+variable_sc_heater_wattage: 40  # Set to 40 for 40W heater, 60 for 60W heater, 0 for manual
+
+# Manual settings (only used when sc_heater_wattage = 0)
+variable_sc_heater_duty_threshold: 0.90  # Start reducing fan at 90% duty
+variable_sc_heater_duty_k: 1.0           # 1.0 = match duty excess 1:1
 ```
 
 ### Parameter Guide
@@ -57,6 +69,10 @@ variable_sc_first_layer_fan: 0.0
 | `sc_min_fan` | Minimum fan speed (0.0-1.0) | 0.20 |
 | `sc_max_fan` | Maximum fan speed (0.0-1.0) | 1.00 |
 | `sc_first_layer_fan` | First layer fan override (0.0-1.0) | 0.0 |
+| `sc_heater_adaptive` | Enable heater-adaptive fan reduction | True |
+| `sc_heater_wattage` | Heater profile: 40 (40W), 60 (60W), 0 (manual) | 0 |
+| `sc_heater_duty_threshold` | Heater duty % where fan reduction starts (manual mode) | 0.90 |
+| `sc_heater_duty_k` | Fan reduction multiplier (manual mode) | 1.0 |
 
 ## Material Profile Overrides
 
@@ -65,10 +81,10 @@ Each material in `material_profiles.cfg` has its own cooling settings that overr
 ```ini
 [gcode_macro _AF_PROFILE_PLA]
 # ... temperature settings ...
-# Smart Cooling: PLA likes high cooling
+# Smart Cooling: PLA likes high cooling with heater-adaptive feedback
 variable_sc_flow_gate: 8.0
 variable_sc_flow_k: 0.02
-variable_sc_min_fan: 0.50
+variable_sc_min_fan: 0.20
 variable_sc_max_fan: 1.00
 ```
 
@@ -76,7 +92,7 @@ variable_sc_max_fan: 1.00
 
 | Material | Min Fan | Max Fan | Flow Gate | Notes |
 |----------|---------|---------|-----------|-------|
-| PLA | 50% | 100% | 8.0 | Aggressive cooling needed |
+| PLA | 20% | 100% | 8.0 | Heater-adaptive feedback enabled for CPAP compatibility |
 | PETG | 30% | 70% | 10.0 | Too much causes layer adhesion issues |
 | ABS | 0% | 40% | 15.0 | Minimal cooling to prevent warping |
 | ASA | 0% | 40% | 15.0 | Same as ABS |
@@ -180,10 +196,56 @@ Every 1 second, Smart Cooling calculates the optimal fan speed:
 2. Get effective flow = max(current_flow, predicted_flow_5s_ahead)
 3. Calculate flow reduction = (effective_flow - flow_gate) * flow_k
 4. Calculate layer boost = (short_layer_time - actual_layer_time) * layer_time_k
-5. target_fan = base_fan - flow_reduction + layer_boost
-6. Clamp to [min_fan, max_fan]
-7. Apply if changed by more than 3%
+5. Calculate heater reduction = (heater_duty - duty_threshold) * duty_k  [if heater_adaptive enabled]
+6. target_fan = base_fan - flow_reduction + layer_boost - heater_reduction
+7. Clamp to [min_fan, max_fan]
+8. Apply if changed by more than 3%
 ```
+
+### Heater-Adaptive Feedback
+
+When `sc_heater_adaptive` is enabled (default), Smart Cooling monitors the heater's duty cycle and automatically reduces fan speed if the heater is struggling.
+
+#### Heater Wattage Profiles (Recommended - NEW)
+
+The easiest way to configure heater-adaptive settings is using the `sc_heater_wattage` profile:
+
+**40W Heater Profile** (for CPAP fans):
+```ini
+variable_sc_heater_wattage: 40
+```
+- Threshold: 85% duty (starts reducing earlier)
+- Multiplier: 2.0 (more aggressive reduction)
+- Perfect for: Revo HF 40W + CPAP fans at high speeds
+- At 95% duty: (0.95-0.85)×2.0 = 20% fan reduction
+
+**60W Heater Profile** (standard):
+```ini
+variable_sc_heater_wattage: 60
+```
+- Threshold: 90% duty (standard)
+- Multiplier: 1.0 (balanced reduction)
+- Perfect for: Revo 60W + standard fans
+- At 95% duty: (0.95-0.90)×1.0 = 5% fan reduction
+
+**Manual/Custom** (advanced users):
+```ini
+variable_sc_heater_wattage: 0
+variable_sc_heater_duty_threshold: 0.90
+variable_sc_heater_duty_k: 1.0
+```
+- Use when you want full control over settings
+- Profile is ignored, uses manual values below it
+
+#### How It Works
+
+This feedback loop helps the heater reach target temperature even with high-power CPAP fans:
+1. CPAP fan runs at 70% → heater struggles at 95% duty
+2. Smart Cooling detects high duty → reduces fan (5-20% depending on profile)
+3. Lower fan speed → heater reaches target → duty drops
+4. Once duty drops below threshold → fan returns to normal
+
+> **💡 TIP for CPAP users:** Simply set `sc_heater_wattage: 40` and you're done! No need to manually tune threshold and multiplier values.
 
 ### Example Calculation
 
@@ -217,6 +279,31 @@ variable_sc_layer_time_k: 0.03      # 3% boost per second (was 2%)
 ```ini
 variable_sc_min_fan: 0.40          # Never below 40%
 variable_sc_max_fan: 0.80          # Never above 80%
+```
+
+### For Heater-Adaptive Control
+
+**Easiest: Use heater wattage profile** (recommended):
+```ini
+# For 40W heater + CPAP (aggressive)
+variable_sc_heater_wattage: 40
+
+# For 60W heater + standard fan (balanced)
+variable_sc_heater_wattage: 60
+```
+
+**Advanced: Manual tuning** (if profiles don't work for you):
+```ini
+# Manual control - set profile to 0
+variable_sc_heater_wattage: 0
+variable_sc_heater_duty_threshold: 0.85  # Start reducing at 85% duty
+variable_sc_heater_duty_k: 2.0           # Double the duty excess (at 95% duty: 20% reduction)
+```
+
+**To disable heater-adaptive control**:
+```ini
+# Or disable if you don't have high-power fans
+variable_sc_heater_adaptive: False
 ```
 
 ## Disabling Smart Cooling
