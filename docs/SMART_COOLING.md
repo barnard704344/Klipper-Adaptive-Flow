@@ -47,6 +47,11 @@ variable_sc_first_layer_fan: 0.0
 
 # Heater-adaptive fan control (enabled by default)
 variable_sc_heater_adaptive: True
+
+# Heater wattage profile (NEW - recommended)
+variable_sc_heater_wattage: 40  # Set to 40 for 40W heater, 60 for 60W heater, 0 for manual
+
+# Manual settings (only used when sc_heater_wattage = 0)
 variable_sc_heater_duty_threshold: 0.90  # Start reducing fan at 90% duty
 variable_sc_heater_duty_k: 1.0           # 1.0 = match duty excess 1:1
 ```
@@ -65,8 +70,9 @@ variable_sc_heater_duty_k: 1.0           # 1.0 = match duty excess 1:1
 | `sc_max_fan` | Maximum fan speed (0.0-1.0) | 1.00 |
 | `sc_first_layer_fan` | First layer fan override (0.0-1.0) | 0.0 |
 | `sc_heater_adaptive` | Enable heater-adaptive fan reduction | True |
-| `sc_heater_duty_threshold` | Heater duty % where fan reduction starts | 0.90 |
-| `sc_heater_duty_k` | Fan reduction multiplier (1.0 = match duty excess 1:1) | 1.0 |
+| `sc_heater_wattage` | Heater profile: 40 (40W), 60 (60W), 0 (manual) | 0 |
+| `sc_heater_duty_threshold` | Heater duty % where fan reduction starts (manual mode) | 0.90 |
+| `sc_heater_duty_k` | Fan reduction multiplier (manual mode) | 1.0 |
 
 ## Material Profile Overrides
 
@@ -198,25 +204,48 @@ Every 1 second, Smart Cooling calculates the optimal fan speed:
 
 ### Heater-Adaptive Feedback
 
-When `sc_heater_adaptive` is enabled (default), Smart Cooling monitors the heater's duty cycle and automatically reduces fan speed if the heater is struggling:
+When `sc_heater_adaptive` is enabled (default), Smart Cooling monitors the heater's duty cycle and automatically reduces fan speed if the heater is struggling.
 
-- At **90% duty cycle** (default threshold): Fan reduction begins
-- At **95% duty cycle**: Fan is reduced by 5% (with default k=1.0: (0.95-0.90)*1.0 = 0.05 = 5%)
-- At **99% duty cycle**: Fan is reduced by 9% (with default k=1.0: (0.99-0.90)*1.0 = 0.09 = 9%)
+#### Heater Wattage Profiles (Recommended - NEW)
+
+The easiest way to configure heater-adaptive settings is using the `sc_heater_wattage` profile:
+
+**40W Heater Profile** (for CPAP fans):
+```ini
+variable_sc_heater_wattage: 40
+```
+- Threshold: 85% duty (starts reducing earlier)
+- Multiplier: 2.0 (more aggressive reduction)
+- Perfect for: Revo HF 40W + CPAP fans at high speeds
+- At 95% duty: (0.95-0.85)×2.0 = 20% fan reduction
+
+**60W Heater Profile** (standard):
+```ini
+variable_sc_heater_wattage: 60
+```
+- Threshold: 90% duty (standard)
+- Multiplier: 1.0 (balanced reduction)
+- Perfect for: Revo 60W + standard fans
+- At 95% duty: (0.95-0.90)×1.0 = 5% fan reduction
+
+**Manual/Custom** (advanced users):
+```ini
+variable_sc_heater_wattage: 0
+variable_sc_heater_duty_threshold: 0.90
+variable_sc_heater_duty_k: 1.0
+```
+- Use when you want full control over settings
+- Profile is ignored, uses manual values below it
+
+#### How It Works
 
 This feedback loop helps the heater reach target temperature even with high-power CPAP fans:
 1. CPAP fan runs at 70% → heater struggles at 95% duty
-2. Smart Cooling detects high duty → reduces fan by 5%
+2. Smart Cooling detects high duty → reduces fan (5-20% depending on profile)
 3. Lower fan speed → heater reaches target → duty drops
-4. Once duty drops below 90% → fan returns to normal
+4. Once duty drops below threshold → fan returns to normal
 
-**Perfect for:** Revo HF with 40W heater + CPAP fans at high speeds
-
-> **⚠️ IMPORTANT for CPAP users with 40W heaters:**
-> If your heater struggles even at low fan speeds (e.g., >20%), you need more aggressive settings:
-> - Set `sc_heater_duty_threshold: 0.85` (start reducing earlier)
-> - Set `sc_heater_duty_k: 2.0` or higher (reduce more aggressively)
-> - Consider reducing `sc_base_fan` or slicer fan speed if still struggling
+> **💡 TIP for CPAP users:** Simply set `sc_heater_wattage: 40` and you're done! No need to manually tune threshold and multiplier values.
 
 ### Example Calculation
 
@@ -252,23 +281,26 @@ variable_sc_min_fan: 0.40          # Never below 40%
 variable_sc_max_fan: 0.80          # Never above 80%
 ```
 
-### For Heater-Adaptive Control (CPAP fans)
+### For Heater-Adaptive Control
 
-**For CPAP fans with 40W heaters** (observed heater struggle at >20% fan):
+**Easiest: Use heater wattage profile** (recommended):
 ```ini
-# Aggressive settings for high-power CPAP fans
-variable_sc_heater_duty_threshold: 0.85  # Start reducing at 85% duty (was 90%)
+# For 40W heater + CPAP (aggressive)
+variable_sc_heater_wattage: 40
+
+# For 60W heater + standard fan (balanced)
+variable_sc_heater_wattage: 60
+```
+
+**Advanced: Manual tuning** (if profiles don't work for you):
+```ini
+# Manual control - set profile to 0
+variable_sc_heater_wattage: 0
+variable_sc_heater_duty_threshold: 0.85  # Start reducing at 85% duty
 variable_sc_heater_duty_k: 2.0           # Double the duty excess (at 95% duty: 20% reduction)
-# May also need to lower base fan speed if still struggling
 ```
 
-**For standard part cooling fans**:
-```ini
-# Less aggressive (for standard fans)
-variable_sc_heater_duty_k: 0.5           # Half the duty excess (at 95% duty: 2.5% reduction)
-```
-
-**To disable**:
+**To disable heater-adaptive control**:
 ```ini
 # Or disable if you don't have high-power fans
 variable_sc_heater_adaptive: False
