@@ -2,6 +2,16 @@
 
 Complete reference for all Klipper Adaptive Flow commands.
 
+## Table of Contents
+
+- [Core Commands](#core-commands) - `AT_START`, `AT_END`
+- [Status Commands](#status-commands) - `AT_STATUS`, `AT_THERMAL_STATUS`, `AT_DYNZ_STATUS`, `AT_SC_STATUS`
+- [Configuration Commands](#configuration-commands) - `AT_SET_PA`, `AT_GET_PA`, `AT_LIST_PA`, etc.
+- [Advanced Commands](#advanced-commands) - `AT_ENABLE`, `AT_DISABLE`, `AT_RESET_STATE`
+- [Quick Reference](#quick-reference) - Command summary table
+- [Common Workflows](#common-workflows) - Usage examples
+- [Troubleshooting](#troubleshooting) - Problem solving guide
+
 ---
 
 ## Core Commands
