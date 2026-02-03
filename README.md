@@ -81,7 +81,7 @@ variable_use_high_flow_nozzle: True   # False for standard Revo
 
 
 ## Updating
-Run a git pull and then run ./install.sh again:
+Run a git pull:
 
 ```bash
 cd Klipper-Adaptive-Flow
