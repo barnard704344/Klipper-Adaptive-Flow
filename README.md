@@ -24,17 +24,6 @@ cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
 cp auto_flow.cfg material_profiles.cfg ~/printer_data/config/
 sudo systemctl restart klipper
 ```
-## Updating
-Run a git pull and then run ./install.sh again:
-
-```bash
-cd Klipper-Adaptive-Flow
-git pull
-cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
-cp auto_flow.cfg material_profiles.cfg ~/printer_data/config/
-sudo systemctl restart klipper
-```
-
 Add to `printer.cfg`:
 ```ini
 [include auto_flow.cfg]
@@ -89,6 +78,19 @@ Edit `auto_flow.cfg`:
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo
 ```
+
+
+## Updating
+Run a git pull and then run ./install.sh again:
+
+```bash
+cd Klipper-Adaptive-Flow
+git pull
+cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
+cp auto_flow.cfg material_profiles.cfg ~/printer_data/config/
+sudo systemctl restart klipper
+```
+
 
 ### Material Profiles (optional customization)
 
