@@ -16,7 +16,7 @@ Smart Cooling automatically adjusts the part cooling fan based on flow rate, lay
 
 ## Configuration
 
-Smart Cooling is enabled by default. To customize, edit `auto_flow.cfg`:
+Smart Cooling is enabled by default. To customize, edit `auto_flow_user.cfg`:
 
 ```ini
 # Enable/disable Smart Cooling
@@ -167,7 +167,7 @@ Smart Cooling uses your slicer's fan speed as the "base" and adjusts from there.
 
 ### Option 2: Define Base in Config
 
-In OrcaSlicer/PrusaSlicer, set fan speed to 0%, then define the baseline in `auto_flow.cfg`:
+In OrcaSlicer/PrusaSlicer, set fan speed to 0%, then define the baseline in `auto_flow_user.cfg`:
 
 ```ini
 variable_sc_base_fan: 255   # 255 = 100% as base

@@ -4,7 +4,7 @@ Detailed configuration options for Klipper Adaptive Flow.
 
 ## Quick Start
 
-Most users only need to set one option in `auto_flow.cfg`:
+Most users only need to set one option in `auto_flow_user.cfg`:
 
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
@@ -38,7 +38,7 @@ Higher temperature = lower filament viscosity = less PA needed.
 
 ### User-Editable Profiles
 
-Material profiles are defined in `material_profiles.cfg`. Edit this file to customize boost curves for your filaments.
+Material profiles are defined in `material_profiles_user.cfg` or `material_profiles_defaults.cfg`. Edit this file to customize boost curves for your filaments.
 
 Each profile is a Klipper macro:
 ```ini
@@ -123,7 +123,7 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ### Adding Custom Materials
 
-1. Copy any profile in `material_profiles.cfg`
+1. Copy any profile in `material_profiles_user.cfg` or `material_profiles_defaults.cfg`
 2. Rename to `[gcode_macro _AF_PROFILE_YOURMATERIAL]`
 3. Adjust the values
 4. Use: `AT_START MATERIAL=YOURMATERIAL`
@@ -132,7 +132,7 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ## Advanced Configuration
 
-Edit these variables in `auto_flow.cfg` if needed:
+Edit these variables in `auto_flow_user.cfg` if needed:
 
 ### Global Limits
 

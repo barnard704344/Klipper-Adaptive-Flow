@@ -21,7 +21,7 @@ This combination can cause thermal lag, inconsistent extrusion, and surface arti
 
 ## Configuration
 
-DynZ is enabled by default. To customize, edit `auto_flow.cfg`:
+DynZ is enabled by default. To customize, edit `auto_flow_user.cfg`:
 
 ```ini
 # Enable/disable DynZ

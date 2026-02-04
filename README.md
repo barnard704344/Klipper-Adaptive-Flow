@@ -217,7 +217,7 @@ When printing multiple objects sequentially, the nozzle temperature from the fir
 
 ### Configuration
 
-Edit `auto_flow.cfg` to customize:
+Edit `auto_flow_user.cfg` to customize:
 
 ```ini
 variable_multi_object_temp_wait: True     # Enable/disable feature
@@ -260,8 +260,10 @@ The AI analyzes your print data and suggests parameter adjustments:
 
 | File | Purpose |
 |------|---------|
-| `auto_flow.cfg` | Main control logic |
-| `material_profiles.cfg` | User-editable material profiles |
+| `auto_flow_defaults.cfg` | System defaults (updated by git) |
+| `auto_flow_user.cfg` | User configuration overrides |
+| `material_profiles_defaults.cfg` | Default material profiles (updated by git) |
+| `material_profiles_user.cfg` | Custom material profiles |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
 | `analyze_print.py` | Post-print LLM analysis (optional) |
