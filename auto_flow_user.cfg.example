@@ -1,0 +1,68 @@
+# =========================================================
+#  ADAPTIVE FLOW - USER CONFIGURATION OVERRIDES
+# =========================================================
+#  Copy this file to auto_flow_user.cfg to customize settings
+#  Your auto_flow_user.cfg will NEVER be overwritten by updates
+#
+#  Uncomment and edit any variables you want to override
+# =========================================================
+
+[gcode_macro _AUTO_TEMP_CORE]
+# HOTEND TYPE (Revo Only)
+# Set to True for Revo HF, False for Revo Standard
+variable_use_high_flow_nozzle: True
+
+# ADVANCED TUNING (uncomment to override)
+# variable_flow_smoothing: 0.15
+# variable_max_boost_limit: 50.0
+# variable_ramp_rate_rise: 4.0
+# variable_ramp_rate_fall: 1.0
+
+# SPEED-BASED BOOST (uncomment to override)
+# variable_speed_boost_threshold: 100.0
+# variable_speed_boost_k: 0.08
+
+# THERMAL SAFETY (uncomment to override)
+# variable_thermal_runaway_threshold: 15.0
+# variable_thermal_undertemp_threshold: 10.0
+
+# FIRST LAYER MODE (uncomment to override)
+# variable_first_layer_skip: True
+# variable_first_layer_height: 0.3
+
+# DYNAMIC PRESSURE ADVANCE (uncomment to override)
+# variable_pa_enable: True
+
+# MULTI-OBJECT TEMPERATURE MANAGEMENT (uncomment to override)
+# variable_multi_object_temp_wait: True
+# variable_temp_wait_tolerance: 5.0
+
+# DYNAMIC Z-WINDOW LEARNING (uncomment to override)
+# variable_dynz_enable: True
+# variable_dynz_bin_height: 1.0
+# variable_dynz_speed_thresh: 80.0
+# variable_dynz_flow_max: 8.0
+# variable_dynz_pwm_thresh: 0.70
+# variable_dynz_score_inc: 1.0
+# variable_dynz_score_decay: 0.90
+# variable_dynz_activate_score: 4.0
+# variable_dynz_deactivate_score: 1.5
+# variable_dynz_accel_relief: 3200
+
+# SMART COOLING (uncomment to override)
+# variable_sc_enable: True
+# variable_sc_base_fan: 255
+# variable_sc_flow_gate: 8.0
+# variable_sc_flow_k: 0.03
+# variable_sc_short_layer_time: 15.0
+# variable_sc_layer_time_k: 0.02
+# variable_sc_min_fan: 0.20
+# variable_sc_max_fan: 1.00
+# variable_sc_first_layer_fan: 0.0
+
+# HEATER-ADAPTIVE FAN CONTROL (uncomment to override)
+# variable_sc_heater_adaptive: True
+# variable_sc_heater_wattage: 0  # 40, 60, or 0 for manual
+# variable_sc_heater_duty_threshold: 0.90
+# variable_sc_heater_duty_k: 1.0
+gcode:
