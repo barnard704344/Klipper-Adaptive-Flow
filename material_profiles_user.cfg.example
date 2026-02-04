@@ -1,0 +1,65 @@
+# =========================================================
+#  ADAPTIVE FLOW - USER MATERIAL PROFILES
+# =========================================================
+#  Copy this file to material_profiles_user.cfg to add custom materials
+#  Your material_profiles_user.cfg will NEVER be overwritten by updates
+#
+#  To create a custom profile:
+#    1. Copy an existing profile from material_profiles_defaults.cfg
+#    2. Rename to [gcode_macro _AF_PROFILE_YOURMATERIAL]
+#    3. Adjust the values
+#    4. Pass MATERIAL=YOURMATERIAL from your slicer
+#
+#  PARAMETER GUIDE:
+#  ----------------
+#  flow_k:         Temp boost per mm³/s of flow (higher = more aggressive)
+#  speed_boost_k:  Temp boost per mm/s above 100mm/s (for thin walls at speed)
+#  max_boost:      Maximum temperature boost cap (°C above base)
+#  max_temp:       Absolute maximum temperature limit (safety)
+#  flow_gate:      Minimum flow (mm³/s) before boost activates (HF nozzle)
+#  flow_gate_std:  Minimum flow (mm³/s) before boost activates (Standard nozzle)
+#  pa_boost_k:     PA reduction per °C of boost (viscosity compensation)
+#  ramp_rise:      How fast temp can increase (°C/s)
+#  ramp_fall:      How fast temp can decrease (°C/s)
+#  default_pa:     Default PA if user hasn't calibrated
+#  sc_flow_gate:   Smart cooling flow threshold (mm³/s)
+#  sc_flow_k:      Fan reduction per mm³/s above sc_flow_gate
+#  sc_min_fan:     Minimum fan speed (0.0-1.0)
+#  sc_max_fan:     Maximum fan speed (0.0-1.0)
+# =========================================================
+
+# Example: Custom PLA variant
+# [gcode_macro _AF_PROFILE_MYPLA]
+# variable_flow_k: 1.00
+# variable_speed_boost_k: 0.08
+# variable_max_boost: 30.0
+# variable_max_temp: 245
+# variable_flow_gate: 8.0
+# variable_flow_gate_std: 6.0
+# variable_pa_boost_k: 0.001
+# variable_ramp_rise: 5.0
+# variable_ramp_fall: 2.5
+# variable_default_pa: 0.035
+# variable_sc_flow_gate: 8.0
+# variable_sc_flow_k: 0.02
+# variable_sc_min_fan: 0.20
+# variable_sc_max_fan: 1.00
+# gcode:
+
+# Example: Custom PETG variant
+# [gcode_macro _AF_PROFILE_MYPETG]
+# variable_flow_k: 1.10
+# variable_speed_boost_k: 0.10
+# variable_max_boost: 40.0
+# variable_max_temp: 280
+# variable_flow_gate: 10.0
+# variable_flow_gate_std: 8.0
+# variable_pa_boost_k: 0.0012
+# variable_ramp_rise: 5.0
+# variable_ramp_fall: 2.0
+# variable_default_pa: 0.060
+# variable_sc_flow_gate: 10.0
+# variable_sc_flow_k: 0.02
+# variable_sc_min_fan: 0.15
+# variable_sc_max_fan: 0.40
+# gcode:

@@ -21,15 +21,23 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
 cd Klipper-Adaptive-Flow
 cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
-cp auto_flow.cfg material_profiles.cfg ~/printer_data/config/
+cp auto_flow_defaults.cfg material_profiles_defaults.cfg ~/printer_data/config/
+cp auto_flow_user.cfg.example ~/printer_data/config/auto_flow_user.cfg
+cp material_profiles_user.cfg.example ~/printer_data/config/material_profiles_user.cfg
 sudo systemctl restart klipper
 ```
+
 Add to `printer.cfg`:
 ```ini
-[include auto_flow.cfg]
+[include auto_flow_defaults.cfg]
+[include auto_flow_user.cfg]
+[include material_profiles_defaults.cfg]
+[include material_profiles_user.cfg]  # Optional: for custom materials
 [gcode_interceptor]
 [extruder_monitor]
 ```
+
+**Edit your settings:** Open `~/printer_data/config/auto_flow_user.cfg` and uncomment/modify any values you want to customize.
 
 ## Slicer Setup
 
@@ -74,28 +82,37 @@ The `MATERIAL` parameter is passed from your slicer's start G-code (see above). 
 
 ### Basic Setup (most users)
 
-Edit `auto_flow.cfg`:
+Edit `auto_flow_user.cfg`:
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo
 ```
 
 
 ## Updating
-Run a git pull:
 
+**Option 1: Smart Update Script (Recommended)**
 ```bash
-cd Klipper-Adaptive-Flow
+cd ~/Klipper-Adaptive-Flow
+./update.sh
+```
+Your custom configuration is automatically preserved.
+
+**Option 2: Manual Update**
+```bash
+cd ~/Klipper-Adaptive-Flow
 git pull
 cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
-cp auto_flow.cfg material_profiles.cfg ~/printer_data/config/
+cp auto_flow_defaults.cfg material_profiles_defaults.cfg ~/printer_data/config/
 sudo systemctl restart klipper
 ```
+✅ `auto_flow_user.cfg` and `material_profiles_user.cfg` are never overwritten.
 
 
 ### Material Profiles (optional customization)
 
-Edit `material_profiles.cfg` to customize per-material boost curves:
+Edit `material_profiles_user.cfg` to add custom materials, or override defaults in `auto_flow_user.cfg`:
 ```ini
+# In auto_flow_user.cfg, you can override material-specific settings
 [gcode_macro _AF_PROFILE_PLA]
 variable_flow_k: 1.00           # Temp boost per mm³/s flow
 variable_speed_boost_k: 0.08    # Temp boost per mm/s above 100
@@ -200,7 +217,7 @@ When printing multiple objects sequentially, the nozzle temperature from the fir
 
 ### Configuration
 
-Edit `auto_flow.cfg` to customize:
+Edit `auto_flow_user.cfg` to customize:
 
 ```ini
 variable_multi_object_temp_wait: True     # Enable/disable feature
@@ -243,8 +260,10 @@ The AI analyzes your print data and suggests parameter adjustments:
 
 | File | Purpose |
 |------|---------|
-| `auto_flow.cfg` | Main control logic |
-| `material_profiles.cfg` | User-editable material profiles |
+| `auto_flow_defaults.cfg` | System defaults (updated by git) |
+| `auto_flow_user.cfg` | User configuration overrides |
+| `material_profiles_defaults.cfg` | Default material profiles (updated by git) |
+| `material_profiles_user.cfg` | Custom material profiles |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
 | `analyze_print.py` | Post-print LLM analysis (optional) |

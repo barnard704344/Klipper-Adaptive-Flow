@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.backup
+*_user.cfg
+!*_user.cfg.example

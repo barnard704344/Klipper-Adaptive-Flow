@@ -22,9 +22,12 @@ This repository provides **automatic temperature and pressure advance control** 
 - `moonraker_hook.py` - Optional auto-analysis integration with Moonraker
 
 ### Configuration Files (Klipper/G-code Macros)
-- `auto_flow.cfg` - Main control logic, core loop, macros (user-editable settings)
-- `material_profiles.cfg` - Material-specific boost curves and PA settings (user-editable)
+- `auto_flow_defaults.cfg` - System defaults for control logic (updated by git, do not edit)
+- `auto_flow_user.cfg.example` - Template for user configuration overrides
+- `material_profiles_defaults.cfg` - Default material profiles (updated by git, do not edit)
+- `material_profiles_user.cfg.example` - Template for custom material profiles
 - `analysis_config.cfg` - LLM provider configuration for print analysis
+- `update.sh` - Smart updater script that preserves user configuration
 
 ### Documentation
 - `README.md` - Installation, setup, and usage guide
@@ -71,16 +74,22 @@ This repository provides **automatic temperature and pressure advance control** 
    - Use Klipper macro syntax: `[gcode_macro MACRO_NAME]`
    - Define variables with `variable_name: value`
    - Use meaningful section comments with separator lines
+   - **System defaults** are in `*_defaults.cfg` files (updated by git)
+   - **User overrides** are in `*_user.cfg` files (never overwritten)
 
 2. **User-Editable Settings**:
-   - Place all user-configurable settings at the top with clear comments
+   - System defaults go in `auto_flow_defaults.cfg` and `material_profiles_defaults.cfg`
+   - User customizations go in `*_user.cfg` files (created from `*.example` templates)
+   - Place all user-configurable settings in the example templates with clear comments
    - Provide default values that work for most users
    - Include units in comments (°C, mm/s, mm³/s, etc.)
 
 3. **Material Profiles**:
+   - Default materials are in `material_profiles_defaults.cfg`
+   - Custom materials go in `material_profiles_user.cfg`
    - Each material is a separate macro: `[gcode_macro _AF_PROFILE_MATERIAL]`
    - Follow naming convention: `_AF_PROFILE_` prefix for internal profiles
-   - Include parameter guide comments in `material_profiles.cfg`
+   - Include parameter guide comments in templates
 
 4. **Macro Naming**:
    - User-facing commands: `AT_COMMAND` (e.g., `AT_STATUS`, `AT_SET_PA`)
@@ -174,13 +183,21 @@ When making code changes:
 ## Common Workflows
 
 ### Adding a New Material Profile
-1. Copy an existing profile in `material_profiles.cfg`
-2. Rename macro to `[gcode_macro _AF_PROFILE_YOURMATERIAL]`
-3. Adjust boost parameters based on material properties
-4. Document in `docs/CONFIGURATION.md` if it's a common material
+1. Add to `material_profiles_defaults.cfg` for system defaults
+2. Or create custom profile in `material_profiles_user.cfg` for user-specific materials
+3. Rename macro to `[gcode_macro _AF_PROFILE_YOURMATERIAL]`
+4. Adjust boost parameters based on material properties
+5. Document in `docs/CONFIGURATION.md` if it's a common material
+
+### Updating User Configuration
+1. **System defaults** (`*_defaults.cfg`) are updated via git pull
+2. **User configs** (`*_user.cfg`) are never overwritten
+3. Users can update using `update.sh` script or manually
+4. New features should add commented examples to `*.example` templates
+5. Preserve backward compatibility - don't remove or rename existing variables
 
 ### Modifying Temperature Control Logic
-1. Core loop is in `auto_flow.cfg` under `[gcode_macro _AUTO_TEMP_CORE]`
+1. Core loop is in `auto_flow_defaults.cfg` under `[gcode_macro _AUTO_TEMP_CORE]`
 2. Test with conservative parameters first (lower `flow_k`, slower ramp rates)
 3. Verify heater can keep up (check for "heater too slow" warnings in logs)
 4. Consider impact on all material profiles
@@ -188,7 +205,7 @@ When making code changes:
 ### Extending Lookahead System
 1. Add functionality to `extruder_monitor.py`
 2. Expose new G-code commands via `register_command()`
-3. Update `auto_flow.cfg` to consume new data
+3. Update `auto_flow_defaults.cfg` to consume new data
 4. Document new commands in README.md
 
 ### Adding New Analysis Features
