@@ -7,6 +7,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Dynamic temperature** — flow/speed/acceleration-based boost
 - **Dynamic PA** — scales with temperature boost automatically
 - **Smart Cooling** — adjusts part fan based on flow rate and layer time
+- **Heater Capacity Management** — prevents instability when heater can't keep up (NEW)
 - **5-second lookahead** — pre-heats before flow spikes
 - **Dynamic Z-Window (DynZ)** — learns and adapts to convex surfaces
 - **Multi-object temperature management** — prevents thermal runaway between sequential objects
@@ -207,6 +208,31 @@ AT_SC_STATUS
 ```
 
 **[Full Smart Cooling documentation →](docs/SMART_COOLING.md)**
+
+## Heater Capacity Management
+
+Heater Capacity Management is a flow-adaptive heater protection system that prevents temperature instability when the heater cannot keep up with requested boost levels at extreme flow rates.
+
+- **Automatic limiting**: Caps effective flow when heater duty cycle exceeds 85%
+- **Fan reduction**: Reduces part cooling fan to help heater reach target
+- **Smart calculation**: Adjusts sustainable flow based on heater wattage, temperature, and fan speed
+- **Seamless integration**: Works alongside Smart Cooling and Dynamic PA
+- **Zero config**: Enabled by default with sensible settings
+
+### Quick Setup
+
+Set your heater wattage in `auto_flow_user.cfg`:
+
+```ini
+variable_heater_wattage: 40  # 40W, 60W, or 0 for manual
+```
+
+Check status during a print:
+```
+AT_STATUS
+```
+
+**[Full Heater Capacity documentation →](docs/HEATER_CAPACITY.md)**
 
 ## Multi-Object Temperature Management
 

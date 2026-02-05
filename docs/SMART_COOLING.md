@@ -308,6 +308,90 @@ variable_sc_heater_duty_k: 2.0           # Double the duty excess (at 95% duty: 
 variable_sc_heater_adaptive: False
 ```
 
+## Integration with Heater Capacity Management
+
+Smart Cooling works seamlessly with the **Heater Capacity Management** system (NEW feature):
+
+### How They Work Together
+
+1. **Smart Cooling's heater-adaptive feedback**: Reduces fan when heater duty exceeds threshold (typically 85-90%)
+2. **Heater Capacity Management**: Also reduces fan **and** limits temperature demand when heater struggles
+
+Both systems work together to maintain temperature stability:
+
+- **Normal operation**: Only Smart Cooling adjusts fan based on duty cycle
+- **Extreme conditions**: Heater Capacity Management activates flow limiting and adds additional fan reduction
+- **Result**: Maximum stability with dual-layer protection
+
+### Example Scenario
+
+**Without Heater Capacity Management:**
+```
+Flow: 19 mm³/s → Boost: +19°C → Target: 229°C
+Heater: 95% duty, struggling
+Smart Cooling reduces fan: 70% → 64% (helps, but not enough)
+Result: Temperature still unstable
+```
+
+**With Heater Capacity Management:**
+```
+Flow: 19 mm³/s actual
+Heater Capacity Management detects struggle
+Effective flow limited: 11 mm³/s
+Boost reduced: +11°C → Target: 221°C
+Smart Cooling reduces fan: 70% → 64%
+Heater Capacity adds: -10% fan → Final: 54%
+Result: Heater duty drops to 88%, stable temperature
+```
+
+### Configuration
+
+The two systems use separate settings:
+
+**Smart Cooling heater-adaptive (basic duty-based reduction):**
+```ini
+variable_sc_heater_adaptive: True
+variable_sc_heater_wattage: 40  # or 60
+```
+
+**Heater Capacity Management (flow limiting + fan reduction):**
+```ini
+variable_heater_adaptive_flow: True
+variable_heater_wattage: 40  # or 60
+```
+
+> **Note:** Both use the same `heater_wattage` value. Set it once and both systems adapt accordingly.
+
+### When to Use Each
+
+**Smart Cooling heater-adaptive alone:**
+- Mild heater saturation (90-95% duty)
+- Standard flow rates (<15 mm³/s)
+- Want basic fan reduction only
+
+**Heater Capacity Management (includes Smart Cooling benefits):**
+- Severe heater saturation (>95% duty)
+- Extreme flow rates (15-20+ mm³/s)
+- CPAP fans overwhelming heater
+- Want both flow limiting and fan reduction
+
+**Recommendation:** Enable both (default) for maximum stability.
+
+### Monitoring
+
+Check combined status with `AT_STATUS`:
+
+```
+╠═══════════════════════════════════════════╣
+║ HEATER CAPACITY                           ║
+╠═══════════════════════════════════════════╣
+║ Status:     ⚠ LIMITED (88% duty)       ║
+║ Sustainable:  11.2 mm³/s (calc)             ║
+║ Profile:     40W heater                      ║
+```
+
+**[Full Heater Capacity Management documentation →](HEATER_CAPACITY.md)**
+
 ## Disabling Smart Cooling
 
 To disable Smart Cooling while keeping other Adaptive Flow features:
