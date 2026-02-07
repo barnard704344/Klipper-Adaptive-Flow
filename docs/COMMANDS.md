@@ -350,11 +350,12 @@ Internal command - do not call directly.
 
 ### `M486`
 
-Internal command - do not call directly.
+Legacy G-code command for object labeling - handled natively by Klipper.
 
 **Notes:**
 - Automatically triggered by legacy slicers
-- Manages temperature transitions for sequential printing
+- Handled by Klipper's exclude_object module
+- Internally calls EXCLUDE_OBJECT_START, which manages temperature transitions
 
 ---
 
