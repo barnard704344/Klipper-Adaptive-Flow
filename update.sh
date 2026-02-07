@@ -90,7 +90,7 @@ if [ -f "$OLD_AUTO" ] && [ ! -L "$OLD_AUTO" ]; then
     echo "settings to $USER_CFG"
     echo ""
     # Remove old file after backup to prevent repeated migration warnings
-    rm "$OLD_AUTO"
+    rm -f "$OLD_AUTO"
     echo "✅ Removed old auto_flow.cfg (backup preserved)"
     echo ""
     read -p "Press Enter to continue..."
@@ -110,7 +110,7 @@ if [ -f "$OLD_MAT" ] && [ ! -L "$OLD_MAT" ]; then
     echo "materials to $USER_MAT"
     echo ""
     # Remove old file after backup to prevent repeated migration warnings
-    rm "$OLD_MAT"
+    rm -f "$OLD_MAT"
     echo "✅ Removed old material_profiles.cfg (backup preserved)"
     echo ""
     read -p "Press Enter to continue..."
