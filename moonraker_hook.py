@@ -201,8 +201,13 @@ def run_analysis(auto_apply=False, provider=None):
                 # Skip decorative lines
                 if line.startswith('===') or line.startswith('---') or not line.strip():
                     continue
+                
+                # Check if line contains bullet point or continuation
+                stripped = line.strip()
+                is_bullet_or_continuation = stripped.startswith('•') or stripped.startswith('...')
+                
                 # Send informative lines
-                if any(keyword in line for keyword in [
+                if is_bullet_or_continuation or any(keyword in line for keyword in [
                     'Quality:', 'ANALYSIS:', 'ALL GOOD', 'No issues',
                     'critical issue', 'other issue', 'suggestion',
                     'Report:', 'Mainsail:', '🎉', '✅', '⚠️', '❌', '🔴', '🟡', '💡'
