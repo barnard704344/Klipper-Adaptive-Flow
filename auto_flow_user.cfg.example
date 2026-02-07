@@ -17,10 +17,15 @@ variable_use_high_flow_nozzle: True
 #   1. Increase flow_smoothing (0.30-0.35 for smooth layers)
 #   2. Decrease ramp_rate_rise (2.0-2.5 for gentle transitions)
 #   3. Lower your material's flow_k value (see material profiles)
+#
+# If you see directional artifacts on cube faces (different quality on Y+ vs Y-):
+#   1. Increase ramp_rate_fall to match ramp_rate_rise more closely (2:1 ratio)
+#   2. Keep the ratio between 1.5:1 and 2.5:1 for best results
+#
 # variable_flow_smoothing: 0.25
 # variable_max_boost_limit: 50.0
 # variable_ramp_rate_rise: 3.0
-# variable_ramp_rate_fall: 1.0
+# variable_ramp_rate_fall: 1.5
 
 # SPEED-BASED BOOST (uncomment to override)
 # variable_speed_boost_threshold: 100.0
