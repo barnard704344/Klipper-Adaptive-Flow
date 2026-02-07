@@ -318,6 +318,47 @@ The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base 
 
 **Trade-offs**: More smoothing reduces banding but may cause slight under-heating during rapid flow increases. For most prints, this is not noticeable and print quality improves.
 
+### Directional Artifacts / Cube Lines
+**Symptoms**: Calibration cubes show different line quality on front faces vs back faces (Y+ vs Y-), or one direction looks over-extruded while the other looks under-extruded
+
+**Root Cause**: Asymmetric temperature ramping - the system heats up faster than it cools down. When the print head moves in different directions, the temperature doesn't stabilize symmetrically, causing directional differences in extrusion width and quality.
+
+**Technical Details**: 
+- Default `ramp_rate_rise` is 3.0 °C/s (heating)
+- Default `ramp_rate_fall` was 1.0 °C/s (cooling) - **now 1.5 °C/s**
+- A 3:1 ratio creates visible asymmetry on cube faces
+- The temperature boost directly affects Pressure Advance via `pa_adjustment = boost × pa_boost_k`
+- Different temperatures on different faces → different PA → different extrusion characteristics
+
+**Solutions**:
+1. **Increase ramp_rate_fall** to match ramp_rate_rise more closely:
+   ```ini
+   variable_ramp_rate_rise: 3.0
+   variable_ramp_rate_fall: 1.5  # Increased from 1.0 to 2:1 ratio
+   ```
+
+2. **Recommended ratios** (rise/fall):
+   - Good: 1.5:1 to 2:1 inclusive (e.g., 3.0/2.0 or 3.0/1.5)
+   - Acceptable: 2:1 to 2.5:1 (e.g., 5.0/2.0)
+   - Problematic: >2.5:1 (creates visible directional artifacts)
+
+3. **For severe cases**, match the rates completely:
+   ```ini
+   variable_ramp_rate_rise: 3.0
+   variable_ramp_rate_fall: 3.0  # Fully symmetric
+   ```
+   Note: This may increase corner bulging as the nozzle stays hotter during direction changes.
+
+4. **Alternative: Reduce overall ramp rates** while keeping ratio:
+   ```ini
+   variable_ramp_rate_rise: 2.0
+   variable_ramp_rate_fall: 1.0  # Maintains 2:1 ratio but gentler
+   ```
+
+**Verification**: Print a calibration cube and inspect all four vertical faces. Lines should have consistent appearance in all directions. If one face appears glossier or has different line definition, adjust the ramp ratio.
+
+**Trade-offs**: More symmetric ramp rates improve directional consistency but may reduce responsiveness to flow changes. Start with a 2:1 ratio and adjust based on your specific material and print conditions.
+
 ### Heaters stay on after print
 - Ensure `AT_END` is called before `TURN_OFF_HEATERS` in PRINT_END
 

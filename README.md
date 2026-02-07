@@ -307,6 +307,20 @@ If you see horizontal bands on your prints that correlate with flow/speed change
 
 Higher smoothing values (0.30-0.35) provide gentler temperature transitions, eliminating visible banding at the cost of slightly slower response to flow changes.
 
+### Directional Artifacts / Cube Lines
+
+If calibration cubes show different line quality on front faces vs back faces (Y+ vs Y-):
+
+This is caused by asymmetric temperature ramping - the system heats up faster than it cools down, creating directional differences in extrusion.
+
+**Solution:** Increase `ramp_rate_fall` to match `ramp_rate_rise` more closely in `auto_flow_user.cfg`:
+```ini
+variable_ramp_rate_rise: 3.0
+variable_ramp_rate_fall: 1.5  # Increased from 1.0 to reduce asymmetry
+```
+
+**Recommended ratio:** Keep the rise/fall ratio between 1.5:1 and 2.5:1 for best results. Too asymmetric (>2.5:1) causes visible directional artifacts.
+
 **[Full troubleshooting guide →](docs/CONFIGURATION.md#troubleshooting)**
 
 ## File Structure
