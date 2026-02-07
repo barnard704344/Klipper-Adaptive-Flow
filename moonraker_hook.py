@@ -204,7 +204,7 @@ def run_analysis(auto_apply=False, provider=None):
                 
                 # Check if line contains bullet point or continuation
                 stripped = line.strip()
-                is_bullet_or_continuation = stripped.startswith('•') or stripped.startswith('...')
+                is_bullet_or_continuation = stripped.startswith('•') or stripped.startswith('... ')
                 
                 # Send informative lines
                 if is_bullet_or_continuation or any(keyword in line for keyword in [
