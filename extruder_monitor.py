@@ -788,11 +788,11 @@ class ExtruderMonitor:
                                         # BANDING RISK SUMMARY (NEW - shown first for visibility)
                     ba = summary['banding_analysis']
                     if ba['high_risk_events'] > 0 or ba['accel_changes'] > 10:
-                        gcmd.respond_info(f\"⚠️  BANDING RISK DETECTED: {ba['high_risk_events']} high-risk events\")
-                        gcmd.respond_info(f\"  Likely culprit: {ba['likely_culprit']}\")
-                        gcmd.respond_info(f\"  Events: Accel changes:{ba['accel_changes']}, PA changes:{ba['pa_changes']}, DynZ transitions:{ba['dynz_transitions']}, Temp overshoots:{ba['temp_overshoots']}\")
+                        gcmd.respond_info(f"⚠️  BANDING RISK DETECTED: {ba['high_risk_events']} high-risk events")
+                        gcmd.respond_info(f"  Likely culprit: {ba['likely_culprit']}")
+                        gcmd.respond_info(f"  Events: Accel changes:{ba['accel_changes']}, PA changes:{ba['pa_changes']}, DynZ transitions:{ba['dynz_transitions']}, Temp overshoots:{ba['temp_overshoots']}")
                     else:
-                        gcmd.respond_info(f\"✓ Banding risk low: avg {ba['avg_risk']:.1f}/10, {ba['high_risk_events']} high-risk events\")
+                        gcmd.respond_info(f"✓ Banding risk low: avg {ba['avg_risk']:.1f}/10, {ba['high_risk_events']} high-risk events")
                                         # Feature summary
                     at = summary['auto_temp']
                     gcmd.respond_info(f"AT_LOG: Temp: {at['temp_min']}-{at['temp_max']}C (range {at['temp_range']}C), Boost avg:{at['avg_boost']}C max:{at['max_boost']}C")
