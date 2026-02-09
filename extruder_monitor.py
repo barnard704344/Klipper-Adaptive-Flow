@@ -831,7 +831,7 @@ class ExtruderMonitor:
                 self._log_stats = {}
     
     def _diagnose_banding_culprit(self):
-        \"\"\"Analyze stats to identify most likely banding cause.\"\"\"
+        """Analyze stats to identify most likely banding cause."""
         accel_chg = self._log_stats.get('accel_changes', 0)
         pa_chg = self._log_stats.get('pa_changes', 0)
         dynz_trans = self._log_stats.get('dynz_transitions', 0)
@@ -839,12 +839,12 @@ class ExtruderMonitor:
         samples = self._log_sample_count
         
         if samples == 0:
-            return \"insufficient_data\"
+            return "insufficient_data"
         
         # Calculate rates per hour of printing
         duration_hrs = (self._log_sample_count / 60) / 60  # samples are ~1/second
         if duration_hrs < 0.01:
-            return \"print_too_short\"
+            return "print_too_short"
         
         accel_per_hr = accel_chg / duration_hrs
         pa_per_hr = pa_chg / duration_hrs
@@ -872,7 +872,7 @@ class ExtruderMonitor:
         max_score = scores[culprit]
         
         if max_score < 5:
-            return \"no_obvious_culprit\"
+            return "no_obvious_culprit"
         
         return culprit
 
