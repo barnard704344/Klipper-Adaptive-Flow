@@ -13,7 +13,6 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Per-material profiles** — PLA (tuned for HF), PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
-- **Print analysis** — AI-powered tuning suggestions (optional)
 
 ## Installation
 
@@ -229,23 +228,6 @@ Enable object labeling in your slicer:
 
 This feature works automatically—no G-code changes needed.
 
-## Optional: Print Analysis
-
-After printing, get AI-powered suggestions to improve your settings:
-
-```bash
-cd ~/Klipper-Adaptive-Flow
-python3 analyze_print.py
-```
-
-The AI analyzes your print data and suggests parameter adjustments:
-- Suggestions marked **[✓ SAFE]** can be auto-applied
-- Suggestions marked **[⚠ MANUAL]** require your review
-
-**Providers:** GitHub Models (free), OpenAI, Anthropic
-
-**[Setup guide →](docs/ANALYSIS.md)**
-
 ## Requirements
 
 - E3D Revo hotend (HF or Standard)
@@ -262,8 +244,7 @@ The AI analyzes your print data and suggests parameter adjustments:
 | `material_profiles_user.cfg` | Custom material profiles (never overwritten) |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
-| `analyze_print.py` | Post-print LLM analysis (optional) |
-| `moonraker_hook.py` | Auto-analysis after print (optional) |
+
 | `update.sh` | Smart updater (preserves user configs) |
 
 ## License

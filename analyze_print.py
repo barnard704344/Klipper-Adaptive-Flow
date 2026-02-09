@@ -2,14 +2,16 @@
 """
 Adaptive Flow Print Analyzer
 
-Analyzes print session logs and provides tuning suggestions via LLM.
-Uses high-quality LLM providers for accurate, reliable analysis.
+Single-print: LLM-powered tuning suggestions
+Multi-print: Banding detection and root cause diagnosis
 
 Usage:
-    python3 analyze_print.py                     # Analyze most recent print
-    python3 analyze_print.py <summary.json>      # Analyze specific print
+    python3 analyze_print.py                     # Analyze most recent print (LLM)
+    python3 analyze_print.py <summary.json>      # Analyze specific print (LLM)
     python3 analyze_print.py --auto              # Auto-apply safe suggestions
     python3 analyze_print.py --provider openai   # Use specific provider
+    python3 analyze_print.py --count 10          # Banding analysis (last 10 prints)
+    python3 analyze_print.py --count 10 --material PLA  # Filter by material
     
 Configuration:
     Edit analysis_config.cfg with your provider and API key.
@@ -26,7 +28,10 @@ import json
 import glob
 import csv
 import urllib.parse
+import statistics
 from datetime import datetime
+from pathlib import Path
+from collections import defaultdict
 
 # =============================================================================
 # PROVIDER CONFIGURATIONS
@@ -675,6 +680,247 @@ def apply_suggestion(suggestion, moonraker_url):
     return False
 
 
+# =============================================================================
+# MULTI-PRINT BANDING ANALYSIS
+# =============================================================================
+
+def find_recent_sessions(log_dir, count=None, material=None):
+    """Find recent print sessions, optionally filtered by material."""
+    sessions = []
+    
+    for file in Path(log_dir).glob("*_summary.json"):
+        try:
+            with open(file, 'r') as f:
+                summary = json.load(f)
+                
+            if material and summary.get('material', '').upper() != material.upper():
+                continue
+            
+            csv_file = str(file).replace('_summary.json', '.csv')
+            if not os.path.exists(csv_file):
+                continue
+            
+            sessions.append({
+                'summary_file': str(file),
+                'csv_file': csv_file,
+                'summary': summary,
+                'timestamp': summary.get('start_time', ''),
+            })
+        except Exception as e:
+            print(f"Warning: Could not read {file}: {e}")
+    
+    sessions.sort(key=lambda x: x['timestamp'], reverse=True)
+    
+    if count:
+        sessions = sessions[:count]
+    
+    return sessions
+
+
+def analyze_csv_for_banding(csv_file):
+    """Deep analysis of CSV file for banding patterns."""
+    events = {
+        'accel_spikes': [],
+        'pa_oscillations': [],
+        'temp_overshoots': [],
+        'dynz_transitions': [],
+        'high_risk_moments': [],
+    }
+    
+    flow_variance = []
+    pa_variance = []
+    accel_variance = []
+    
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            
+            for row in reader:
+                try:
+                    elapsed = float(row['elapsed_s'])
+                    
+                    if 'pa_delta' in row and abs(float(row['pa_delta'])) > 0.005:
+                        events['pa_oscillations'].append({
+                            'time': elapsed,
+                            'delta': float(row['pa_delta']),
+                            'z': float(row.get('z_height', 0)),
+                        })
+                    
+                    if 'accel_delta' in row and abs(float(row['accel_delta'])) > 500:
+                        events['accel_spikes'].append({
+                            'time': elapsed,
+                            'delta': float(row['accel_delta']),
+                            'z': float(row.get('z_height', 0)),
+                        })
+                    
+                    if 'temp_overshoot' in row and abs(float(row['temp_overshoot'])) > 5.0:
+                        events['temp_overshoots'].append({
+                            'time': elapsed,
+                            'overshoot': float(row['temp_overshoot']),
+                        })
+                    
+                    if 'dynz_transition' in row and int(row['dynz_transition']) != 0:
+                        events['dynz_transitions'].append({
+                            'time': elapsed,
+                            'state': 'ON' if int(row['dynz_transition']) > 0 else 'OFF',
+                            'z': float(row.get('z_height', 0)),
+                        })
+                    
+                    if 'banding_risk' in row and int(row['banding_risk']) >= 5:
+                        events['high_risk_moments'].append({
+                            'time': elapsed,
+                            'risk': int(row['banding_risk']),
+                            'flags': row.get('event_flags', ''),
+                            'z': float(row.get('z_height', 0)),
+                        })
+                    
+                    flow_variance.append(float(row['flow']))
+                    if 'pa' in row and float(row['pa']) > 0:
+                        pa_variance.append(float(row['pa']))
+                    if 'accel' in row and int(row['accel']) > 0:
+                        accel_variance.append(int(row['accel']))
+                        
+                except (KeyError, ValueError):
+                    continue
+    
+    except Exception as e:
+        print(f"Warning: Could not analyze {csv_file}: {e}")
+        return None
+    
+    def safe_stdev(data):
+        return statistics.stdev(data) if len(data) > 1 else 0.0
+    
+    return {
+        'events': events,
+        'variance': {
+            'flow_stdev': safe_stdev(flow_variance) if flow_variance else 0.0,
+            'pa_stdev': safe_stdev(pa_variance) if pa_variance else 0.0,
+            'accel_stdev': safe_stdev(accel_variance) if accel_variance else 0.0,
+        },
+        'event_counts': {k: len(v) for k, v in events.items()},
+    }
+
+
+def aggregate_banding_analysis(sessions):
+    """Aggregate banding data across multiple prints."""
+    agg = {
+        'session_count': len(sessions),
+        'materials': defaultdict(int),
+        'total_duration_min': 0,
+        'total_samples': 0,
+        'total_high_risk_events': 0,
+        'total_accel_changes': 0,
+        'total_pa_changes': 0,
+        'total_dynz_transitions': 0,
+        'total_temp_overshoots': 0,
+        'culprits': defaultdict(int),
+        'sessions': [],
+    }
+    
+    for session in sessions:
+        summary = session['summary']
+        agg['materials'][summary.get('material', 'UNKNOWN')] += 1
+        agg['total_duration_min'] += summary.get('duration_min', 0)
+        agg['total_samples'] += summary.get('samples', 0)
+        
+        ba = summary.get('banding_analysis', {})
+        agg['total_high_risk_events'] += ba.get('high_risk_events', 0)
+        agg['total_accel_changes'] += ba.get('accel_changes', 0)
+        agg['total_pa_changes'] += ba.get('pa_changes', 0)
+        agg['total_dynz_transitions'] += ba.get('dynz_transitions', 0)
+        agg['total_temp_overshoots'] += ba.get('temp_overshoots', 0)
+        
+        culprit = ba.get('likely_culprit', 'unknown')
+        agg['culprits'][culprit] += 1
+        
+        csv_analysis = analyze_csv_for_banding(session['csv_file'])
+        
+        agg['sessions'].append({
+            'filename': summary.get('filename', ''),
+            'material': summary.get('material', ''),
+            'start_time': summary.get('start_time', ''),
+            'duration_min': summary.get('duration_min', 0),
+            'banding_analysis': ba,
+            'csv_analysis': csv_analysis,
+        })
+    
+    if agg['session_count'] > 0:
+        agg['avg_high_risk_per_print'] = round(agg['total_high_risk_events'] / agg['session_count'], 1)
+        agg['avg_accel_changes_per_print'] = round(agg['total_accel_changes'] / agg['session_count'], 1)
+        agg['avg_pa_changes_per_print'] = round(agg['total_pa_changes'] / agg['session_count'], 1)
+        agg['avg_dynz_transitions_per_print'] = round(agg['total_dynz_transitions'] / agg['session_count'], 1)
+    
+    agg['most_common_culprit'] = max(agg['culprits'], key=agg['culprits'].get) if agg['culprits'] else 'unknown'
+    
+    return agg
+
+
+def print_banding_report(agg):
+    """Print banding analysis report."""
+    print("\n" + "="*70)
+    print(f"  BANDING ANALYSIS ({agg['session_count']} prints)")
+    print("="*70 + "\n")
+    
+    print(f"Total printing time: {agg['total_duration_min']:.1f} minutes")
+    print(f"Materials: {dict(agg['materials'])}\n")
+    
+    print("─" * 70)
+    print("  BANDING RISK OVERVIEW")
+    print("─" * 70)
+    print(f"High-risk events: {agg['total_high_risk_events']} "
+          f"(avg {agg.get('avg_high_risk_per_print', 0):.1f}/print)")
+    print(f"Accel changes: {agg['total_accel_changes']} "
+          f"(avg {agg.get('avg_accel_changes_per_print', 0):.1f}/print)")
+    print(f"PA changes: {agg['total_pa_changes']} "
+          f"(avg {agg.get('avg_pa_changes_per_print', 0):.1f}/print)")
+    print(f"DynZ transitions: {agg['total_dynz_transitions']} "
+          f"(avg {agg.get('avg_dynz_transitions_per_print', 0):.1f}/print)")
+    print(f"Temp overshoots: {agg['total_temp_overshoots']}\n")
+    
+    print("─" * 70)
+    print("  DIAGNOSIS")
+    print("─" * 70)
+    print(f"Most common culprit: {agg['most_common_culprit']}")
+    print("Breakdown:")
+    for culprit, count in sorted(agg['culprits'].items(), key=lambda x: x[1], reverse=True):
+        print(f"  - {culprit}: {count} prints")
+    
+    culprit = agg['most_common_culprit']
+    print("\n" + "─" * 70)
+    print("  RECOMMENDED FIX")
+    print("─" * 70)
+    
+    if culprit == 'dynz_accel_switching':
+        print("⚠️  DynZ changing acceleration causes banding\n")
+        print("FIX: Set variable_dynz_relief_method: 'temp_reduction'")
+    elif culprit == 'pa_oscillation':
+        print("⚠️  PA oscillating too much\n")
+        print("FIX: Lower pa_boost_k or disable dynamic PA")
+    elif culprit == 'temp_instability':
+        print("⚠️  Temperature oscillating\n")
+        print("FIX: Lower ramp rates, check PID tuning")
+    elif culprit == 'slicer_accel_control':
+        print("⚠️  Slicer changing acceleration mid-print\n")
+        print("FIX: Disable firmware accel control in slicer")
+    else:
+        print("✓ No obvious software culprit - check mechanical issues")
+    
+    print("\n" + "─" * 70)
+    print("  INDIVIDUAL PRINTS")
+    print("─" * 70)
+    for i, s in enumerate(agg['sessions'][:5], 1):
+        ba = s['banding_analysis']
+        print(f"\n{i}. {s['filename']} ({s['material']}, {s['duration_min']:.1f}min)")
+        print(f"   Events: {ba.get('high_risk_events', 0)} high-risk, "
+              f"{ba.get('accel_changes', 0)} accel, {ba.get('pa_changes', 0)} PA")
+        print(f"   Culprit: {ba.get('likely_culprit', 'unknown')}")
+    
+    if len(agg['sessions']) > 5:
+        print(f"\n   ... and {len(agg['sessions']) - 5} more")
+    
+    print("\n" + "="*70 + "\n")
+
+
 def main():
     import argparse
     
@@ -695,9 +941,14 @@ Configuration:
   Edit analysis_config.cfg to set provider and API key.
 
 Examples:
-  python3 analyze_print.py                     # Uses config file
-  python3 analyze_print.py --provider github   # Use GitHub Models
-  python3 analyze_print.py --auto              # Auto-apply safe suggestions
+  Single-print LLM analysis:
+    python3 analyze_print.py                     # Uses config file
+    python3 analyze_print.py --provider github   # Use GitHub Models
+    python3 analyze_print.py --auto              # Auto-apply safe suggestions
+
+  Multi-print banding analysis:
+    python3 analyze_print.py --count 10          # Last 10 prints
+    python3 analyze_print.py --count 10 --material PLA  # Filter by material
         """
     )
     parser.add_argument('summary_file', nargs='?', help='Path to summary JSON (default: most recent)')
@@ -708,7 +959,38 @@ Examples:
                         help='LLM provider to use (overrides config file)')
     parser.add_argument('--model', '-m', help='Override model name')
     parser.add_argument('--list-providers', action='store_true', help='Show available providers')
+    parser.add_argument('--count', '-c', type=int, help='BANDING MODE: Analyze last N prints for banding patterns')
+    parser.add_argument('--material', help='BANDING MODE: Filter by material (PLA, PETG, etc)')
     args = parser.parse_args()
+    
+    # BANDING ANALYSIS MODE (if --count specified)
+    if args.count:
+        log_dir = os.path.expanduser(CONFIG.get('log_dir', '~/printer_data/logs/adaptive_flow'))
+        
+        if not os.path.exists(log_dir):
+            print(f"❌ Log directory not found: {log_dir}")
+            return 1
+        
+        print(f"Searching for recent prints in: {log_dir}")
+        if args.material:
+            print(f"Filtering by material: {args.material}")
+        
+        sessions = find_recent_sessions(log_dir, args.count, args.material)
+        
+        if not sessions:
+            print(f"❌ No print sessions found")
+            if args.material:
+                print(f"   (tried material filter: {args.material})")
+            return 1
+        
+        if len(sessions) < args.count:
+            print(f"⚠️  Warning: Only found {len(sessions)} prints (requested {args.count})")
+        
+        print(f"Analyzing {len(sessions)} prints...")
+        agg = aggregate_banding_analysis(sessions)
+        print_banding_report(agg)
+        
+        return 0
     
     # List providers if requested
     if args.list_providers:

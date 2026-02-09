@@ -49,6 +49,13 @@ class ExtruderMonitor:
         self._log_start_time = None
         self._log_sample_count = 0
         self._log_stats = {}  # Running stats for summary
+        
+        # State tracking for deltas (banding detection)
+        self._last_pa = None
+        self._last_accel = None
+        self._last_temp_target = None
+        self._last_dynz_state = None
+        self._last_z = 0.0
 
     def handle_connect(self):
         gcode = self.printer.lookup_object('gcode')
@@ -400,12 +407,22 @@ class ExtruderMonitor:
                 self._log_file = open(log_path, 'w', newline='')
                 self._log_writer = csv.writer(self._log_file)
                 
-                # Write header
+                # Write header with enhanced banding detection columns
                 self._log_writer.writerow([
                     'elapsed_s', 'temp_actual', 'temp_target', 'boost',
                     'flow', 'speed', 'pwm', 'pa', 'z_height', 'predicted_flow',
-                    'dynz_active', 'accel', 'fan_pct'
+                    'dynz_active', 'accel', 'fan_pct',
+                    # Banding detection columns
+                    'pa_delta', 'accel_delta', 'temp_target_delta', 'temp_overshoot',
+                    'dynz_transition', 'layer_transition', 'banding_risk', 'event_flags'
                 ])
+                
+                # Reset state tracking
+                self._last_pa = None
+                self._last_accel = None  
+                self._last_temp_target = None
+                self._last_dynz_state = None
+                self._last_z = 0.0
                 
                 self._log_start_time = time.time()
                 self._log_sample_count = 0
@@ -490,6 +507,45 @@ class ExtruderMonitor:
                 accel = gcmd.get_int('ACCEL', 0)
                 fan_pct = gcmd.get_int('FAN', 0)
                 
+                # Calculate deltas for banding detection
+                pa_delta = (pa - self._last_pa) if self._last_pa is not None else 0.0
+                accel_delta = (accel - self._last_accel) if self._last_accel is not None else 0
+                temp_target_delta = (temp_target - self._last_temp_target) if self._last_temp_target is not None else 0.0
+                temp_overshoot = temp_actual - temp_target
+                
+                # Detect state transitions
+                dynz_transition = 0
+                if self._last_dynz_state is not None and dynz_active != self._last_dynz_state:
+                    dynz_transition = 1 if dynz_active else -1  # 1=activated, -1=deactivated
+                
+                layer_transition = 1 if (z_height > self._last_z + 0.05) else 0
+                
+                # Banding risk score (0-10 scale)
+                # High risk when multiple factors change simultaneously
+                risk = 0
+                event_flags = []
+                
+                if abs(accel_delta) > 500:
+                    risk += 3
+                    event_flags.append(f"ACCEL_CHG:{accel_delta:+d}")
+                if abs(pa_delta) > 0.005:
+                    risk += 2
+                    event_flags.append(f"PA_CHG:{pa_delta:+.4f}")
+                if abs(temp_target_delta) > 3.0:
+                    risk += 2
+                    event_flags.append(f"TEMP_CHG:{temp_target_delta:+.1f}")
+                if abs(temp_overshoot) > 5.0:
+                    risk += 1
+                    event_flags.append(f"OVERSHOOT:{temp_overshoot:+.1f}")
+                if dynz_transition != 0:
+                    risk += 2
+                    event_flags.append(f"DYNZ:{'ON' if dynz_transition > 0 else 'OFF'}")
+                if pwm >= 0.95 and temp_target > temp_actual + 3:
+                    risk += 1
+                    event_flags.append("HEATER_STRUGGLE")
+                
+                event_str = ";".join(event_flags) if event_flags else ""
+                
                 self._log_writer.writerow([
                     f"{elapsed:.1f}",
                     f"{temp_actual:.1f}",
@@ -503,11 +559,50 @@ class ExtruderMonitor:
                     f"{predicted:.2f}",
                     f"{dynz_active}",
                     f"{accel}",
-                    f"{fan_pct}"
+                    f"{fan_pct}",
+                    # Enhanced banding detection columns
+                    f"{pa_delta:.5f}",
+                    f"{accel_delta}",
+                    f"{temp_target_delta:.2f}",
+                    f"{temp_overshoot:.2f}",
+                    f"{dynz_transition}",
+                    f"{layer_transition}",
+                    f"{risk}",
+                    event_str
                 ])
+                
+                # Update state tracking
+                self._last_pa = pa
+                self._last_accel = accel
+                self._last_temp_target = temp_target
+                self._last_dynz_state = dynz_active
+                self._last_z = z_height
                 
                 # Update running stats
                 self._log_sample_count += 1
+                
+                # Track banding risk events
+                if 'banding_risk_sum' not in self._log_stats:
+                    self._log_stats['banding_risk_sum'] = 0
+                    self._log_stats['banding_risk_max'] = 0
+                    self._log_stats['high_risk_events'] = 0
+                    self._log_stats['accel_changes'] = 0
+                    self._log_stats['pa_changes'] = 0
+                    self._log_stats['dynz_transitions'] = 0
+                    self._log_stats['temp_overshoots'] = 0
+                
+                self._log_stats['banding_risk_sum'] += risk
+                self._log_stats['banding_risk_max'] = max(self._log_stats['banding_risk_max'], risk)
+                if risk >= 5:
+                    self._log_stats['high_risk_events'] += 1
+                if abs(accel_delta) > 500:
+                    self._log_stats['accel_changes'] += 1
+                if abs(pa_delta) > 0.005:
+                    self._log_stats['pa_changes'] += 1
+                if dynz_transition != 0:
+                    self._log_stats['dynz_transitions'] += 1
+                if abs(temp_overshoot) > 5.0:
+                    self._log_stats['temp_overshoots'] += 1
                 
                 # Boost stats
                 self._log_stats['boost_sum'] += boost
@@ -605,6 +700,19 @@ class ExtruderMonitor:
                         # Features enabled
                         'features': features,
                         
+                        # BANDING RISK ANALYSIS (NEW)
+                        'banding_analysis': {
+                            'avg_risk': round(self._log_stats.get('banding_risk_sum', 0) / samples, 2),
+                            'max_risk': self._log_stats.get('banding_risk_max', 0),
+                            'high_risk_events': self._log_stats.get('high_risk_events', 0),
+                            'accel_changes': self._log_stats.get('accel_changes', 0),
+                            'pa_changes': self._log_stats.get('pa_changes', 0),
+                            'dynz_transitions': self._log_stats.get('dynz_transitions', 0),
+                            'temp_overshoots': self._log_stats.get('temp_overshoots', 0),
+                            # Diagnosis hints
+                            'likely_culprit': self._diagnose_banding_culprit(),
+                        },
+                        
                         # Auto-Temperature stats
                         'auto_temp': {
                             'avg_boost': round(self._log_stats['boost_sum'] / samples, 2),
@@ -677,8 +785,15 @@ class ExtruderMonitor:
                         json.dump(summary, f, indent=2)
                     
                     gcmd.respond_info(f"AT_LOG: Session ended - {samples} samples over {summary['duration_min']}min")
-                    
-                    # Feature summary
+                                        # BANDING RISK SUMMARY (NEW - shown first for visibility)
+                    ba = summary['banding_analysis']
+                    if ba['high_risk_events'] > 0 or ba['accel_changes'] > 10:
+                        gcmd.respond_info(f\"⚠️  BANDING RISK DETECTED: {ba['high_risk_events']} high-risk events\")
+                        gcmd.respond_info(f\"  Likely culprit: {ba['likely_culprit']}\")
+                        gcmd.respond_info(f\"  Events: Accel changes:{ba['accel_changes']}, PA changes:{ba['pa_changes']}, DynZ transitions:{ba['dynz_transitions']}, Temp overshoots:{ba['temp_overshoots']}\")
+                    else:
+                        gcmd.respond_info(f\"✓ Banding risk low: avg {ba['avg_risk']:.1f}/10, {ba['high_risk_events']} high-risk events\")
+                                        # Feature summary
                     at = summary['auto_temp']
                     gcmd.respond_info(f"AT_LOG: Temp: {at['temp_min']}-{at['temp_max']}C (range {at['temp_range']}C), Boost avg:{at['avg_boost']}C max:{at['max_boost']}C")
                     
@@ -714,6 +829,52 @@ class ExtruderMonitor:
                 self._log_start_time = None
                 self._log_sample_count = 0
                 self._log_stats = {}
+    
+    def _diagnose_banding_culprit(self):
+        \"\"\"Analyze stats to identify most likely banding cause.\"\"\"
+        accel_chg = self._log_stats.get('accel_changes', 0)
+        pa_chg = self._log_stats.get('pa_changes', 0)
+        dynz_trans = self._log_stats.get('dynz_transitions', 0)
+        temp_over = self._log_stats.get('temp_overshoots', 0)
+        samples = self._log_sample_count
+        
+        if samples == 0:
+            return \"insufficient_data\"
+        
+        # Calculate rates per hour of printing
+        duration_hrs = (self._log_sample_count / 60) / 60  # samples are ~1/second
+        if duration_hrs < 0.01:
+            return \"print_too_short\"
+        
+        accel_per_hr = accel_chg / duration_hrs
+        pa_per_hr = pa_chg / duration_hrs
+        dynz_per_hr = dynz_trans / duration_hrs
+        temp_per_hr = temp_over / duration_hrs
+        
+        # Scoring - what's changing most frequently?
+        scores = {
+            'dynz_accel_switching': dynz_per_hr * 10 + accel_per_hr,
+            'pa_oscillation': pa_per_hr * 5,
+            'temp_instability': temp_per_hr * 3,
+            'likely_mechanical': 0  # Default if nothing else scores high
+        }
+        
+        # Special case: frequent accel changes without DynZ = slicer issue
+        if accel_per_hr > 50 and dynz_per_hr < 5:
+            scores['slicer_accel_control'] = accel_per_hr * 2
+        
+        # If DynZ transitions frequently, that's the smoking gun
+        if dynz_per_hr > 10:
+            scores['dynz_accel_switching'] += 50
+        
+        # Find highest score
+        culprit = max(scores, key=scores.get)
+        max_score = scores[culprit]
+        
+        if max_score < 5:
+            return \"no_obvious_culprit\"
+        
+        return culprit
 
     def get_status(self, eventtime):
         # Called by Klippy status updates; include predicted rate if available

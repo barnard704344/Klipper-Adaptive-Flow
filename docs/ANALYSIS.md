@@ -1,25 +1,49 @@
 # Print Analysis
 
-After each print, you can get AI-powered suggestions to improve your settings. The AI looks at your print data and tells you what to adjust.
+The `analyze_print.py` tool provides two analysis modes:
+
+1. **LLM Mode** - AI-powered tuning suggestions for single prints
+2. **Banding Mode** - Multi-print aggregation to identify banding culprits
+
+**Both are optional.** The core Adaptive Flow system works fine without analysis.
 
 ---
 
-## Quick Setup (5 minutes)
+## Mode 1: LLM Analysis (Single Print)
 
-### Step 1: Get a Free API Key
+Analyzes one print using an LLM (GitHub Models, OpenAI, or Anthropic) which reviews:
 
-The easiest option is **GitHub Models** (free):
+- Temperature stability (did heater keep up?)
+- Heater duty cycle (was it working too hard?)
+- Flow rates and speed
+- Any errors in Klipper log during the print
+
+It returns:
+- **Issues**: Problems detected in the data (heater saturation, thermal lag, etc.)
+- **Suggestions**: Specific parameter changes to try
+- **Safety classification**: Each suggestion marked `[✓ SAFE]` or `[⚠ MANUAL]`
+
+**Safe suggestions** are conservative changes (ramp rates, minor adjustments) that can be auto-applied.
+**Manual suggestions** are significant changes (boost limits, PA values) that need your review.
+
+## Quick Setup
+
+### 1. Get an API Key
+
+**Option A: GitHub Models (Free, Recommended)**
 
 1. Go to https://github.com/settings/tokens
-2. Click "Generate new token (classic)"
-3. Give it a name like "Adaptive Flow"
-4. Don't check any boxes - no permissions needed
-5. Click "Generate token"
-6. Copy the token (starts with `ghp_`)
+2. Click **Generate new token (classic)**
+3. Name: "Adaptive Flow"
+4. **Don't check any permission boxes** (no scopes needed)
+5. Generate and copy the token (starts with `ghp_`)
 
-### Step 2: Add Your Key
+**Option B: OpenAI (Paid)** - https://platform.openai.com/api-keys  
+**Option C: Anthropic (Paid)** - https://console.anthropic.com/
 
-Edit the file `analysis_config.cfg` in your Klipper-Adaptive-Flow folder:
+### 2. Configure
+
+Edit `analysis_config.cfg` in your Klipper-Adaptive-Flow folder:
 
 ```ini
 [analysis]
@@ -27,7 +51,7 @@ provider: github
 api_key: ghp_paste_your_token_here
 ```
 
-### Step 3: Run Analysis
+### 3. Run Analysis
 
 After a print completes:
 
@@ -36,77 +60,123 @@ cd ~/Klipper-Adaptive-Flow
 python3 analyze_print.py
 ```
 
-That's it! You'll see suggestions like:
+It automatically finds the most recent print log and analyzes it.
+
+## Understanding the Output
+
+**Brief mode (default)**:
 
 ```
-💡 Suggestions (2):
+✅ PRINT ANALYSIS: ALL GOOD!
+==================================================
 
-  1. speed_boost_k
-     Current: 0.08 → Suggested: 0.10
-     Reason: Better heat at high speed
-     [⚠ MANUAL]
+Quality: EXCELLENT
+No issues detected. Nice print! 🎉
 
-  2. ramp_rate_fall  
-     Current: 1.0 → Suggested: 1.5
-     Reason: Smoother temperature transitions
-     [✓ SAFE]
+📄 Report: /home/pi/printer_data/config/adaptive_flow/reports/...
 ```
 
-### Understanding Suggestion Types
+or if issues found:
 
-| Tag | Meaning | Action |
-|-----|---------|--------|
-| **[✓ SAFE]** | Conservative change, low risk | Can be auto-applied |
-| **[⚠ MANUAL]** | Significant change | Review and apply manually |
+```
+⚠️ PRINT ANALYSIS: FAIR
+==================================================
 
-Safe changes are small adjustments that won't cause print failures. Manual changes are larger or affect critical parameters.
+Print quality likely affected by heater saturation.
 
----
+🔴 1 critical issue(s):
+   • Heater saturated: avg PWM 87%, thermal lag 6.2°C
+
+💡 2 suggestion(s) (1 safe to auto-apply)
+
+📄 Full details: /home/pi/printer_data/...
+```
+
+**Verbose mode** (show full details):
+
+```bash
+python3 analyze_print.py --verbose
+```
+
+Shows the complete analysis with all issues, suggestions, and reasoning.
+
+## Suggestion Types
+
+### [✓ SAFE] - Auto-Apply Allowed
+
+These are conservative adjustments:
+- `ramp_rate_rise` / `ramp_rate_fall` - Temperature ramp speeds
+- `sc_flow_k` - Smart Cooling flow sensitivity
+- Minor value tweaks (<20% change)
+
+**Safe to auto-apply** means the change won't cause print failures. Worst case: slightly different thermal behavior.
+
+### [⚠ MANUAL] - Review Required
+
+These need your judgment:
+- `max_boost_limit` - Maximum temperature boost cap
+- `dynz_accel_relief` - DynZ acceleration limit
+- `sc_min_fan` / `sc_max_fan` - Fan speed limits
+- Major value changes (>20%)
+
+**Manual review** means the change could affect print quality or cause issues if incorrect for your setup.
 
 ## Auto-Apply Safe Suggestions
 
-To automatically apply safe suggestions after analysis:
+To automatically apply safe suggestions:
 
-```ini
-[analysis]
-auto_apply: true
+```bash
+python3 analyze_print.py --auto
 ```
 
-When enabled:
-- **[✓ SAFE]** suggestions → Applied to your config automatically
-- **[⚠ MANUAL]** suggestions → Shown for you to review
+This sends `SET_GCODE_VARIABLE` commands to Klipper via Moonraker. Changes are **temporary** (lost on restart).
 
----
+To make changes permanent, manually edit `auto_flow_user.cfg` with the suggested values.
 
-## Other Providers
+## Common Suggestions
 
-If you prefer a paid provider:
+| Parameter | What It Does | Why LLM Suggests Increase | Why LLM Suggests Decrease |
+|-----------|--------------|---------------------------|---------------------------|
+| `flow_k` | Temp boost per mm³/s flow | Heater can't keep up at high flow | Overshooting temp during infill |
+| `speed_boost_k` | Temp boost per mm/s speed | Under-extrusion on fast perimeters | Too much heat on thin walls |
+| `ramp_rate_rise` | How fast temp increases | Slow response to flow spikes | Overshooting target temp |
+| `ramp_rate_fall` | How fast temp decreases | Overshooting on slowdowns | Under-temp after flow drops |
+| `max_boost_limit` | Maximum extra temperature | Need more headroom for high flow | Hitting safety limits unnecessarily |
 
-**OpenAI / ChatGPT** (paid):
-```ini
-[analysis]
-provider: openai
-api_key: sk-your-openai-key
+The LLM provides reasoning for each suggestion based on your actual print data.
+
+## Advanced Usage
+
+### Analyze Specific Print
+
+```bash
+python3 analyze_print.py /path/to/print_summary.json
 ```
 
-**Anthropic Claude** (paid):
-```ini
-[analysis]
-provider: anthropic
-api_key: sk-ant-your-anthropic-key
+### Use Different Provider
+
+```bash
+python3 analyze_print.py --provider openai
+python3 analyze_print.py --provider anthropic
 ```
 
----
+### Show Raw LLM Response
 
-## Auto-Analyze Every Print
+```bash
+python3 analyze_print.py --raw
+```
 
-Want analysis to run automatically after each print? Set it up as a background service.
+Useful for debugging or seeing the complete JSON response.
 
-### Step 1: Make Sure Your Config is Set
+## Auto-Analysis Service (Optional)
 
-Edit `analysis_config.cfg` with your provider and API key (see above).
+Want analysis to run automatically after every print?
 
-### Step 2: Create the Service
+### Setup
+
+1. **Configure API key** in `analysis_config.cfg` (see above)
+
+2. **Create systemd service**:
 
 ```bash
 sudo nano /etc/systemd/system/adaptive-flow-hook.service
@@ -200,6 +270,117 @@ auto_apply: false
 # Show results in Klipper console
 notify_console: true
 ```
+
+---
+
+## Mode 2: Banding Analysis (Multi-Print)
+
+Aggregates data across multiple prints to identify banding culprits through pattern detection.
+
+### Usage
+
+```bash
+# Analyze last 10 prints for banding patterns
+python3 analyze_print.py --count 10
+
+# Filter by material
+python3 analyze_print.py --count 10 --material PLA
+
+# Analyze last 20 prints
+python3 analyze_print.py --count 20
+```
+
+### What It Detects
+
+The logging system tracks state transitions that cause banding:
+
+| Event Type | What It Detects |
+|------------|-----------------|
+| **Accel changes** | Mid-layer acceleration switching (banding) |
+| **PA changes** | PA oscillation causing ribbing |
+| **DynZ transitions** | DynZ activation causing accel changes |
+| **Temp overshoots** | Temperature instability |
+
+Each print is diagnosed with a likely culprit. Multi-print analysis confirms patterns.
+
+### Example Output
+
+```
+======================================================================
+  BANDING ANALYSIS (10 prints)
+======================================================================
+
+Total printing time: 187.3 minutes
+Materials: {'PLA': 10}
+
+──────────────────────────────────────────────────────────────────────
+  BANDING RISK OVERVIEW
+──────────────────────────────────────────────────────────────────────
+High-risk events: 423 (avg 42.3/print)
+Accel changes: 387 (avg 38.7/print)
+PA changes: 108 (avg 10.8/print)
+DynZ transitions: 241 (avg 24.1/print)
+
+──────────────────────────────────────────────────────────────────────
+  DIAGNOSIS
+──────────────────────────────────────────────────────────────────────
+Most common culprit: dynz_accel_switching
+Breakdown:
+  - dynz_accel_switching: 9 prints
+  - pa_oscillation: 1 print
+
+──────────────────────────────────────────────────────────────────────
+  RECOMMENDED FIX
+──────────────────────────────────────────────────────────────────────
+⚠️  DynZ changing acceleration causes banding
+
+FIX: Set variable_dynz_relief_method: 'temp_reduction'
+```
+
+### Banding Culprits
+
+| Culprit | Cause | Fix |
+|---------|-------|-----|
+| `dynz_accel_switching` | DynZ changing acceleration | `dynz_relief_method: 'temp_reduction'` |
+| `pa_oscillation` | PA changing too much | Lower `pa_boost_k` |
+| `temp_instability` | Temperature oscillating | Lower ramp rates, check PID |
+| `slicer_accel_control` | Slicer inserting accel commands | Disable firmware accel in slicer |
+| `no_obvious_culprit` | Low event counts | Check mechanical (Z-wobble, filament) |
+
+### CSV Logging Reference
+
+Enhanced logging tracks these columns for banding analysis:
+
+| Column | Description |
+|--------|-------------|
+| `pa_delta` | PA change from last sample |
+| `accel_delta` | Acceleration change |
+| `temp_target_delta` | Target temp change |
+| `temp_overshoot` | Actual - Target temp |
+| `dynz_transition` | DynZ state change (1=ON, -1=OFF) |
+| `layer_transition` | Layer change detected |
+| `banding_risk` | Risk score 0-10 |
+| `event_flags` | Human-readable events (e.g., "ACCEL_CHG:+1200") |
+
+**Banding Risk Score (0-10):**
+- +3: Accel change >500 mm/s²
+- +2: PA change >0.005
+- +2: Temp change >3°C
+- +2: DynZ state transition
+- +1: Temp overshoot >5°C
+
+Score ≥5 = high risk event (likely visible artifact)
+
+### Debugging Workflow
+
+1. **Print 5-10 test cubes** with logging enabled (already happens automatically)
+2. **Run banding analysis:**
+   ```bash
+   python3 analyze_print.py --count 10
+   ```
+3. **Check consistency**: If 8+ prints show same culprit → confirmed diagnosis
+4. **Apply fix** from recommendations
+5. **Verify**: Print one more cube, check if high-risk events drop to near zero
 
 ---
 
