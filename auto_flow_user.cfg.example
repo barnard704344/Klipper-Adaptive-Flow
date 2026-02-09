@@ -37,6 +37,10 @@ variable_use_high_flow_nozzle: True
 # variable_multi_object_temp_wait: True
 # variable_temp_wait_tolerance: 5.0
 
+# FLOW RATE SAFETY LIMITS (uncomment to override)
+# variable_max_safe_flow_hf: 25.0   # Max flow for Revo HF nozzles (mm³/s)
+# variable_max_safe_flow_std: 15.0  # Max flow for Revo Std nozzles (mm³/s)
+
 # DYNAMIC Z-WINDOW LEARNING (uncomment to override)
 # variable_dynz_enable: True
 # variable_dynz_bin_height: 1.0
