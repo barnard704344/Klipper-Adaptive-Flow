@@ -95,6 +95,33 @@ if [ -f "$OLD_MAT" ] && [ ! -L "$OLD_MAT" ]; then
     read -p "Press Enter to continue..."
 fi
 
+# Clean up old moonraker auto-analysis service if it exists
+SERVICE_NAME="adaptive-flow-hook.service"
+SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME"
+
+if [ -f "$SERVICE_FILE" ]; then
+    echo ""
+    echo "[!] CLEANUP: Old moonraker auto-analysis service detected"
+    echo "The automatic print analysis service is no longer recommended."
+    echo "Removing $SERVICE_NAME..."
+    
+    # Stop and disable the service
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+    
+    # Remove the service file
+    sudo rm -f "$SERVICE_FILE"
+    
+    # Reload systemd
+    sudo systemctl daemon-reload
+    
+    echo "[OK] Old service removed successfully"
+    echo ""
+    echo "Note: You can still run print analysis manually:"
+    echo "  cd ~/Klipper-Adaptive-Flow && python3 analyze_print.py"
+    echo ""
+fi
+
 # Update printer.cfg includes
 echo ""
 echo "[OK] Update complete!"
