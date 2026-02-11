@@ -118,7 +118,7 @@ if [ -f "$SERVICE_FILE" ]; then
     echo "[OK] Old service removed successfully"
     echo ""
     echo "Note: You can still run print analysis manually:"
-    echo "  cd ~/Klipper-Adaptive-Flow && python3 analyze_print.py"
+    echo "  cd $REPO_DIR && python3 analyze_print.py"
     echo ""
 fi
 
