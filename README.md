@@ -23,11 +23,11 @@ cd Klipper-Adaptive-Flow
 ./update.sh
 ```
 The setup script will automatically:
-- Copy Python modules to Klipper extras
-- Copy configuration files to your config directory
-- Update printer.cfg with required includes
-- Create user configuration templates
-- Restart Klipper
+- Copy Python modules (`gcode_interceptor.py`, `extruder_monitor.py`) to Klipper extras
+- Copy configuration files to `~/printer_data/config/`
+- Auto-configure `printer.cfg` with required includes (creates backup first)
+- Create user configuration templates (`auto_flow_user.cfg`, `material_profiles_user.cfg`)
+- Restart Klipper to apply changes
 
 **Option 2: Manual Setup**
 ```bash
@@ -59,11 +59,37 @@ Manually add to `printer.cfg`:
 cd ~/Klipper-Adaptive-Flow
 ./update.sh
 ```
-The update script automatically:
-- Preserves your custom configuration in `auto_flow_user.cfg` and `material_profiles_user.cfg`
-- Updates printer.cfg with required includes (if not already present)
-- Creates backups before making any changes
-- Restarts Klipper with the new configuration
+
+The update script provides comprehensive automatic updates with safety features:
+
+### What It Does Automatically
+- **Updates system files**: Python modules and default configuration files
+- **Optional features**: Automatically updates `analyze_print.py` and `analysis_config.cfg` if present
+- **Preserves your settings**: Never overwrites `auto_flow_user.cfg` or `material_profiles_user.cfg`
+- **Auto-configures printer.cfg**: Adds required includes if missing:
+  - `[include auto_flow_defaults.cfg]`
+  - `[include auto_flow_user.cfg]`
+  - `[include material_profiles_defaults.cfg]`
+  - `[gcode_interceptor]`
+  - `[extruder_monitor]`
+- **Creates backups**: Before modifying printer.cfg, saves to `printer.cfg.backup.YYYYMMDD_HHMMSS` (e.g., `printer.cfg.backup.20260212_143025`)
+- **Restarts Klipper**: Applies changes automatically
+
+### Migration Support
+If you're upgrading from an older version with legacy config files:
+- **Old configs detected**: Automatically backs up `auto_flow.cfg` → `auto_flow.cfg.backup.YYYYMMDD_HHMMSS`
+- **Interactive migration**: Script pauses and prompts you to review backups and copy custom settings to new `*_user.cfg` files
+- **Safe transition**: Old files are preserved as backups, never deleted
+
+### Service Cleanup
+- **Deprecated service removal**: Automatically removes old `adaptive-flow-hook.service` (automated moonraker post-print analysis)
+- **Manual analysis still available**: See [docs/ANALYSIS.md](docs/ANALYSIS.md) for on-demand print analysis
+
+### First-Time Setup
+If running the script on a new installation:
+- Automatically creates `auto_flow_user.cfg` from template
+- Automatically creates `material_profiles_user.cfg` from template
+- No manual file creation needed
 
 **Option 2: Manual Update**
 ```bash
@@ -73,7 +99,7 @@ cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
 cp auto_flow_defaults.cfg material_profiles_defaults.cfg ~/printer_data/config/
 sudo systemctl restart klipper
 ```
-⚠️ `auto_flow_user.cfg` and `material_profiles_user.cfg` are never overwritten.
+⚠️ Manual updates require you to verify printer.cfg includes. `auto_flow_user.cfg` and `material_profiles_user.cfg` are never overwritten.
 
 ## Slicer Setup
 
@@ -263,8 +289,7 @@ This feature works automatically—no G-code changes needed.
 | `material_profiles_user.cfg` | Custom material profiles (never overwritten) |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
-
-| `update.sh` | Smart updater (preserves user configs) |
+| `update.sh` | Smart updater (auto-configures, migrates, backs up) |
 
 ## License
 
