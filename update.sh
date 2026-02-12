@@ -14,9 +14,9 @@ line_exists_in_printer_cfg() {
     local pattern="$1"
     if [ -f "$PRINTER_CFG" ]; then
         grep -qF "$pattern" "$PRINTER_CFG"
-        return $?
+    else
+        return 1
     fi
-    return 1
 }
 
 # Function to add configuration to printer.cfg
@@ -59,20 +59,16 @@ update_printer_cfg() {
     echo "[>>] Creating backup: $BACKUP_FILE"
     cp "$PRINTER_CFG" "$BACKUP_FILE"
     
-    # Create temp file with new includes at the top
+    # Create temp file with missing includes at the top
     local TEMP_FILE=$(mktemp)
+    trap 'rm -f "$TEMP_FILE"' EXIT
     
-    # Add header comment
-    echo "# =============================================================================" > "$TEMP_FILE"
-    echo "# Klipper Adaptive Flow - Auto-configured on $(date)" >> "$TEMP_FILE"
-    echo "# =============================================================================" >> "$TEMP_FILE"
-    echo "" >> "$TEMP_FILE"
-    
-    # Add missing includes
+    # Add missing includes directly (no header needed)
     for include in "${MISSING_INCLUDES[@]}"; do
         echo "$include" >> "$TEMP_FILE"
     done
     
+    # Add a blank line for separation
     echo "" >> "$TEMP_FILE"
     
     # Append original printer.cfg content
