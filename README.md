@@ -16,6 +16,20 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 
 ## Installation
 
+**Option 1: Automatic Setup (Recommended)**
+```bash
+cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
+cd Klipper-Adaptive-Flow
+./update.sh
+```
+The setup script will automatically:
+- Copy Python modules to Klipper extras
+- Copy configuration files to your config directory
+- Update printer.cfg with required includes
+- Create user configuration templates
+- Restart Klipper
+
+**Option 2: Manual Setup**
 ```bash
 cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
 cd Klipper-Adaptive-Flow
@@ -26,9 +40,10 @@ cp material_profiles_user.cfg.example ~/printer_data/config/material_profiles_us
 sudo systemctl restart klipper
 ```
 
-Add to `printer.cfg`:
+Manually add to `printer.cfg`:
 ```ini
 [include auto_flow_defaults.cfg]
+[include auto_flow_user.cfg]
 [include material_profiles_defaults.cfg]
 [include material_profiles_user.cfg]  # Optional: for custom materials
 [gcode_interceptor]
@@ -44,7 +59,11 @@ Add to `printer.cfg`:
 cd ~/Klipper-Adaptive-Flow
 ./update.sh
 ```
-Your custom configuration in `auto_flow_user.cfg` and `material_profiles_user.cfg` is automatically preserved.
+The update script automatically:
+- Preserves your custom configuration in `auto_flow_user.cfg` and `material_profiles_user.cfg`
+- Updates printer.cfg with required includes (if not already present)
+- Creates backups before making any changes
+- Restarts Klipper with the new configuration
 
 **Option 2: Manual Update**
 ```bash
