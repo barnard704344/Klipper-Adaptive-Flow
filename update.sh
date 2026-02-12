@@ -29,10 +29,6 @@ update_printer_cfg() {
         "[extruder_monitor]"
     )
     
-    local OPTIONAL_INCLUDES=(
-        "[include material_profiles_user.cfg]"
-    )
-    
     # Check if printer.cfg exists
     if [ ! -f "$PRINTER_CFG" ]; then
         echo "[!] Warning: printer.cfg not found at $PRINTER_CFG"
