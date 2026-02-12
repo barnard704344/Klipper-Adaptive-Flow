@@ -7,6 +7,80 @@ set -e
 REPO_DIR=~/Klipper-Adaptive-Flow
 KLIPPER_EXTRAS=~/klipper/klippy/extras
 CONFIG_DIR=~/printer_data/config
+PRINTER_CFG="$CONFIG_DIR/printer.cfg"
+
+# Function to check if a line exists in printer.cfg
+line_exists_in_printer_cfg() {
+    local pattern="$1"
+    if [ -f "$PRINTER_CFG" ]; then
+        grep -qF "$pattern" "$PRINTER_CFG"
+    else
+        return 1
+    fi
+}
+
+# Function to add configuration to printer.cfg
+update_printer_cfg() {
+    local REQUIRED_INCLUDES=(
+        "[include auto_flow_defaults.cfg]"
+        "[include auto_flow_user.cfg]"
+        "[include material_profiles_defaults.cfg]"
+        "[gcode_interceptor]"
+        "[extruder_monitor]"
+    )
+    
+    # Check if printer.cfg exists
+    if [ ! -f "$PRINTER_CFG" ]; then
+        echo "[!] Warning: printer.cfg not found at $PRINTER_CFG"
+        echo "[!] Skipping automatic configuration"
+        return 1
+    fi
+    
+    # Check which includes are missing
+    local MISSING_INCLUDES=()
+    for include in "${REQUIRED_INCLUDES[@]}"; do
+        if ! line_exists_in_printer_cfg "$include"; then
+            MISSING_INCLUDES+=("$include")
+        fi
+    done
+    
+    # If nothing to add, we're done
+    if [ ${#MISSING_INCLUDES[@]} -eq 0 ]; then
+        echo "[OK] printer.cfg already has all required configuration"
+        return 0
+    fi
+    
+    # Create backup before modifying
+    local BACKUP_FILE="${PRINTER_CFG}.backup.$(date +%Y%m%d_%H%M%S)"
+    echo "[>>] Creating backup: $BACKUP_FILE"
+    cp "$PRINTER_CFG" "$BACKUP_FILE"
+    
+    # Create temp file with missing includes at the top
+    local TEMP_FILE=$(mktemp)
+    
+    # Add missing includes directly (no header needed)
+    for include in "${MISSING_INCLUDES[@]}"; do
+        echo "$include" >> "$TEMP_FILE"
+    done
+    
+    # Add a blank line for separation
+    echo "" >> "$TEMP_FILE"
+    
+    # Append original printer.cfg content
+    cat "$PRINTER_CFG" >> "$TEMP_FILE"
+    
+    # Replace printer.cfg with updated version
+    mv "$TEMP_FILE" "$PRINTER_CFG"
+    
+    echo "[OK] Added to printer.cfg:"
+    for include in "${MISSING_INCLUDES[@]}"; do
+        echo "     $include"
+    done
+    echo ""
+    echo "[OK] Backup saved: $BACKUP_FILE"
+    
+    return 0
+}
 
 echo "[>>] Updating Klipper Adaptive Flow..."
 echo ""
@@ -122,17 +196,22 @@ if [ -f "$SERVICE_FILE" ]; then
     echo ""
 fi
 
-# Update printer.cfg includes
+# Update printer.cfg automatically
 echo ""
-echo "[OK] Update complete!"
-echo ""
-echo "[>>] Make sure your printer.cfg includes:"
-echo "   [include auto_flow_defaults.cfg]"
-echo "   [include auto_flow_user.cfg]"
-echo "   [include material_profiles_defaults.cfg]"
-echo "   [include material_profiles_user.cfg]  # Optional"
-echo "   [gcode_interceptor]"
-echo "   [extruder_monitor]"
+echo "[>>] Checking printer.cfg configuration..."
+if update_printer_cfg; then
+    echo "[OK] printer.cfg is configured correctly"
+else
+    echo ""
+    echo "[!] Could not automatically update printer.cfg"
+    echo "[>>] Please manually add the following to your printer.cfg:"
+    echo "   [include auto_flow_defaults.cfg]"
+    echo "   [include auto_flow_user.cfg]"
+    echo "   [include material_profiles_defaults.cfg]"
+    echo "   [include material_profiles_user.cfg]  # Optional"
+    echo "   [gcode_interceptor]"
+    echo "   [extruder_monitor]"
+fi
 echo ""
 echo "[>>] Restarting Klipper..."
 sudo systemctl restart klipper
