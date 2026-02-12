@@ -61,7 +61,6 @@ update_printer_cfg() {
     
     # Create temp file with missing includes at the top
     local TEMP_FILE=$(mktemp)
-    trap 'rm -f "$TEMP_FILE"' EXIT
     
     # Add missing includes directly (no header needed)
     for include in "${MISSING_INCLUDES[@]}"; do
