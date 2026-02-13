@@ -246,35 +246,6 @@ AT_SC_STATUS
 
 **[Full Smart Cooling documentation →](docs/SMART_COOLING.md)**
 
-## Troubleshooting
-
-Having issues with layer quality, Z-banding, or inconsistent extrusion?
-
-### Quick Diagnostic Tool
-
-```bash
-cd ~/Klipper-Adaptive-Flow
-python3 diagnose_zbanding.py
-```
-
-This tool analyzes your klippy.log and CSV logs to identify:
-- Temperature stability issues
-- Heater saturation
-- Mechanical vs. software problems
-- Adaptive Flow configuration issues
-
-### Common Issues
-
-The most common causes of layer inconsistencies:
-
-1. **Z-axis mechanical issues** (60% of cases) — lead screw binding, wobble, misalignment
-2. **Pressure advance not calibrated** (20%) — run PA calibration for your filament
-3. **Temperature instability** (10%) — re-run PID tuning
-4. **Belt tension** (5%) — check for proper tension
-5. **Adaptive Flow misconfiguration** (5%) — logging not enabled or incorrect settings
-
-**[Full troubleshooting guide →](docs/TROUBLESHOOTING_ZBANDING.md)**
-
 ## Multi-Object Temperature Management
 
 When printing multiple objects sequentially, the nozzle temperature from the first object may be higher than the target for the next object, potentially triggering Klipper's thermal runaway protection. This feature automatically pauses between objects to allow temperature stabilization.
