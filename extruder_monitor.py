@@ -900,21 +900,42 @@ class ExtruderMonitor:
         dynz_per_hr = dynz_trans / duration_hrs
         temp_per_hr = temp_over / duration_hrs
         
+        # Determine DynZ relief method to correctly attribute accel changes
+        # When DynZ uses 'temp_reduction', it does NOT change acceleration,
+        # so accel changes are from the slicer, not DynZ.
+        dynz_uses_accel = False
+        try:
+            cfg = self.printer.lookup_object('gcode_macro _AUTO_TEMP_CORE')
+            relief_method = getattr(cfg, 'variables', {}).get(
+                'dynz_relief_method', 'temp_reduction')
+            dynz_uses_accel = (str(relief_method).strip("'\"") == 'accel_limit')
+        except Exception:
+            pass
+        
         # Scoring - what's changing most frequently?
         scores = {
-            'dynz_accel_switching': dynz_per_hr * 10 + accel_per_hr,
             'pa_oscillation': pa_per_hr * 5,
             'temp_instability': temp_per_hr * 3,
             'likely_mechanical': 0  # Default if nothing else scores high
         }
         
-        # Special case: frequent accel changes without DynZ = slicer issue
-        if accel_per_hr > 50 and dynz_per_hr < 5:
-            scores['slicer_accel_control'] = accel_per_hr * 2
+        if dynz_uses_accel:
+            # DynZ is switching acceleration — attribute accel changes to DynZ
+            scores['dynz_accel_switching'] = dynz_per_hr * 10 + accel_per_hr
+            if dynz_per_hr > 10:
+                scores['dynz_accel_switching'] += 50
+        else:
+            # DynZ uses temp reduction — it never touches acceleration
+            # DynZ transitions may still cause temp swings, score that separately
+            scores['dynz_temp_swings'] = dynz_per_hr * 5
+            # All accel changes come from slicer G-code
+            if accel_per_hr > 50:
+                scores['slicer_accel_control'] = accel_per_hr * 2
         
-        # If DynZ transitions frequently, that's the smoking gun
-        if dynz_per_hr > 10:
-            scores['dynz_accel_switching'] += 50
+        # Special case: frequent accel changes without DynZ = slicer issue
+        # (also relevant in accel_limit mode if DynZ isn't firing)
+        if dynz_uses_accel and accel_per_hr > 50 and dynz_per_hr < 5:
+            scores['slicer_accel_control'] = accel_per_hr * 2
         
         # Find highest score
         culprit = max(scores, key=scores.get)
