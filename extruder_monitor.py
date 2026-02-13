@@ -416,6 +416,9 @@ class ExtruderMonitor:
                     'pa_delta', 'accel_delta', 'temp_target_delta', 'temp_overshoot',
                     'dynz_transition', 'layer_transition', 'banding_risk', 'event_flags'
                 ])
+                # Flush header immediately to disk
+                self._log_file.flush()
+                os.fsync(self._log_file.fileno())
                 
                 # Reset state tracking
                 self._last_pa = None
@@ -485,12 +488,19 @@ class ExtruderMonitor:
             except Exception as e:
                 gcmd.respond_info(f"AT_LOG: Failed to start logging: {e}")
                 logger.error(f"Failed to start logging: {e}")
+                # Make sure we don't leave partial state
+                self._log_file = None
+                self._log_writer = None
 
     def cmd_AT_LOG_DATA(self, gcmd):
         """Log a single data point during printing."""
         with self._log_lock:
             if not self._log_writer:
-                return  # Logging not active
+                # Logging not started - warn user occasionally
+                if not hasattr(self, '_log_warning_shown'):
+                    self._log_warning_shown = True
+                    gcmd.respond_info("AT_LOG: Logging not active. Call AT_LOG_START first.")
+                return
             
             try:
                 elapsed = time.time() - self._log_start_time
@@ -653,12 +663,15 @@ class ExtruderMonitor:
                     self._log_stats['fan_adjustments'] += 1
                 self._log_stats['last_fan'] = fan_pct
                 
-                # Flush periodically
-                if self._log_sample_count % 60 == 0:
+                # Flush frequently to prevent data loss (every 10 samples = ~10 seconds)
+                if self._log_sample_count % 10 == 0:
                     self._log_file.flush()
+                    os.fsync(self._log_file.fileno())
                     
             except Exception as e:
-                logging.getLogger('ExtruderMonitor').debug(f"Log data error: {e}")
+                logger = logging.getLogger('ExtruderMonitor')
+                logger.error(f"Log data error: {e}")
+                gcmd.respond_info(f"AT_LOG: Error writing data: {e}")
 
     def cmd_AT_LOG_END(self, gcmd):
         """End logging session and write summary."""
@@ -817,6 +830,9 @@ class ExtruderMonitor:
                     gcmd.respond_info(f"AT_LOG: Summary saved to {summary_path}")
                     logger.info(f"Print log summary: {summary}")
                 
+                # Final flush before closing
+                self._log_file.flush()
+                os.fsync(self._log_file.fileno())
                 self._log_file.close()
                 
             except Exception as e:
