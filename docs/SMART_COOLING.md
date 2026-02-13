@@ -201,7 +201,7 @@ Every 1 second, Smart Cooling calculates the optimal fan speed:
 5. Calculate heater reduction = (heater_duty - duty_threshold) * duty_k  [if heater_adaptive enabled]
 6. target_fan = base_fan - flow_reduction + layer_boost - heater_reduction
 7. Clamp to [min_fan, max_fan]
-8. Apply if changed by more than 3%
+8. Apply if changed by more than 1%
 ```
 
 ### Heater-Adaptive Feedback
