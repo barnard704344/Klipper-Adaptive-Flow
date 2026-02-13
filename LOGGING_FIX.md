@@ -6,13 +6,14 @@ CSV log file was only 1KB with just header row - no actual data rows. This made 
 
 ## Root Cause
 
-**Insufficient file buffering strategy** in `extruder_monitor.py`:
+**Two critical buffering issues** in `extruder_monitor.py`:
 
-1. Data only flushed every 60 seconds (60 samples)
-2. Header written but not immediately flushed to disk
-3. Short prints (&lt;60 seconds) lost all data
-4. Klipper restarts during print lost buffered data
-5. Errors were silent (DEBUG level only)
+1. **First sample never flushed**: The flush check `_log_sample_count % 10 == 0` only triggered on counts 10, 20, 30... but the counter starts at 0 and increments to 1, 2, 3... So samples 1-9 were never flushed!
+2. **Insufficient buffering strategy**: Data only flushed every 60 seconds (60 samples) originally
+3. Header written but not immediately flushed to disk
+4. Short prints (<10 seconds if only using modulo 10) lost all data
+5. Klipper restarts during print lost buffered data
+6. Errors were silent (DEBUG level only)
 
 ## Solution
 
@@ -27,21 +28,23 @@ os.fsync(self._log_file.fileno())
 ```
 **Impact**: Prevents empty 1KB files with only header in buffer.
 
-#### 2. Frequent Data Flush (line 666-668)
+#### 2. Frequent Data Flush + First Sample (line 666-669)
 ```python
 # BEFORE: Flush every 60 samples (~60 seconds)
 if self._log_sample_count % 60 == 0:
     self._log_file.flush()
 
-# AFTER: Flush every 10 samples (~10 seconds)
-if self._log_sample_count % 10 == 0:
+# AFTER: Flush every 10 samples (~10 seconds) AND first sample
+if self._log_sample_count == 1 or self._log_sample_count % 10 == 0:
     self._log_file.flush()
     os.fsync(self._log_file.fileno())
 ```
 **Impact**: 
+- **CRITICAL FIX**: First data point now flushed immediately (was never flushed before!)
 - Short prints now capture data
 - Data loss window reduced from 60s to 10s
 - Klipper crashes lose max 10s of data instead of 60s
+- Files appear immediately in directory (not empty until 10 seconds pass)
 
 #### 3. Final Flush Before Close (line 833-835)
 ```python

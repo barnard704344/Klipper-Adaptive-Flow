@@ -69,4 +69,7 @@ variable_use_high_flow_nozzle: True
 # variable_sc_heater_wattage: 0  # 40, 60, or 0 for manual
 # variable_sc_heater_duty_threshold: 0.90
 # variable_sc_heater_duty_k: 1.0
-gcode:
+
+# IMPORTANT: Do NOT add a "gcode:" line here!
+# This section MERGES with the defaults. Adding "gcode:" would replace
+# the entire 700-line core logic with nothing, breaking adaptive flow.

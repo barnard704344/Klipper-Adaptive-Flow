@@ -69,6 +69,8 @@ class ExtruderMonitor:
                                desc="Log a data point during printing")
         gcode.register_command("AT_LOG_END", self.cmd_AT_LOG_END,
                                desc="End logging and write summary")
+        gcode.register_command("AT_LOG_STATUS", self.cmd_AT_LOG_STATUS,
+                               desc="Check logging status and diagnostics")
 
         # Attempt to attach a live G-code listener using multiple methods
         hook_installed = False
@@ -483,6 +485,7 @@ class ExtruderMonitor:
                 }
                 
                 gcmd.respond_info(f"AT_LOG: Started logging to {log_path}")
+                gcmd.respond_info(f"AT_LOG: Waiting for data... (AT_LOG_DATA will be called each loop cycle)")
                 logger.info(f"Started print logging: {log_path}")
                 
             except Exception as e:
@@ -501,6 +504,10 @@ class ExtruderMonitor:
                     self._log_warning_shown = True
                     gcmd.respond_info("AT_LOG: Logging not active. Call AT_LOG_START first.")
                 return
+            
+            # First data point - confirm logging is working
+            if self._log_sample_count == 0:
+                gcmd.respond_info("AT_LOG: First data point received - logging active")
             
             try:
                 elapsed = time.time() - self._log_start_time
@@ -664,7 +671,8 @@ class ExtruderMonitor:
                 self._log_stats['last_fan'] = fan_pct
                 
                 # Flush frequently to prevent data loss (every 10 samples = ~10 seconds)
-                if self._log_sample_count % 10 == 0:
+                # CRITICAL: Also flush first sample to ensure data appears immediately
+                if self._log_sample_count == 1 or self._log_sample_count % 10 == 0:
                     self._log_file.flush()
                     os.fsync(self._log_file.fileno())
                     
@@ -845,6 +853,31 @@ class ExtruderMonitor:
                 self._log_start_time = None
                 self._log_sample_count = 0
                 self._log_stats = {}
+    
+    def cmd_AT_LOG_STATUS(self, gcmd):
+        """Check logging status and provide diagnostics."""
+        with self._log_lock:
+            if self._log_writer and self._log_file:
+                duration = time.time() - self._log_start_time if self._log_start_time else 0
+                gcmd.respond_info(f"AT_LOG: ✓ Active - {self._log_sample_count} samples over {duration:.1f}s")
+                gcmd.respond_info(f"AT_LOG: File: {self._log_file.name}")
+                if self._log_sample_count == 0:
+                    gcmd.respond_info("AT_LOG: ⚠️  No data points received yet!")
+                    gcmd.respond_info("AT_LOG: Check: 1) Is AUTO_TEMP_LOOP running? 2) Is base_print_temp >= 170? 3) Is at_enabled=True?")
+            else:
+                gcmd.respond_info("AT_LOG: ✗ Not active - call AT_LOG_START first")
+            
+            # Check if adaptive flow is enabled
+            vars = self.printer.lookup_object('save_variables')
+            saved_vars = vars.allVariables if hasattr(vars, 'allVariables') else {}
+            at_enabled = saved_vars.get('at_enabled', False)
+            base_temp = saved_vars.get('base_print_temp', 0)
+            
+            gcmd.respond_info(f"AT_LOG: at_enabled={at_enabled}, base_print_temp={base_temp}")
+            if not at_enabled:
+                gcmd.respond_info("AT_LOG: ⚠️  Adaptive Flow is DISABLED - call AT_START first!")
+            if base_temp < 170:
+                gcmd.respond_info(f"AT_LOG: ⚠️  base_print_temp too low ({base_temp}°C) - heat nozzle and call AT_START!")
     
     def _diagnose_banding_culprit(self):
         """Analyze stats to identify most likely banding cause."""

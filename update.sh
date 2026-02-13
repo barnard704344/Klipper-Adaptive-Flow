@@ -196,6 +196,28 @@ if [ -f "$SERVICE_FILE" ]; then
     echo ""
 fi
 
+# Fix critical bug: empty gcode: in user config overrides the entire core logic
+# This was a design flaw in auto_flow_user.cfg.example - the empty gcode: line
+# caused Klipper's configparser to replace _AUTO_TEMP_CORE's 700-line gcode with nothing
+if [ -f "$USER_CFG" ]; then
+    if grep -q "^gcode:" "$USER_CFG" 2>/dev/null; then
+        echo ""
+        echo "[!] CRITICAL FIX: Found empty 'gcode:' in auto_flow_user.cfg"
+        echo "    This was overriding the entire core adaptive flow logic!"
+        echo "    Removing the empty gcode: line..."
+        
+        # Create backup
+        BACKUP_FILE="${USER_CFG}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$USER_CFG" "$BACKUP_FILE"
+        
+        # Remove the bare "gcode:" line (with optional trailing whitespace)
+        sed -i '/^gcode:[[:space:]]*$/d' "$USER_CFG"
+        
+        echo "[OK] Fixed! Backup saved: $BACKUP_FILE"
+        echo ""
+    fi
+fi
+
 # Update printer.cfg automatically
 echo ""
 echo "[>>] Checking printer.cfg configuration..."
