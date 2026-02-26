@@ -100,18 +100,17 @@ if [ -f "analyze_print.py" ]; then
     cp analyze_print.py "$KLIPPER_EXTRAS/"
 fi
 
-if [ -f "moonraker_hook.py" ]; then
-    cp moonraker_hook.py "$KLIPPER_EXTRAS/"
-fi
-
 # Copy system defaults (always safe to update)
 echo "[>>] Updating system defaults..."
 cp auto_flow_defaults.cfg material_profiles_defaults.cfg "$CONFIG_DIR/"
 
-# Copy analysis config if it exists
-if [ -f "analysis_config.cfg" ]; then
-    cp analysis_config.cfg "$CONFIG_DIR/"
-fi
+# Clean up deprecated files from previous versions
+for OLD_FILE in "$KLIPPER_EXTRAS/moonraker_hook.py" "$CONFIG_DIR/analysis_config.cfg" "$CONFIG_DIR/moonraker_hook.py"; do
+    if [ -f "$OLD_FILE" ]; then
+        rm -f "$OLD_FILE"
+        echo "[OK] Removed deprecated: $OLD_FILE"
+    fi
+done
 
 # Check if user config files exist
 USER_CFG="$CONFIG_DIR/auto_flow_user.cfg"

@@ -64,7 +64,6 @@ The update script provides comprehensive automatic updates with safety features:
 
 ### What It Does Automatically
 - **Updates system files**: Python modules and default configuration files
-- **Optional features**: Automatically updates `analyze_print.py` and `analysis_config.cfg` if present
 - **Preserves your settings**: Never overwrites `auto_flow_user.cfg` or `material_profiles_user.cfg`
 - **Auto-configures printer.cfg**: Adds required includes if missing:
   - `[include auto_flow_defaults.cfg]`
@@ -82,8 +81,7 @@ If you're upgrading from an older version with legacy config files:
 - **Safe transition**: Old files are preserved as backups, never deleted
 
 ### Service Cleanup
-- **Deprecated service removal**: Automatically removes old `adaptive-flow-hook.service` (automated moonraker post-print analysis)
-- **Manual analysis still available**: See [docs/ANALYSIS.md](docs/ANALYSIS.md) for on-demand print analysis
+- **Deprecated service removal**: Automatically removes old `adaptive-flow-hook.service` if present
 
 ### First-Time Setup
 If running the script on a new installation:
@@ -297,6 +295,7 @@ This feature works automatically—no G-code changes needed.
 | `material_profiles_user.cfg` | Custom material profiles (never overwritten) |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
+| `analyze_print.py` | Banding detection & print stats (no API needed) |
 | `update.sh` | Smart updater (auto-configures, migrates, backs up) |
 
 ## License

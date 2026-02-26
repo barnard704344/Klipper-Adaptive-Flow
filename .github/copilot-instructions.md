@@ -18,13 +18,13 @@ This repository provides **automatic temperature and pressure advance control** 
 ### Python Modules (Klipper Extras)
 - `gcode_interceptor.py` - Intercepts G-code commands and broadcasts events to subscribers
 - `extruder_monitor.py` - Monitors extruder load, manages lookahead buffer, and logs print data
-- `analyze_print.py` - Post-print AI analysis tool (uses LLMs for tuning suggestions)
-- `moonraker_hook.py` - Optional auto-analysis integration with Moonraker
+- `analyze_print.py` - Banding detection & print stats (no external APIs needed)
 
 ### Configuration Files (Klipper/G-code Macros)
-- `auto_flow.cfg` - Main control logic, core loop, macros (user-editable settings)
-- `material_profiles.cfg` - Material-specific boost curves and PA settings (user-editable)
-- `analysis_config.cfg` - LLM provider configuration for print analysis
+- `auto_flow_defaults.cfg` - System defaults, core loop, macros (updated by git)
+- `auto_flow_user.cfg` - User overrides (never overwritten)
+- `material_profiles_defaults.cfg` - System material profiles (updated by git)
+- `material_profiles_user.cfg` - User material overrides (never overwritten)
 
 ### Documentation
 - `README.md` - Installation, setup, and usage guide
@@ -167,9 +167,9 @@ When making code changes:
    - Layer transitions
 
 ### Print Analysis Testing
-- Run `analyze_print.py` on logged print sessions
-- Verify LLM provider connections (GitHub Models, OpenAI, Anthropic)
-- Check that suggestions are actionable and safe
+- Run `analyze_print.py` to view single-print stats
+- Run `analyze_print.py --count 10` for multi-print banding analysis
+- Verify banding culprit detection matches observed artifacts
 
 ## Common Workflows
 
@@ -192,10 +192,10 @@ When making code changes:
 4. Document new commands in README.md
 
 ### Adding New Analysis Features
-1. Extend `analyze_print.py` with new metrics
-2. Update LLM prompt to interpret new data
-3. Test with multiple LLM providers (GitHub, OpenAI, Anthropic)
-4. Add safety checks for auto-applied suggestions
+1. Extend `analyze_print.py` with new metrics or detection logic
+2. Update banding thresholds or add new culprit categories
+3. Test against logged CSV data from real prints
+4. Update `docs/ANALYSIS.md` with new features
 
 ## Important Constraints
 
@@ -222,12 +222,8 @@ When making code changes:
 - `collections.deque` - efficient fixed-size buffers
 - `datetime` - timestamp generation
 - `re` - regex for G-code parsing
-- `urllib.parse` - URL encoding for API requests
-
-### External APIs (Optional)
-- GitHub Models API - LLM analysis (free, requires `GITHUB_TOKEN`)
-- OpenAI API - LLM analysis (requires `OPENAI_API_KEY`)
-- Anthropic API - LLM analysis (requires `ANTHROPIC_API_KEY`)
+### No External APIs Required
+- All analysis is statistical — no API keys or network access needed
 
 ### Klipper Integration
 - Modules are loaded as Klipper extras
@@ -251,23 +247,14 @@ When making code changes:
 - Enable verbose logging in modules by setting log level to `DEBUG`
 - Test incrementally: small changes, frequent validation
 
-## AI Analysis Integration
+## Print Analysis
 
-The `analyze_print.py` script uses LLMs to provide tuning suggestions:
+The `analyze_print.py` script provides local, statistical analysis:
 
-### LLM Provider Selection
-- **GitHub Models** (recommended): Free, no API key cost, good quality
-- **OpenAI**: High quality, requires paid API key
-- **Anthropic**: High quality, requires paid API key
+- **Single-print mode**: Displays health summary (boost, heater duty, banding events)
+- **Multi-print banding mode** (`--count N`): Aggregates data across N prints to identify consistent banding culprits (DynZ switching, PA oscillation, temp instability, slicer accel control)
 
-### Analysis Output
-- **[✓ SAFE]** suggestions: Can be auto-applied (use `--auto` flag)
-- **[⚠ MANUAL]** suggestions: Require user review and manual adjustment
-
-### Safety Guardrails
-- Only specific config changes are auto-applied
-- Suggestions are validated before application
-- User always has final control
+No API keys, network access, or external services required.
 
 ## Version Control
 
