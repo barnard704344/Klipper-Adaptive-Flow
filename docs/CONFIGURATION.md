@@ -4,7 +4,7 @@ Detailed configuration options for Klipper Adaptive Flow.
 
 ## Quick Start
 
-Most users only need to set one option in `auto_flow.cfg`:
+Most users only need to set one option in `auto_flow_user.cfg`:
 
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
@@ -132,7 +132,7 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ## Advanced Configuration
 
-Edit these variables in `auto_flow.cfg` if needed:
+Edit these variables in `auto_flow_user.cfg` if needed:
 
 ### Global Limits
 
@@ -165,6 +165,25 @@ variable_flow_smoothing: 0.15          # 0.0-1.0, lower = faster response
 variable_first_layer_skip: True        # Disable boost on first layer
 variable_first_layer_height: 0.3       # Z height considered "first layer"
 ```
+
+### Filament Cross-Section
+
+```ini
+variable_filament_cross_section: 2.405  # mm² for 1.75mm filament (π × 0.875²)
+```
+
+Change this if using 2.85mm filament (`6.382`) or another non-standard diameter.
+
+### Dynamic Pressure Advance
+
+```ini
+variable_pa_enable: True               # Enable dynamic PA adjustment
+variable_pa_deadband: 0.003            # Min PA change before issuing command
+variable_pa_min_value: 0.010           # Absolute minimum PA allowed
+variable_pa_max_reduction: 0.020       # Max PA reduction from base value
+```
+
+The `pa_deadband` prevents unnecessary `SET_PRESSURE_ADVANCE` commands for tiny fluctuations.
 
 ### Thermal Safety
 
@@ -292,11 +311,11 @@ The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base 
 ## Data Sources
 
 ### Native Klipper
-- `printer.motion_report.live_extruder_velocity` → filament speed
-- `printer.motion_report.live_velocity` → toolhead speed
-- `printer.extruder.power` → heater PWM %
-- `printer.toolhead.position.z` → Z height
+- `printer.motion_report.live_extruder_velocity` → filament speed (mm/s)
+- `printer.motion_report.live_velocity` → toolhead speed (mm/s)
+- `printer.extruder.power` → heater PWM (0.0–1.0)
+- `printer.toolhead.position.z` → Z height (mm)
 
 ### Python Extras
-- `extruder_monitor.py` → 5-second lookahead, logging
-- `gcode_interceptor.py` → G-code stream parsing
+- `extruder_monitor.py` → 5-second lookahead buffer, predicted extrusion rate and volumetric flow, print session logging with banding risk analysis
+- `gcode_interceptor.py` → G-code stream interception and broadcast to subscribers

@@ -21,14 +21,14 @@ This combination can cause thermal lag, inconsistent extrusion, and surface arti
 
 ## Configuration
 
-DynZ is enabled by default. To customize, edit `auto_flow.cfg`:
+DynZ is enabled by default. To customize, edit `auto_flow_user.cfg`:
 
 ```ini
 # Enable/disable DynZ
 variable_dynz_enable: True
 
-# Z bin size (1.0mm = stable, 0.5mm = more sensitive)
-variable_dynz_bin_height: 1.0
+# Z bin size (2.0mm = stable, 0.5mm = more sensitive)
+variable_dynz_bin_height: 2.0
 
 # Stress detection thresholds
 variable_dynz_speed_thresh: 80.0      # mm/s toolhead speed
@@ -36,27 +36,44 @@ variable_dynz_flow_max: 8.0           # mm³/s volumetric flow
 variable_dynz_pwm_thresh: 0.70        # heater duty cycle (0-1)
 
 # Score thresholds
-variable_dynz_activate_score: 4.0     # score to trigger relief
+variable_dynz_activate_score: 6.0     # score to trigger relief
 variable_dynz_deactivate_score: 1.5   # score to exit relief
 
-# Acceleration during stress relief
+# Relief method: 'temp_reduction' (recommended) or 'accel_limit' (legacy)
+variable_dynz_relief_method: 'temp_reduction'
+
+# Temperature reduction during stress (used with temp_reduction method)
+variable_dynz_temp_reduction: 8.0     # °C to reduce boost by
+
+# Acceleration during stress relief (used with accel_limit method)
 variable_dynz_accel_relief: 3200      # mm/s² (lower = gentler moves)
 ```
+
+### Relief Methods
+
+| Method | Description | Recommended? |
+|--------|-------------|:---:|
+| `temp_reduction` | Reduces temperature boost to ease thermal demand. Smoother, prevents banding. | ✅ |
+| `accel_limit` | Reduces toolhead acceleration. Legacy approach, may cause visible banding. | ❌ |
 
 ### Parameter Guide
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `dynz_enable` | Master enable/disable | True |
-| `dynz_bin_height` | Height of each Z bin in mm. Smaller = more granular, larger = more stable | 1.0 |
+| `dynz_bin_height` | Height of each Z bin in mm. Smaller = more granular, larger = more stable | 2.0 |
 | `dynz_speed_thresh` | Toolhead speed (mm/s) above which stress is considered | 80.0 |
 | `dynz_flow_max` | Flow rate (mm³/s) below which stress is considered | 8.0 |
 | `dynz_pwm_thresh` | Heater PWM (0-1) above which stress is considered | 0.70 |
 | `dynz_score_inc` | Score added per stress detection | 1.0 |
 | `dynz_score_decay` | Score multiplier when no stress (0.9 = 10% decay) | 0.90 |
-| `dynz_activate_score` | Score threshold to enable accel relief | 4.0 |
-| `dynz_deactivate_score` | Score threshold to disable accel relief | 1.5 |
-| `dynz_accel_relief` | Acceleration limit during stress relief (mm/s²) | 3200 |
+| `dynz_activate_score` | Score threshold to enable relief | 6.0 |
+| `dynz_deactivate_score` | Score threshold to disable relief | 1.5 |
+| `dynz_relief_method` | Relief strategy: `temp_reduction` or `accel_limit` | `temp_reduction` |
+| `dynz_temp_reduction` | °C to reduce boost by (temp_reduction method) | 8.0 |
+| `dynz_accel_relief` | Acceleration limit during stress (accel_limit method) | 3200 |
+
+> **Note:** DynZ scores are only persisted to disk when the score changes by more than 0.5, reducing SD card wear while still maintaining the learning history.
 
 ## Monitoring
 

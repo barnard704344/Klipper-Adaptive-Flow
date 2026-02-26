@@ -149,6 +149,13 @@ Edit `auto_flow_user.cfg`:
 variable_use_high_flow_nozzle: True   # False for standard Revo
 ```
 
+Other useful overrides (uncomment in `auto_flow_user.cfg`):
+```ini
+# variable_filament_cross_section: 2.405  # Change for 2.85mm filament (6.382)
+# variable_pa_deadband: 0.003             # Min PA change before sending command
+# variable_flow_smoothing: 0.35           # Higher = smoother, lower = faster response
+```
+
 ### Material Profiles (optional customization)
 
 Edit `material_profiles_user.cfg` to add custom materials or override defaults:
@@ -220,8 +227,9 @@ DynZ is an intelligent learning system that detects and adapts to challenging pr
 
 - **Learning**: Divides Z-height into bins and tracks stress conditions
 - **Detection**: Flags when speed is high + flow is low + heater is working hard
-- **Relief**: Reduces acceleration to ease thermal demand in stress zones
+- **Relief**: Reduces temperature boost (default) or acceleration to ease thermal demand
 - **Memory**: Stress patterns persist, so it "remembers" where domes start
+- **Smart persistence**: Scores only written to disk on significant changes (reduces SD card wear)
 
 Check status during a print:
 ```

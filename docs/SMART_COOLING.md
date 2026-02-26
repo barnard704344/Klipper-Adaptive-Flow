@@ -20,7 +20,7 @@ Smart Cooling takes full control of the part cooling fan based on flow rate, lay
 
 ## Configuration
 
-Smart Cooling is enabled by default. To customize, edit `auto_flow.cfg`:
+Smart Cooling is enabled by default. To customize, edit `auto_flow_user.cfg`:
 
 ```ini
 # Enable/disable Smart Cooling
