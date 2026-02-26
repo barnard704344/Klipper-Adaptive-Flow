@@ -805,7 +805,8 @@ def print_headroom_report(headroom):
     print("=" * 70)
     print("\nFlow rate vs heater duty — shows how much capacity remains.\n")
 
-    print(f"{'Flow (mm\u00b3/s)':>16}  {'Samples':>7}  {'Avg PWM':>8}  {'P95 PWM':>8}  {'Max PWM':>8}  Headroom")
+    _hdr_flow = 'Flow (mm\u00b3/s)'
+    print(f"{_hdr_flow:>16}  {'Samples':>7}  {'Avg PWM':>8}  {'P95 PWM':>8}  {'Max PWM':>8}  Headroom")
     print("\u2500" * 70)
 
     saturation_flow = None
@@ -1231,7 +1232,8 @@ def print_distribution(dist):
     print(f"\n\u2500" * 70)
     print("  FLOW DISTRIBUTION")
     print("\u2500" * 70)
-    print(f"\n{'Flow (mm\u00b3/s)':>16}  {'% Time':>7}  {'Samples':>8}  "
+    hdr_flow = 'Flow (mm\u00b3/s)'
+    print(f"\n{hdr_flow:>16}  {'% Time':>7}  {'Samples':>8}  "
           f"{'Avg Boost':>10}  {'Avg PWM':>8}  Bar")
     print("\u2500" * 70)
 
