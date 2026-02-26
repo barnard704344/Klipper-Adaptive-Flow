@@ -1,9 +1,11 @@
 # Print Analysis — Banding Detection & Print Stats
 
-The `analyze_print.py` tool provides two modes:
+The `analyze_print.py` tool provides four modes:
 
 1. **Single-print stats** — Quick health summary from the latest (or a specific) print
 2. **Multi-print banding analysis** — Aggregates data across N prints to identify banding culprits
+3. **Z-height banding heatmap** — Shows which layers have the most banding risk
+4. **Print-over-print trends** — Tracks whether your config changes are helping
 
 **No API keys or external services required.** Everything runs locally using your print logs.
 
@@ -161,6 +163,103 @@ Score ≥5 = high risk event (likely visible artifact)
 3. **Check consistency**: If 8+ prints show same culprit → confirmed diagnosis
 4. **Apply fix** from recommendations
 5. **Verify**: Print another cube, check if high-risk events drop to near zero
+
+---
+
+## Z-Height Banding Heatmap
+
+Shows banding risk broken down by Z-height layer bins. Lets you correlate visible banding lines on your part to specific events in the data.
+
+### Usage
+
+```bash
+# Latest print
+python3 analyze_print.py --z-map
+
+# Specific print
+python3 analyze_print.py --z-map my_print_summary.json
+
+# Custom bin size (default 0.5mm)
+python3 analyze_print.py --z-map --z-bin 1.0
+```
+
+### Example Output
+
+```
+======================================================================
+  Z-HEIGHT BANDING HEATMAP
+======================================================================
+
+     Z range  Avg risk  Events  Bar
+──────────────────────────────────────────────────────────────────────
+ 0.0-0.5mm       1.2       0  ████░░░░░░░░░░░░░░░░░░░░░░░░░░
+ 0.5-1.0mm       0.8       0  ███░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ 5.0-5.5mm       7.3      12  ██████████████████████████░░░░  <-- PROBLEM
+ 5.5-6.0mm       6.1       8  ████████████████████████░░░░░░  <-- PROBLEM
+
+──────────────────────────────────────────────────────────────────────
+  PROBLEM ZONES
+──────────────────────────────────────────────────────────────────────
+
+  Z 5.0-5.5mm  (avg risk 7.3, 12 high-risk events)
+    Caused by: 9 accel changes, 3 DynZ transitions
+
+  Z 5.5-6.0mm  (avg risk 6.1, 8 high-risk events)
+    Caused by: 6 accel changes, 2 PA changes
+```
+
+### How to Use It
+
+1. Print something and notice banding at a specific height
+2. Run `--z-map` and find the matching Z range
+3. The "Caused by" line tells you what triggered it (accel, PA, DynZ, etc.)
+4. Apply the appropriate fix from the banding culprits table
+
+---
+
+## Print-Over-Print Trends
+
+Compares key metrics across your last N prints to show whether your config changes are helping or hurting.
+
+### Usage
+
+```bash
+# Trends across last 10 prints
+python3 analyze_print.py --trend 10
+
+# Filter by material
+python3 analyze_print.py --trend 10 --material PLA
+```
+
+### Example Output
+
+```
+======================================================================
+  PRINT-OVER-PRINT TRENDS (10 prints, oldest → newest)
+======================================================================
+
+Print         Boost  Heater  Risk Ev Culprit
+──────────────────────────────────────────────────────────────────────
+2026-02-16     12.3°C     78%       42 dynz_accel_switching
+2026-02-17     11.8°C     75%       38 dynz_accel_switching
+2026-02-18      9.1°C     68%       15 pa_oscillation
+2026-02-20      8.4°C     65%        8 none
+2026-02-22      7.9°C     63%        3 none
+
+──────────────────────────────────────────────────────────────────────
+  TREND DIRECTION
+──────────────────────────────────────────────────────────────────────
+  Avg boost          ↓  35.2% down  (improving)
+  Heater duty        ↓  18.7% down  (improving)
+  Banding events     ↓  92.1% down  (improving)
+```
+
+### How to Use It
+
+1. Make a config change (e.g., switch DynZ relief method)
+2. Print a few test objects
+3. Run `--trend 10` to see if metrics are trending down
+4. **Improving** = your change helped. **Worsening** = revert it.
 
 ---
 

@@ -10,12 +10,15 @@ Usage:
     python3 analyze_print.py <summary.json>          # Show specific print stats
     python3 analyze_print.py --count 10              # Banding analysis (last 10 prints)
     python3 analyze_print.py --count 10 --material PLA  # Filter by material
+    python3 analyze_print.py --z-map                 # Z-height banding heatmap
+    python3 analyze_print.py --trend 10              # Print-over-print trends
 """
 
 import os
 import sys
 import json
 import csv
+import math
 import statistics
 import argparse
 from pathlib import Path
@@ -378,6 +381,218 @@ def print_banding_report(agg):
 
 
 # =============================================================================
+# Z-HEIGHT BANDING HEATMAP
+# =============================================================================
+
+def analyze_z_banding(csv_file, bin_size=0.5):
+    """Analyze banding risk by Z-height bins from a single CSV log."""
+    bins = defaultdict(lambda: {
+        'samples': 0,
+        'risk_sum': 0,
+        'high_risk': 0,
+        'accel_changes': 0,
+        'pa_changes': 0,
+        'dynz_transitions': 0,
+        'events': [],
+    })
+
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    z = float(row.get('z_height', 0))
+                    risk = int(row.get('banding_risk', 0))
+                    bin_key = math.floor(z / bin_size) * bin_size
+
+                    b = bins[bin_key]
+                    b['samples'] += 1
+                    b['risk_sum'] += risk
+
+                    if risk >= 5:
+                        b['high_risk'] += 1
+                    if 'accel_delta' in row and abs(float(row['accel_delta'])) > 500:
+                        b['accel_changes'] += 1
+                    if 'pa_delta' in row and abs(float(row['pa_delta'])) > 0.005:
+                        b['pa_changes'] += 1
+                    if 'dynz_transition' in row and int(row['dynz_transition']) != 0:
+                        b['dynz_transitions'] += 1
+
+                    flags = row.get('event_flags', '')
+                    if flags:
+                        b['events'].append(flags)
+                except (KeyError, ValueError):
+                    continue
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return {}
+
+    return dict(bins)
+
+
+def _bar(value, max_value, width=30):
+    """Render a horizontal bar using block characters."""
+    if max_value <= 0:
+        return ''
+    filled = int(round(value / max_value * width))
+    filled = min(filled, width)
+    return '\u2588' * filled + '\u2591' * (width - filled)
+
+
+def print_z_map(bins, bin_size=0.5):
+    """Print the Z-height banding heatmap."""
+    if not bins:
+        print("No Z-height data available.")
+        return
+
+    sorted_z = sorted(bins.keys())
+    max_risk = max(
+        (b['risk_sum'] / b['samples'] if b['samples'] else 0)
+        for b in bins.values()
+    )
+    max_risk = max(max_risk, 0.1)  # avoid division by zero
+
+    print("\n" + "=" * 70)
+    print("  Z-HEIGHT BANDING HEATMAP")
+    print("=" * 70)
+    print(f"\n{'Z range':>14}  {'Avg risk':>8}  {'Events':>6}  Bar")
+    print("\u2500" * 70)
+
+    problem_zones = []
+    for z in sorted_z:
+        b = bins[z]
+        if b['samples'] == 0:
+            continue
+        avg_risk = b['risk_sum'] / b['samples']
+        events = b['high_risk']
+        z_end = z + bin_size
+        label = f"{z:6.1f}-{z_end:.1f}mm"
+        bar = _bar(avg_risk, max_risk)
+
+        # Highlight high-risk zones
+        marker = '  <-- PROBLEM' if avg_risk >= 4.0 or events >= 5 else ''
+        print(f"{label:>14}  {avg_risk:>8.1f}  {events:>6}  {bar}{marker}")
+
+        if avg_risk >= 4.0 or events >= 5:
+            problem_zones.append({
+                'z': z, 'z_end': z_end, 'avg_risk': avg_risk,
+                'events': events,
+                'accel': b['accel_changes'],
+                'pa': b['pa_changes'],
+                'dynz': b['dynz_transitions'],
+            })
+
+    # Summary of problem zones
+    if problem_zones:
+        print(f"\n\u2500" * 70)
+        print("  PROBLEM ZONES")
+        print("\u2500" * 70)
+        for pz in problem_zones:
+            print(f"\n  Z {pz['z']:.1f}-{pz['z_end']:.1f}mm  "
+                  f"(avg risk {pz['avg_risk']:.1f}, {pz['events']} high-risk events)")
+            parts = []
+            if pz['accel']:
+                parts.append(f"{pz['accel']} accel changes")
+            if pz['pa']:
+                parts.append(f"{pz['pa']} PA changes")
+            if pz['dynz']:
+                parts.append(f"{pz['dynz']} DynZ transitions")
+            if parts:
+                print(f"    Caused by: {', '.join(parts)}")
+    else:
+        print(f"\n\u2713 No problem zones detected — banding risk is low throughout.")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
+# PRINT-OVER-PRINT TRENDS
+# =============================================================================
+
+def print_trends(sessions):
+    """Show key metrics trending across prints (oldest → newest)."""
+    # Reverse so oldest is first (chronological)
+    ordered = list(reversed(sessions))
+
+    print("\n" + "=" * 70)
+    print(f"  PRINT-OVER-PRINT TRENDS ({len(ordered)} prints, oldest \u2192 newest)")
+    print("=" * 70)
+
+    # Collect series
+    labels = []
+    boosts = []
+    pwms = []
+    risk_events = []
+    culprits = []
+
+    for s in ordered:
+        summary = s['summary']
+        ba = summary.get('banding_analysis', {})
+        ts = summary.get('start_time', '')
+        # Short label: date or filename
+        if ts and len(ts) >= 10:
+            label = ts[:10]
+        else:
+            label = summary.get('filename', '?')[:12]
+        labels.append(label)
+        boosts.append(summary.get('avg_boost', summary.get('auto_temp', {}).get('avg_boost', 0)))
+        pwms.append(summary.get('avg_pwm', summary.get('heater', {}).get('avg_pwm', 0)))
+        risk_events.append(ba.get('high_risk_events', 0))
+        culprits.append(ba.get('likely_culprit', '-'))
+
+    # Print table
+    n = len(ordered)
+    col_w = max(12, max(len(l) for l in labels) + 1) if labels else 12
+
+    print(f"\n{'Print':<{col_w}} {'Boost':>7} {'Heater':>8} {'Risk Ev':>8} Culprit")
+    print("\u2500" * 70)
+    for i in range(n):
+        pwm_str = f"{pwms[i]:.0%}" if isinstance(pwms[i], float) else f"{pwms[i]}"
+        print(f"{labels[i]:<{col_w}} {boosts[i]:>6.1f}\u00b0C {pwm_str:>8} {risk_events[i]:>8} {culprits[i]}")
+
+    # Trend arrows
+    print(f"\n\u2500" * 70)
+    print("  TREND DIRECTION")
+    print("\u2500" * 70)
+
+    def _trend(values):
+        """Simple trend: compare first-half avg to second-half avg."""
+        if len(values) < 2:
+            return 'flat', 0.0
+        mid = len(values) // 2
+        first = statistics.mean(values[:mid]) if mid > 0 else 0
+        second = statistics.mean(values[mid:]) if mid > 0 else 0
+        delta = second - first
+        pct = (delta / first * 100) if first != 0 else 0
+        if abs(pct) < 5:
+            return 'flat', pct
+        return ('up', pct) if pct > 0 else ('down', pct)
+
+    arrows = {
+        'up': '\u2191',
+        'down': '\u2193',
+        'flat': '\u2192',
+    }
+
+    for name, values, good_dir in [
+        ('Avg boost', boosts, 'down'),
+        ('Heater duty', pwms, 'down'),
+        ('Banding events', risk_events, 'down'),
+    ]:
+        direction, pct = _trend(values)
+        arrow = arrows[direction]
+        verdict = ''
+        if direction != 'flat':
+            if direction == good_dir:
+                verdict = '  (improving)'
+            else:
+                verdict = '  (worsening)'
+        print(f"  {name:<18} {arrow} {abs(pct):>5.1f}% {direction}{verdict}")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
@@ -396,6 +611,14 @@ Examples:
   Multi-print banding analysis:
     python3 analyze_print.py --count 10
     python3 analyze_print.py --count 10 --material PLA
+
+  Z-height banding heatmap (latest or specific print):
+    python3 analyze_print.py --z-map
+    python3 analyze_print.py --z-map my_print_summary.json
+
+  Print-over-print trends:
+    python3 analyze_print.py --trend 10
+    python3 analyze_print.py --trend 10 --material PLA
         """,
     )
     parser.add_argument(
@@ -405,6 +628,15 @@ Examples:
         '--count', '-c', type=int,
         help='Analyze last N prints for banding patterns')
     parser.add_argument(
+        '--z-map', action='store_true',
+        help='Show Z-height banding heatmap for a single print')
+    parser.add_argument(
+        '--z-bin', type=float, default=0.5,
+        help='Z-height bin size in mm for --z-map (default: 0.5)')
+    parser.add_argument(
+        '--trend', '-t', type=int,
+        help='Show trends across last N prints')
+    parser.add_argument(
         '--material', '-m',
         help='Filter by material (PLA, PETG, etc.)')
     parser.add_argument(
@@ -413,6 +645,26 @@ Examples:
     args = parser.parse_args()
 
     log_dir = os.path.expanduser(args.log_dir)
+
+    # ------------------------------------------------------------------
+    # PRINT-OVER-PRINT TRENDS MODE
+    # ------------------------------------------------------------------
+    if args.trend:
+        if not os.path.exists(log_dir):
+            print(f"Log directory not found: {log_dir}")
+            return 1
+
+        sessions = find_recent_sessions(log_dir, args.trend, args.material)
+        if not sessions:
+            print("No print sessions found")
+            return 1
+
+        if len(sessions) < 2:
+            print("Need at least 2 prints for trend analysis.")
+            return 1
+
+        print_trends(sessions)
+        return 0
 
     # ------------------------------------------------------------------
     # BANDING ANALYSIS MODE
@@ -471,6 +723,16 @@ Examples:
               "short, or logging wasn't active.")
 
     print_single_summary(summary, summary_path)
+
+    # Z-map mode: show heatmap after the summary
+    if args.z_map:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        bins = analyze_z_banding(csv_path, bin_size=args.z_bin)
+        print_z_map(bins, bin_size=args.z_bin)
+
     return 0
 
 
