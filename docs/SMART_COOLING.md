@@ -1,18 +1,22 @@
 # Smart Cooling
 
-Smart Cooling automatically adjusts the part cooling fan based on flow rate, layer time, and heater performance, optimizing print quality without manual fan speed management.
+Smart Cooling takes full control of the part cooling fan based on flow rate, layer time, and heater performance. It calculates the optimal fan speed from each material's profile and overrides slicer fan commands — except for bridges and overhangs, which are always respected.
 
 ## How It Works
 
-1. **Flow-based reduction**: At high flow rates, the fast-moving plastic creates its own airflow and needs less fan cooling. Smart Cooling reduces fan speed proportionally.
+1. **Override mode**: SC intercepts slicer `M106` commands and calculates absolute fan speed from the material profile's `sc_max_fan` ceiling. No more fighting between SC and slicer fan curves.
 
-2. **Layer time boost**: Short layers (fast prints or small features) don't have enough time to cool between layers. Smart Cooling increases fan speed for these quick layers.
+2. **Flow-based reduction**: At high flow rates, the fast-moving plastic creates its own airflow and needs less fan cooling. SC reduces fan speed proportionally from the material ceiling.
 
-3. **Lookahead**: Uses the same 5-second lookahead as temperature control to pre-adjust the fan before high-flow sections arrive.
+3. **Layer time boost**: Short layers (fast prints or small features) don't have enough time to cool between layers. SC increases fan speed for these quick layers.
 
-4. **Material awareness**: Each material profile has its own cooling preferences (PLA wants high cooling, ABS wants minimal).
+4. **Bridge/overhang passthrough**: SC intercepts M106 commands from the slicer. If the slicer requests MORE fan than SC calculates (e.g., bridge at 100%), the slicer value wins. This means bridge and overhang cooling always works.
 
-5. **Heater-adaptive feedback** (NEW): When the heater struggles to reach target temperature (>90% duty cycle), Smart Cooling automatically reduces fan speed to help the heater. This prevents high-power CPAP fans from overwhelming the heater at high temps.
+5. **Lookahead**: Uses the same 5-second lookahead as temperature control to pre-adjust the fan before high-flow sections arrive.
+
+6. **Material awareness**: Each material profile defines its own fan range (`sc_min_fan` to `sc_max_fan`). PLA gets 50-100%, ABS gets 0-40%, etc.
+
+7. **Heater-adaptive feedback**: When the heater struggles to reach target temperature (>85-90% duty cycle), SC automatically reduces fan speed to help the heater. This prevents high-power CPAP fans from overwhelming the heater at high temps.
 
 ## Configuration
 
@@ -113,12 +117,14 @@ AT_SC_STATUS
 Output:
 ```
 ===== SMART COOLING STATUS =====
-Smart Cooling: ENABLED
+Smart Cooling: ENABLED (Override Mode)
 Current Fan: 65%
+Slicer Request: 0% (bridges/overhangs)
 Layer Time: 12.3s
 Fan Range: 30% - 70%
 Flow Gate: 10.0 mm³/s
-Short Layer Threshold: 15.0s
+Short Layer Threshold: 12.0s
+Heater Duty: 72%
 =================================
 ```
 
@@ -126,82 +132,50 @@ Short Layer Threshold: 15.0s
 
 ### OrcaSlicer / PrusaSlicer / SuperSlicer
 
-With Smart Cooling enabled, simplify your filament cooling settings:
+Smart Cooling takes full control of the fan. Set your slicer's fan speeds to **0%** and let SC handle everything. Bridge and overhang fan commands from the slicer are still respected — SC intercepts `M106` and allows the slicer to **boost** fan speed above SC's calculated value.
 
-#### Keep These Settings
-| Setting | Value | Why |
-|---------|-------|-----|
-| No cooling for the first | **1 layer** | SC also skips layer 1 |
-| Keep fan always on | ☑️ **ON** | Let SC have control |
-| Force cooling for overhangs and bridges | ☑️ **ON** | SC doesn't detect overhangs |
-| Overhangs/bridges fan speed | **100%** | SC won't override bridge moves |
+#### Filament Cooling Settings
 
-#### Change These Settings
 | Setting | Change To | Why |
 |---------|-----------|-----|
-| Min fan speed threshold | **100%** | Let SC handle reduction |
-| Max fan speed threshold | **100%** | Same as min (constant base) |
-| Full fan speed at layer | **2** | SC takes over after layer 1 |
-| Slow printing down for better layer cooling | ☐ **OFF** | SC boosts fan instead of slowing |
+| **Min fan speed** | **0%** | SC controls fan speed |
+| **Max fan speed** | **0%** | SC controls fan speed |
+| **First layer fan** | **0%** | SC handles first layer |
+| **Keep fan always on** | ☑️ **ON** | Allows SC to set fan at any time |
+| **Full fan speed at layer** | **1** | SC takes over immediately |
+| **Slow printing down for better layer cooling** | ☐ **OFF** | SC boosts fan instead of slowing |
 
-#### Doesn't Matter (SC overrides these)
+#### Keep These Bridge/Overhang Settings
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| **Force cooling for overhangs and bridges** | ☑️ **ON** | SC doesn't detect geometry |
+| **Bridge fan speed** | **100%** | SC will let this through |
+| **Overhang fan speed** | **100%** (or your preference) | SC will let this through |
+
+> **How it works**: SC intercepts all `M106` commands. When the slicer sends a high fan value for bridges/overhangs, SC sees it and uses `max(SC_calculated, slicer_value)`. So the bridge fan always wins if it’s higher than SC's current target.
+
+#### Settings That No Longer Matter (SC overrides these)
 - Layer time thresholds
 - Fan speed curves
-
-#### Don't Change
-- Auxiliary part cooling fan (separate fan, not controlled by SC)
+- Min/Max fan speed ramps
+- Auxiliary part cooling fan is separate (not controlled by SC)
 - Ironing fan speed (SC doesn't run during ironing)
-
-### Option 1: Let Smart Cooling Handle Everything (Recommended)
-
-Set a **single constant fan speed** in your slicer as the baseline:
-
-| Setting | Value |
-|---------|-------|
-| **Fan speed** | 100% (for PLA) or your material's max |
-| **First layer fan** | 0% |
-| **Disable fan for first N layers** | 1 |
-| **Enable cooling for bridges** | Can leave ON |
-
-Smart Cooling uses your slicer's fan speed as the "base" and adjusts from there.
-
-### Option 2: Define Base in Config
-
-In OrcaSlicer/PrusaSlicer, set fan speed to 0%, then define the baseline in `auto_flow.cfg`:
-
-```ini
-variable_sc_base_fan: 255   # 255 = 100% as base
-```
-
-### What to Keep in Slicer
-
-| Keep This | Why |
-|-----------|-----|
-| First layer fan = 0% | Redundant but harmless (SC also does this) |
-| Bridge fan speed | SC doesn't detect bridges (slicer is better) |
-| Overhang fan speed | SC doesn't detect overhangs (slicer is better) |
-
-### What Becomes Redundant
-
-| Slicer Setting | Smart Cooling Equivalent |
-|----------------|-------------------------|
-| Fan speed based on layer time | `sc_short_layer_time` + `sc_layer_time_k` |
-| Min/Max fan speed | `sc_min_fan` / `sc_max_fan` (in material profile) |
-| Slow down if layer print time is below X | SC handles this with increased cooling instead |
 
 ## How the Algorithm Works
 
 Every 1 second, Smart Cooling calculates the optimal fan speed:
 
 ```
-1. Get base fan (from config or slicer's current setting)
+1. Start from material ceiling: base = sc_max_fan
 2. Get effective flow = max(current_flow, predicted_flow_5s_ahead)
 3. Calculate flow reduction = (effective_flow - flow_gate) * flow_k
 4. Calculate layer boost = (short_layer_time - actual_layer_time) * layer_time_k
 5. Calculate heater reduction = (heater_duty - duty_threshold) * duty_k  [if heater_adaptive enabled]
-6. target_fan = base_fan - flow_reduction + layer_boost - heater_reduction
-7. Clamp to [min_fan, max_fan]
-8. Apply if changed by more than 1%
+6. sc_target = base - flow_reduction + layer_boost - heater_reduction
+7. Clamp to [sc_min_fan, sc_max_fan]
+8. final_fan = max(sc_target, slicer_fan)  [slicer can boost for bridges/overhangs]
+9. Apply if changed by more than 1%
 ```
 
 ### Heater-Adaptive Feedback
@@ -251,17 +225,16 @@ This feedback loop helps the heater reach target temperature even with high-powe
 
 ### Example Calculation
 
-Settings: base_fan=100%, flow_gate=8, flow_k=0.03, min=30%, max=70% (PETG)
+Settings: sc_max_fan=70%, sc_min_fan=30%, flow_gate=10, flow_k=0.02 (PETG profile)
 
-| Current Flow | Predicted Flow | Layer Time | Calculation | Result |
-|--------------|----------------|------------|-------------|--------|
-| 5 mm³/s | 5 mm³/s | 20s | 100% - 0% + 0% = 100% → clamped | **70%** |
-| 12 mm³/s | 15 mm³/s | 20s | 100% - (15-8)×3% = 79% → clamped | **70%** |
-| 12 mm³/s | 12 mm³/s | 8s | 100% - 12% + 14% = 102% → clamped | **70%** |
-| 6 mm³/s | 6 mm³/s | 8s | 100% - 0% + 14% = 114% → clamped | **70%** |
-| 6 mm³/s | 6 mm³/s | 20s | 100% - 0% + 0% = 100% → clamped | **70%** |
-
-(In this PETG example, the 70% max cap is often the limiting factor)
+| Current Flow | Predicted Flow | Layer Time | SC Calculation | Slicer | Result |
+|--------------|----------------|------------|----------------|--------|---------|
+| 5 mm³/s | 5 mm³/s | 20s | 70% - 0% + 0% = 70% | 0% | **70%** |
+| 12 mm³/s | 15 mm³/s | 20s | 70% - (15-10)×2% = 60% | 0% | **60%** |
+| 18 mm³/s | 18 mm³/s | 20s | 70% - (18-10)×2% = 54% | 0% | **54%** |
+| 6 mm³/s | 6 mm³/s | 8s | 70% - 0% + (12-8)×1% = 74% → clamped | 0% | **70%** |
+| 12 mm³/s | 12 mm³/s | 10s | 70% - 4% + 2% = 68% | 0% | **68%** |
+| 5 mm³/s | 5 mm³/s | 20s | 70% - 0% + 0% = 70% | 100% (bridge) | **100%** |
 
 ## Tuning Tips
 
@@ -316,4 +289,4 @@ To disable Smart Cooling while keeping other Adaptive Flow features:
 variable_sc_enable: False
 ```
 
-Or for a specific print, set your slicer's fan speed and Smart Cooling won't override it (since `sc_enable: False` in config).
+When SC is disabled, all `M106`/`M107` commands pass through directly to the fan hardware, giving the slicer full control.
