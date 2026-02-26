@@ -58,7 +58,7 @@ class GCodeInterceptor:
 
     def _notify_subscribers(self, gcode_line):
         """Notify all subscribers of an incoming G-code line."""
-        for callback in self._subscribers:
+        for callback in list(self._subscribers):
             try:
                 callback(gcode_line)
             except Exception as e:

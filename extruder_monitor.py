@@ -11,6 +11,9 @@ from datetime import datetime
 LOG_DIR = "~/printer_data/logs/adaptive_flow"
 MAX_LOG_FILES = 20  # Keep last 20 print logs
 
+# Filament cross-section area for 1.75mm filament: π × (1.75/2)² ≈ 2.405 mm²
+FILAMENT_CROSS_SECTION = 2.405
+
 
 class ExtruderMonitor:
     """Monitor extruder load and accept simple lookahead segments.
@@ -377,7 +380,7 @@ class ExtruderMonitor:
                     json_path = path.replace('.csv', '_summary.json')
                     if os.path.exists(json_path):
                         os.remove(json_path)
-                except:
+                except Exception:
                     pass
         except Exception as e:
             logging.getLogger('ExtruderMonitor').debug(f"Log cleanup error: {e}")
@@ -394,7 +397,7 @@ class ExtruderMonitor:
             if self._log_file:
                 try:
                     self._log_file.close()
-                except:
+                except Exception:
                     pass
             
             try:
@@ -482,6 +485,14 @@ class ExtruderMonitor:
                     'fan_max': 0,
                     'fan_adjustments': 0,  # times fan changed from previous sample
                     'last_fan': -1,  # for tracking adjustments
+                    # Banding risk stats (initialized here, not lazily)
+                    'banding_risk_sum': 0,
+                    'banding_risk_max': 0,
+                    'high_risk_events': 0,
+                    'accel_changes': 0,
+                    'pa_changes': 0,
+                    'dynz_transitions': 0,
+                    'temp_overshoots': 0,
                 }
                 
                 gcmd.respond_info(f"AT_LOG: Started logging to {log_path}")
@@ -599,15 +610,6 @@ class ExtruderMonitor:
                 self._log_sample_count += 1
                 
                 # Track banding risk events
-                if 'banding_risk_sum' not in self._log_stats:
-                    self._log_stats['banding_risk_sum'] = 0
-                    self._log_stats['banding_risk_max'] = 0
-                    self._log_stats['high_risk_events'] = 0
-                    self._log_stats['accel_changes'] = 0
-                    self._log_stats['pa_changes'] = 0
-                    self._log_stats['dynz_transitions'] = 0
-                    self._log_stats['temp_overshoots'] = 0
-                
                 self._log_stats['banding_risk_sum'] += risk
                 self._log_stats['banding_risk_max'] = max(self._log_stats['banding_risk_max'], risk)
                 if risk >= 5:
@@ -670,9 +672,12 @@ class ExtruderMonitor:
                     self._log_stats['fan_adjustments'] += 1
                 self._log_stats['last_fan'] = fan_pct
                 
-                # Flush frequently to prevent data loss (every 10 samples = ~10 seconds)
-                # CRITICAL: Also flush first sample to ensure data appears immediately
-                if self._log_sample_count == 1 or self._log_sample_count % 10 == 0:
+                # Flush first sample to confirm logging is working,
+                # then periodically flush+fsync (every 60 samples ≈ 1 min)
+                # to reduce SD card wear while still preventing data loss.
+                if self._log_sample_count == 1:
+                    self._log_file.flush()
+                elif self._log_sample_count % 60 == 0:
                     self._log_file.flush()
                     os.fsync(self._log_file.fileno())
                     
@@ -890,8 +895,11 @@ class ExtruderMonitor:
         if samples == 0:
             return "insufficient_data"
         
-        # Calculate rates per hour of printing
-        duration_hrs = (self._log_sample_count / 60) / 60  # samples are ~1/second
+        # Calculate rates per hour of printing using wall-clock time
+        if self._log_start_time is not None:
+            duration_hrs = (time.time() - self._log_start_time) / 3600.0
+        else:
+            duration_hrs = 0.0
         if duration_hrs < 0.01:
             return "print_too_short"
         
@@ -952,6 +960,7 @@ class ExtruderMonitor:
 
         pred_rate = self._predicted_extrusion_rate()
         status['predicted_extrusion_rate'] = pred_rate
+        status['predicted_volumetric_flow'] = pred_rate * FILAMENT_CROSS_SECTION
         
         return status
 

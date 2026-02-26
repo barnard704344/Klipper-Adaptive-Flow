@@ -30,6 +30,14 @@ variable_use_high_flow_nozzle: True
 # variable_first_layer_skip: True
 # variable_first_layer_height: 0.3
 
+# FILAMENT CROSS-SECTION (uncomment to override)
+# Default 2.405 mm² for 1.75mm filament. Change for 2.85mm (6.382)
+# variable_filament_cross_section: 2.405
+
+# PA DEADBAND (uncomment to override)
+# Min PA change before issuing SET_PRESSURE_ADVANCE command
+# variable_pa_deadband: 0.003
+
 # DYNAMIC PRESSURE ADVANCE (uncomment to override)
 # variable_pa_enable: True
 
