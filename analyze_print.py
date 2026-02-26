@@ -12,6 +12,9 @@ Usage:
     python3 analyze_print.py --count 10 --material PLA  # Filter by material
     python3 analyze_print.py --z-map                 # Z-height banding heatmap
     python3 analyze_print.py --trend 10              # Print-over-print trends
+    python3 analyze_print.py --lag                   # Thermal lag report
+    python3 analyze_print.py --headroom              # Heater headroom analysis
+    python3 analyze_print.py --pa-stability          # PA stability analysis
 """
 
 import os
@@ -593,6 +596,412 @@ def print_trends(sessions):
 
 
 # =============================================================================
+# THERMAL LAG REPORT
+# =============================================================================
+
+def analyze_thermal_lag(csv_file, lag_threshold=3.0):
+    """Identify moments where temp_actual falls behind temp_target.
+
+    Returns a list of lag episodes and overall statistics.
+    """
+    episodes = []      # periods where lag exceeded threshold
+    current_ep = None
+    all_lags = []
+    flow_at_lag = []
+
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    elapsed = float(row['elapsed_s'])
+                    t_actual = float(row['temp_actual'])
+                    t_target = float(row['temp_target'])
+                    flow = float(row['flow'])
+                    pwm = float(row['pwm'])
+                    z = float(row.get('z_height', 0))
+
+                    lag = t_target - t_actual  # positive = behind
+                    all_lags.append(lag)
+
+                    if lag >= lag_threshold:
+                        flow_at_lag.append(flow)
+                        if current_ep is None:
+                            current_ep = {
+                                'start_s': elapsed, 'z_start': z,
+                                'max_lag': lag, 'max_flow': flow,
+                                'max_pwm': pwm, 'samples': 0,
+                            }
+                        current_ep['samples'] += 1
+                        if lag > current_ep['max_lag']:
+                            current_ep['max_lag'] = lag
+                        if flow > current_ep['max_flow']:
+                            current_ep['max_flow'] = flow
+                        if pwm > current_ep['max_pwm']:
+                            current_ep['max_pwm'] = pwm
+                        current_ep['end_s'] = elapsed
+                        current_ep['z_end'] = z
+                    else:
+                        if current_ep is not None:
+                            episodes.append(current_ep)
+                            current_ep = None
+                except (KeyError, ValueError):
+                    continue
+
+        # close any open episode
+        if current_ep is not None:
+            episodes.append(current_ep)
+
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return None
+
+    avg_lag = statistics.mean(all_lags) if all_lags else 0
+    max_lag = max(all_lags) if all_lags else 0
+    lag_pct = (sum(1 for l in all_lags if l >= lag_threshold) / len(all_lags) * 100) if all_lags else 0
+    avg_flow_at_lag = statistics.mean(flow_at_lag) if flow_at_lag else 0
+
+    return {
+        'episodes': episodes,
+        'avg_lag': avg_lag,
+        'max_lag': max_lag,
+        'lag_pct': lag_pct,
+        'avg_flow_at_lag': avg_flow_at_lag,
+        'total_samples': len(all_lags),
+    }
+
+
+def print_thermal_lag_report(lag_data, threshold=3.0):
+    """Display the thermal lag report."""
+    if lag_data is None:
+        print("No thermal lag data available.")
+        return
+
+    print("\n" + "=" * 70)
+    print("  THERMAL LAG REPORT")
+    print("=" * 70)
+
+    print(f"\nLag threshold: {threshold:.1f}\u00b0C")
+    print(f"Avg lag      : {lag_data['avg_lag']:.1f}\u00b0C")
+    print(f"Max lag      : {lag_data['max_lag']:.1f}\u00b0C")
+    print(f"Time in lag  : {lag_data['lag_pct']:.1f}% of print")
+    if lag_data['avg_flow_at_lag'] > 0:
+        print(f"Avg flow when lagging: {lag_data['avg_flow_at_lag']:.1f} mm\u00b3/s")
+
+    episodes = lag_data['episodes']
+    if not episodes:
+        print(f"\n\u2713 Heater kept up throughout \u2014 never fell >{threshold:.0f}\u00b0C behind target.")
+        print("=" * 70 + "\n")
+        return
+
+    # Sort by severity
+    episodes.sort(key=lambda e: e['max_lag'], reverse=True)
+
+    print(f"\n\u2500" * 70)
+    print(f"  LAG EPISODES ({len(episodes)} detected)")
+    print("\u2500" * 70)
+    print(f"\n{'#':>3}  {'Time':>10}  {'Duration':>8}  {'Max lag':>8}  {'Flow':>8}  {'PWM':>6}  Z range")
+    print("\u2500" * 70)
+
+    for i, ep in enumerate(episodes[:10], 1):
+        dur = ep.get('end_s', ep['start_s']) - ep['start_s']
+        z_range = f"{ep['z_start']:.1f}-{ep.get('z_end', ep['z_start']):.1f}mm"
+        print(f"{i:>3}  {ep['start_s']:>8.0f}s  {dur:>6.0f}s  "
+              f"{ep['max_lag']:>6.1f}\u00b0C  {ep['max_flow']:>6.1f}  "
+              f"{ep['max_pwm']:>5.0%}  {z_range}")
+
+    if len(episodes) > 10:
+        print(f"\n   ... and {len(episodes) - 10} more episodes")
+
+    # Actionable advice
+    print(f"\n\u2500" * 70)
+    print("  RECOMMENDATIONS")
+    print("\u2500" * 70)
+
+    worst = episodes[0]
+    if worst['max_pwm'] >= 0.95:
+        print("  \u26a0 Heater saturated during worst lag \u2014 it physically can't heat faster.")
+        print("    \u2192 Lower flow_k or max_boost_limit to reduce temperature demand")
+        print("    \u2192 Or reduce print speed for high-flow sections")
+    else:
+        print("  \u26a0 Heater has headroom but ramp rate is too slow.")
+        print("    \u2192 Increase ramp_rate_rise (try +0.5\u00b0C/s increments)")
+        print("    \u2192 Or increase flow_k slightly for earlier pre-heating")
+
+    if lag_data['lag_pct'] > 20:
+        print("  \u26a0 Heater behind >20% of the print \u2014 significant under-temperature risk")
+    elif lag_data['lag_pct'] > 5:
+        print("  \u26a0 Occasional lag \u2014 mostly during flow spikes")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
+# HEATER HEADROOM ANALYSIS
+# =============================================================================
+
+def analyze_heater_headroom(csv_file, flow_bins=None):
+    """Analyze flow rate vs PWM to determine heater capacity.
+
+    Groups samples by flow-rate brackets and computes avg/max PWM for each.
+    """
+    if flow_bins is None:
+        flow_bins = [0, 2, 5, 8, 10, 12, 15, 20, 25, 30, 40]
+
+    brackets = defaultdict(lambda: {'pwm_values': [], 'count': 0})
+
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    flow = float(row['flow'])
+                    pwm = float(row['pwm'])
+                    # Find the bracket
+                    for j in range(len(flow_bins) - 1):
+                        if flow_bins[j] <= flow < flow_bins[j + 1]:
+                            key = (flow_bins[j], flow_bins[j + 1])
+                            brackets[key]['pwm_values'].append(pwm)
+                            brackets[key]['count'] += 1
+                            break
+                    else:
+                        if flow >= flow_bins[-1]:
+                            key = (flow_bins[-1], float('inf'))
+                            brackets[key]['pwm_values'].append(pwm)
+                            brackets[key]['count'] += 1
+                except (KeyError, ValueError):
+                    continue
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return None
+
+    result = {}
+    for key in sorted(brackets.keys()):
+        vals = brackets[key]['pwm_values']
+        result[key] = {
+            'count': brackets[key]['count'],
+            'avg_pwm': statistics.mean(vals) if vals else 0,
+            'max_pwm': max(vals) if vals else 0,
+            'p95_pwm': sorted(vals)[int(len(vals) * 0.95)] if len(vals) >= 20 else max(vals) if vals else 0,
+        }
+    return result
+
+
+def print_headroom_report(headroom):
+    """Display heater headroom analysis."""
+    if not headroom:
+        print("No heater headroom data available.")
+        return
+
+    print("\n" + "=" * 70)
+    print("  HEATER HEADROOM ANALYSIS")
+    print("=" * 70)
+    print("\nFlow rate vs heater duty — shows how much capacity remains.\n")
+
+    print(f"{'Flow (mm\u00b3/s)':>16}  {'Samples':>7}  {'Avg PWM':>8}  {'P95 PWM':>8}  {'Max PWM':>8}  Headroom")
+    print("\u2500" * 70)
+
+    saturation_flow = None
+    for key in sorted(headroom.keys()):
+        d = headroom[key]
+        if d['count'] < 3:  # skip very sparse brackets
+            continue
+        lo, hi = key
+        if hi == float('inf'):
+            label = f"  {lo:.0f}+"
+        else:
+            label = f"  {lo:.0f}-{hi:.0f}"
+
+        headroom_pct = max(0, (1.0 - d['p95_pwm']) * 100)
+        bar_len = int(headroom_pct / 100 * 20)
+        bar = '\u2588' * bar_len + '\u2591' * (20 - bar_len)
+
+        warning = ''
+        if d['p95_pwm'] >= 0.95:
+            warning = ' SATURATED'
+            if saturation_flow is None:
+                saturation_flow = lo
+        elif d['p95_pwm'] >= 0.85:
+            warning = ' !'
+
+        print(f"{label:>16}  {d['count']:>7}  {d['avg_pwm']:>7.0%}  "
+              f"{d['p95_pwm']:>7.0%}  {d['max_pwm']:>7.0%}  {bar} {headroom_pct:.0f}%{warning}")
+
+    print(f"\n\u2500" * 70)
+    print("  VERDICT")
+    print("\u2500" * 70)
+
+    if saturation_flow is not None:
+        print(f"\n  \u26a0 Heater saturates at ~{saturation_flow:.0f} mm\u00b3/s flow rate.")
+        print(f"    Above this, the heater cannot keep up with temperature demand.")
+        print(f"    \u2192 Limit speeds/flow to stay under {saturation_flow:.0f} mm\u00b3/s")
+        print(f"    \u2192 Or lower flow_k / max_boost_limit to reduce demand")
+    else:
+        print(f"\n  \u2713 Heater has headroom across all flow rates \u2014 no saturation detected.")
+        # Find highest-flow bracket with data
+        max_bracket = max((k for k in headroom if headroom[k]['count'] >= 3),
+                          key=lambda k: k[0], default=None)
+        if max_bracket:
+            d = headroom[max_bracket]
+            remaining = max(0, (1.0 - d['p95_pwm']) * 100)
+            print(f"    At peak flow ({max_bracket[0]:.0f}+ mm\u00b3/s), "
+                  f"{remaining:.0f}% heater capacity remains.")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
+# PA STABILITY ANALYSIS
+# =============================================================================
+
+def analyze_pa_stability(csv_file, window_s=10.0):
+    """Analyze PA value stability over time.
+
+    Detects oscillation zones where PA changes frequently within a time window.
+    """
+    samples = []
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    elapsed = float(row['elapsed_s'])
+                    pa = float(row.get('pa', 0))
+                    pa_delta = float(row.get('pa_delta', 0))
+                    z = float(row.get('z_height', 0))
+                    if pa > 0:
+                        samples.append({
+                            'time': elapsed, 'pa': pa,
+                            'delta': pa_delta, 'z': z,
+                        })
+                except (KeyError, ValueError):
+                    continue
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return None
+
+    if len(samples) < 10:
+        return {'samples': len(samples), 'oscillation_zones': [],
+                'pa_range': 0, 'pa_stdev': 0, 'change_count': 0}
+
+    pa_values = [s['pa'] for s in samples]
+    pa_min = min(pa_values)
+    pa_max = max(pa_values)
+    pa_stdev = statistics.stdev(pa_values) if len(pa_values) > 1 else 0
+
+    # Count significant changes
+    change_count = sum(1 for s in samples if abs(s['delta']) > 0.003)
+
+    # Detect oscillation zones: sliding window, count changes per window
+    oscillation_zones = []
+    current_zone = None
+
+    for i, s in enumerate(samples):
+        # Count changes in the surrounding window
+        t_start = s['time'] - window_s / 2
+        t_end = s['time'] + window_s / 2
+        changes_in_window = sum(
+            1 for other in samples
+            if t_start <= other['time'] <= t_end and abs(other['delta']) > 0.003
+        )
+        # An oscillation zone has >=4 changes in the window
+        if changes_in_window >= 4:
+            if current_zone is None:
+                current_zone = {
+                    'start_s': s['time'], 'z_start': s['z'],
+                    'changes': changes_in_window,
+                    'pa_min': s['pa'], 'pa_max': s['pa'],
+                }
+            current_zone['end_s'] = s['time']
+            current_zone['z_end'] = s['z']
+            current_zone['changes'] = max(current_zone['changes'], changes_in_window)
+            current_zone['pa_min'] = min(current_zone['pa_min'], s['pa'])
+            current_zone['pa_max'] = max(current_zone['pa_max'], s['pa'])
+        else:
+            if current_zone is not None:
+                oscillation_zones.append(current_zone)
+                current_zone = None
+
+    if current_zone is not None:
+        oscillation_zones.append(current_zone)
+
+    return {
+        'samples': len(samples),
+        'pa_min': pa_min,
+        'pa_max': pa_max,
+        'pa_range': pa_max - pa_min,
+        'pa_stdev': pa_stdev,
+        'change_count': change_count,
+        'oscillation_zones': oscillation_zones,
+    }
+
+
+def print_pa_stability_report(pa_data):
+    """Display PA stability analysis."""
+    if pa_data is None:
+        print("No PA data available.")
+        return
+
+    print("\n" + "=" * 70)
+    print("  PA STABILITY ANALYSIS")
+    print("=" * 70)
+
+    if pa_data['samples'] < 10:
+        print("\nInsufficient PA data (need at least 10 samples with PA > 0).")
+        print("=" * 70 + "\n")
+        return
+
+    print(f"\nPA range  : {pa_data['pa_min']:.4f} \u2014 {pa_data['pa_max']:.4f} "
+          f"(span {pa_data['pa_range']:.4f})")
+    print(f"PA stdev  : {pa_data['pa_stdev']:.5f}")
+    print(f"Changes   : {pa_data['change_count']} significant (>\u00b10.003)")
+
+    zones = pa_data['oscillation_zones']
+
+    if not zones:
+        print(f"\n\u2713 PA is stable throughout \u2014 no oscillation zones detected.")
+        if pa_data['pa_range'] < 0.005:
+            print(f"  PA barely moved ({pa_data['pa_range']:.4f} range) \u2014 "
+                  f"effectively constant.")
+        print("=" * 70 + "\n")
+        return
+
+    print(f"\n\u2500" * 70)
+    print(f"  OSCILLATION ZONES ({len(zones)} detected)")
+    print("\u2500" * 70)
+    print(f"\n{'#':>3}  {'Time':>10}  {'Duration':>8}  {'PA range':>10}  "
+          f"{'Changes':>8}  Z range")
+    print("\u2500" * 70)
+
+    for i, z in enumerate(zones[:10], 1):
+        dur = z.get('end_s', z['start_s']) - z['start_s']
+        pa_span = z['pa_max'] - z['pa_min']
+        z_range = f"{z['z_start']:.1f}-{z.get('z_end', z['z_start']):.1f}mm"
+        print(f"{i:>3}  {z['start_s']:>8.0f}s  {dur:>6.0f}s  "
+              f"{pa_span:>9.4f}  {z['changes']:>8}  {z_range}")
+
+    if len(zones) > 10:
+        print(f"\n   ... and {len(zones) - 10} more zones")
+
+    print(f"\n\u2500" * 70)
+    print("  RECOMMENDATIONS")
+    print("\u2500" * 70)
+
+    if len(zones) > 5:
+        print("  \u26a0 Frequent PA oscillation \u2014 likely causing visible ribbing.")
+        print("    \u2192 Increase pa_deadband (try 0.005 or higher)")
+        print("    \u2192 Or lower pa_boost_k to reduce PA sensitivity to temp changes")
+    elif len(zones) > 0:
+        print("  \u26a0 Some PA oscillation zones detected.")
+        print("    \u2192 If you see ribbing at those Z heights, increase pa_deadband")
+    if pa_data['pa_range'] > 0.02:
+        print(f"  \u26a0 Wide PA range ({pa_data['pa_range']:.4f}) \u2014 "
+              f"pa_boost_k may be too aggressive")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
@@ -619,6 +1028,15 @@ Examples:
   Print-over-print trends:
     python3 analyze_print.py --trend 10
     python3 analyze_print.py --trend 10 --material PLA
+
+  Thermal lag report (latest or specific print):
+    python3 analyze_print.py --lag
+
+  Heater headroom analysis:
+    python3 analyze_print.py --headroom
+
+  PA stability analysis:
+    python3 analyze_print.py --pa-stability
         """,
     )
     parser.add_argument(
@@ -636,6 +1054,18 @@ Examples:
     parser.add_argument(
         '--trend', '-t', type=int,
         help='Show trends across last N prints')
+    parser.add_argument(
+        '--lag', action='store_true',
+        help='Show thermal lag report for a single print')
+    parser.add_argument(
+        '--lag-threshold', type=float, default=3.0,
+        help='Thermal lag threshold in \u00b0C (default: 3.0)')
+    parser.add_argument(
+        '--headroom', action='store_true',
+        help='Show heater headroom analysis for a single print')
+    parser.add_argument(
+        '--pa-stability', action='store_true',
+        help='Show PA stability analysis for a single print')
     parser.add_argument(
         '--material', '-m',
         help='Filter by material (PLA, PETG, etc.)')
@@ -732,6 +1162,33 @@ Examples:
             return 1
         bins = analyze_z_banding(csv_path, bin_size=args.z_bin)
         print_z_map(bins, bin_size=args.z_bin)
+
+    # Thermal lag report
+    if args.lag:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        lag_data = analyze_thermal_lag(csv_path, lag_threshold=args.lag_threshold)
+        print_thermal_lag_report(lag_data, threshold=args.lag_threshold)
+
+    # Heater headroom analysis
+    if args.headroom:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        headroom = analyze_heater_headroom(csv_path)
+        print_headroom_report(headroom)
+
+    # PA stability analysis
+    if args.pa_stability:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        pa_data = analyze_pa_stability(csv_path)
+        print_pa_stability_report(pa_data)
 
     return 0
 

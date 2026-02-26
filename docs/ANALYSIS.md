@@ -1,11 +1,14 @@
 # Print Analysis — Banding Detection & Print Stats
 
-The `analyze_print.py` tool provides four modes:
+The `analyze_print.py` tool provides seven modes:
 
 1. **Single-print stats** — Quick health summary from the latest (or a specific) print
 2. **Multi-print banding analysis** — Aggregates data across N prints to identify banding culprits
 3. **Z-height banding heatmap** — Shows which layers have the most banding risk
 4. **Print-over-print trends** — Tracks whether your config changes are helping
+5. **Thermal lag report** — Identifies when the heater can't keep up with demand
+6. **Heater headroom analysis** — Shows max safe flow rate before heater saturates
+7. **PA stability analysis** — Detects PA oscillation zones that cause ribbing
 
 **No API keys or external services required.** Everything runs locally using your print logs.
 
@@ -260,6 +263,95 @@ Print         Boost  Heater  Risk Ev Culprit
 2. Print a few test objects
 3. Run `--trend 10` to see if metrics are trending down
 4. **Improving** = your change helped. **Worsening** = revert it.
+
+---
+
+## Thermal Lag Report
+
+Shows moments where the actual nozzle temperature fell behind the target — i.e., the heater couldn't keep up with demand.
+
+### Usage
+
+```bash
+python3 analyze_print.py --lag
+
+# Custom threshold (default 3°C)
+python3 analyze_print.py --lag --lag-threshold 5.0
+```
+
+### What It Shows
+
+- **Overall stats**: average lag, max lag, % of print time in lag
+- **Lag episodes**: each period where temp fell behind, with duration, max lag, flow rate at the time, PWM duty, and Z range
+- **Recommendations**: whether the issue is heater saturation (physical limit) or ramp rate (software config)
+
+### How to Use It
+
+1. Run `--lag` after a print where you suspect under-temperature
+2. If worst episodes show PWM near 100% → heater is at its limit, reduce demand
+3. If PWM is <90% during lag → increase `ramp_rate_rise` so the heater responds faster
+
+---
+
+## Heater Headroom Analysis
+
+Groups all CSV samples by flow rate brackets and shows how much heater capacity remains at each level.
+
+### Usage
+
+```bash
+python3 analyze_print.py --headroom
+```
+
+### Example Output
+
+```
+======================================================================
+  HEATER HEADROOM ANALYSIS
+======================================================================
+
+Flow rate vs heater duty — shows how much capacity remains.
+
+ Flow (mm³/s)  Samples  Avg PWM  P95 PWM  Max PWM  Headroom
+──────────────────────────────────────────────────────────────────────
+         0-2      450      32%      45%      52%  ████████████████████ 55%
+         2-5     1200      48%      62%      71%  ████████████████░░░░ 38%
+        5-8      800      65%      78%      85%  ████████████░░░░░░░░ 22%
+       8-10      300      78%      89%      94%  ████████░░░░░░░░░░░░ 11%
+      10-12      120      86%      96%      99%  ██░░░░░░░░░░░░░░░░░░  4% SATURATED
+```
+
+### How to Use It
+
+1. Find the flow bracket where P95 PWM crosses 95% → that's your heater's effective limit
+2. If you regularly print above that flow rate, reduce `flow_k` or `max_boost_limit`
+3. If all brackets show plenty of headroom, you can safely increase `flow_k`
+
+---
+
+## PA Stability Analysis
+
+Analyzes Pressure Advance value changes over time and detects oscillation zones where PA bounces rapidly — a common cause of visible ribbing.
+
+### Usage
+
+```bash
+python3 analyze_print.py --pa-stability
+```
+
+### What It Shows
+
+- **PA range and stdev**: how much PA varied during the print
+- **Change count**: number of significant PA changes (>±0.003)
+- **Oscillation zones**: time periods where PA changed ≥4 times within 10 seconds
+- **Recommendations**: whether to increase `pa_deadband` or lower `pa_boost_k`
+
+### How to Use It
+
+1. If you see ribbing on your prints, run `--pa-stability`
+2. Check if oscillation zones correlate with ribbing locations (Z height)
+3. If many oscillation zones: increase `pa_deadband` (try 0.005+)
+4. If PA range is very wide (>0.02): lower `pa_boost_k`
 
 ---
 
