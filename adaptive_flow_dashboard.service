@@ -1,0 +1,18 @@
+[Unit]
+Description=Adaptive Flow Dashboard
+Documentation=https://github.com/barnard704344/Klipper-Adaptive-Flow
+After=network.target klipper.service
+Wants=klipper.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Klipper-Adaptive-Flow
+ExecStart=/usr/bin/python3 /home/pi/Klipper-Adaptive-Flow/analyze_print.py --serve --port 7127
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

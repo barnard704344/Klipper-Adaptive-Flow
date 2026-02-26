@@ -1,6 +1,6 @@
 # Print Analysis — Banding Detection & Print Stats
 
-The `analyze_print.py` tool provides seven modes:
+The `analyze_print.py` tool provides ten modes:
 
 1. **Single-print stats** — Quick health summary from the latest (or a specific) print
 2. **Multi-print banding analysis** — Aggregates data across N prints to identify banding culprits
@@ -8,6 +8,10 @@ The `analyze_print.py` tool provides seven modes:
 4. **Print-over-print trends** — Tracks whether your config changes are helping
 5. **Thermal lag report** — Identifies when the heater can't keep up with demand
 6. **Heater headroom analysis** — Shows max safe flow rate before heater saturates
+7. **PA stability analysis** — Detects PA oscillation zones that cause ribbing
+8. **DynZ zone map** — Visualizes where DynZ was active by Z-height
+9. **Speed/flow distribution** — Shows where your printer spends its time
+10. **Web dashboard** — Interactive browser-based dashboard with Chart.js charts
 7. **PA stability analysis** — Detects PA oscillation zones that cause ribbing
 
 **No API keys or external services required.** Everything runs locally using your print logs.
@@ -352,6 +356,194 @@ python3 analyze_print.py --pa-stability
 2. Check if oscillation zones correlate with ribbing locations (Z height)
 3. If many oscillation zones: increase `pa_deadband` (try 0.005+)
 4. If PA range is very wide (>0.02): lower `pa_boost_k`
+
+---
+
+## DynZ Zone Map
+
+Visualizes DynZ activation patterns by Z-height, showing where Dynamic Z-Window reduced acceleration to protect print quality.
+
+### Usage
+
+```bash
+python3 analyze_print.py --dynz-map
+
+# Custom bin size (shares --z-bin with --z-map)
+python3 analyze_print.py --dynz-map --z-bin 1.0
+```
+
+### Example Output
+
+```
+======================================================================
+  DYNZ ZONE MAP
+======================================================================
+
+     Z range  Active  Trans  Avg Accel  Stress  Bar
+──────────────────────────────────────────────────────────────────────
+ 0.0-0.5mm     0.0%      0       5000     0.12  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ 5.0-5.5mm    62.3%      4       3200     8.41  ████████████████████░░░░░░░░░░  <-- HIGH
+ 5.5-6.0mm    41.1%      2       3800     5.23  █████████████░░░░░░░░░░░░░░░░░
+
+──────────────────────────────────────────────────────────────────────
+  SUMMARY
+──────────────────────────────────────────────────────────────────────
+  Avg activation: 12.4%
+  Total transitions: 6
+  High-activity zones: 5.0mm
+
+  ⚠ DynZ heavily active at those heights.
+    → Check for thin walls, overhangs, or rapid geometry changes
+    → If banding appears there, try dynz_relief_method: 'temp_reduction'
+```
+
+### How to Use It
+
+1. If you see banding at specific heights, run `--dynz-map`
+2. Check if DynZ was highly active at those same Z heights
+3. If DynZ activation correlates with banding → switch to `dynz_relief_method: 'temp_reduction'`
+4. High "Stress" values indicate layers with challenging geometry (thin walls, rapid speed changes)
+
+---
+
+## Speed/Flow Distribution
+
+Shows how your printer spends its time across different speed and flow rate brackets.
+
+### Usage
+
+```bash
+python3 analyze_print.py --distribution
+```
+
+### Example Output
+
+```
+======================================================================
+  SPEED / FLOW DISTRIBUTION
+======================================================================
+
+──────────────────────────────────────────────────────────────────────
+  SPEED DISTRIBUTION
+──────────────────────────────────────────────────────────────────────
+
+  Speed (mm/s)  % Time  Samples  Avg Boost   Avg PWM  Bar
+──────────────────────────────────────────────────────────────────────
+          0-25    12.3%      310       2.1°C      38%  ████████░░░░░░░░░░░░
+        25-50    28.7%      722       4.8°C      52%  ████████████████████
+        50-75    31.2%      785       7.2°C      64%  ████████████████████
+       75-100    18.4%      463       9.8°C      71%  █████████████░░░░░░░
+      100-125     7.1%      179      12.3°C      78%  █████░░░░░░░░░░░░░░░
+      125-150     2.3%       58      15.1°C      84%  ██░░░░░░░░░░░░░░░░░░
+```
+
+### How to Use It
+
+1. Find which speed/flow bracket gets the most time → that's where tuning matters most
+2. If most time is at low speed, your slicer speeds may be throttled by acceleration limits
+3. Compare the boost and PWM at each bracket to check if your `flow_k` scaling is appropriate
+4. If high-speed brackets are barely used, consider lowering max speed in slicer to match reality
+
+---
+
+## Web Dashboard
+
+Interactive browser-based dashboard with all analysis modes in one view, using Chart.js for interactive charts. **No SSH required** — the dashboard runs as a system service and is accessible from any browser on your network.
+
+### Automatic Setup
+
+The dashboard service is installed automatically by `update.sh`. After running the update script, the dashboard is accessible at:
+
+```
+http://<printer-ip>:7127
+```
+
+The service starts on boot and restarts automatically if it crashes.
+
+### Manual Control
+
+```bash
+# Check status
+sudo systemctl status adaptive-flow-dashboard
+
+# Restart after config changes
+sudo systemctl restart adaptive-flow-dashboard
+
+# View logs
+journalctl -u adaptive-flow-dashboard -f
+
+# Stop the service
+sudo systemctl stop adaptive-flow-dashboard
+```
+
+### Manual Start (without service)
+
+If you prefer not to use the systemd service:
+
+```bash
+python3 ~/Klipper-Adaptive-Flow/analyze_print.py --serve
+python3 ~/Klipper-Adaptive-Flow/analyze_print.py --serve --port 8080
+python3 ~/Klipper-Adaptive-Flow/analyze_print.py --serve --material PLA
+```
+
+### Features
+
+- **Real-time monitoring** — live-updating charts during an active print (5-second refresh)
+- **LIVE indicator** — pulsing green dot and badge when a print is in progress
+- **Summary cards** — Material, boost, heater duty, DynZ, banding risk at a glance
+- **Temperature timeline** — Interactive chart of target vs actual temperature + boost
+- **Flow & speed timeline** — Flow rate, speed, and PWM over time
+- **Z-height banding heatmap** — Bar chart showing risk by Z layer
+- **Heater headroom** — PWM by flow bracket + thermal lag episodes
+- **PA stability** — PA value over time + oscillation zone table
+- **DynZ zone map** — DynZ activation percentage by Z-height
+- **Speed/flow distribution** — Side-by-side histograms of time spent in each bracket
+- **Print-over-print trends** — Line chart tracking metrics across prints
+
+### Real-Time Monitoring
+
+The dashboard automatically detects an active print (a CSV log with no summary JSON, modified within the last 2 minutes). When a print is in progress:
+
+- A **LIVE** indicator appears in the header
+- **Auto-refresh enables automatically** at 5-second intervals
+- Summary cards show "PRINTING" badge and elapsed time
+- Charts update in-place without full page reloads (using `/api/data` endpoint)
+- Once the print finishes, the dashboard switches to the completed summary
+
+When viewing completed prints, auto-refresh runs at 30-second intervals (if enabled).
+
+### Dashboard Controls
+
+| Control | Description |
+|---------|-------------|
+| **Session selector** | Dropdown to switch between past prints (shows "LIVE PRINT" when active) |
+| **Auto-refresh** | Enabled automatically during live prints (5s); optional for completed prints (30s) |
+| **Tab navigation** | Switch between Timeline, Z-Height, Heater, PA, DynZ, Distribution, Trends |
+
+### API Endpoint
+
+The dashboard exposes a JSON API for programmatic access:
+
+```
+GET /api/data                    # Latest print (or live print if active)
+GET /api/data?session=<file>     # Specific completed print
+```
+
+Returns all analysis data as JSON — useful for custom integrations or external dashboards.
+
+### Requirements
+
+- Python 3 (uses built-in `http.server` — no extra dependencies)
+- Chart.js loaded from CDN (requires internet access on first page load; cached afterward)
+- Port 7127 must be accessible from your browser's network
+
+### How to Use It
+
+1. Open `http://<printer-ip>:7127` in any browser
+2. If a print is running, you'll see **LIVE** — charts update automatically every 5s
+3. Once the print finishes, it seamlessly switches to the completed summary
+4. Use the session dropdown to browse past prints
+5. Use tabs to explore different analysis views
 
 ---
 

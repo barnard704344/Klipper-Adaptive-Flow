@@ -13,6 +13,7 @@ Automatic temperature and pressure advance control for E3D Revo hotends on Klipp
 - **Per-material profiles** — PLA (tuned for HF), PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
 - **First layer skip** — consistent squish on layer 1
 - **Heater monitoring** — won't request more than your heater can deliver
+- **Web dashboard** — browser-based analysis at `http://<printer-ip>:7127` (no SSH needed)
 
 ## Installation
 
@@ -27,7 +28,10 @@ The setup script will automatically:
 - Copy configuration files to `~/printer_data/config/`
 - Auto-configure `printer.cfg` with required includes (creates backup first)
 - Create user configuration templates (`auto_flow_user.cfg`, `material_profiles_user.cfg`)
+- Start web dashboard service on port 7127
 - Restart Klipper to apply changes
+
+After installation, open `http://<printer-ip>:7127` in your browser for the analysis dashboard.
 
 **Option 2: Manual Setup**
 ```bash
@@ -73,6 +77,7 @@ The update script provides comprehensive automatic updates with safety features:
   - `[extruder_monitor]`
 - **Creates backups**: Before modifying printer.cfg, saves to `printer.cfg.backup.YYYYMMDD_HHMMSS` (e.g., `printer.cfg.backup.20260212_143025`)
 - **Restarts Klipper**: Applies changes automatically
+- **Dashboard service**: Installs and starts the web dashboard on port 7127
 
 ### Migration Support
 If you're upgrading from an older version with legacy config files:
@@ -295,7 +300,8 @@ This feature works automatically—no G-code changes needed.
 | `material_profiles_user.cfg` | Custom material profiles (never overwritten) |
 | `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
 | `gcode_interceptor.py` | G-code parsing (Klipper extra) |
-| `analyze_print.py` | Banding detection & print stats (no API needed) |
+| `analyze_print.py` | Banding detection, analysis & web dashboard |
+| `adaptive_flow_dashboard.service` | Systemd service for auto-start dashboard |
 | `update.sh` | Smart updater (auto-configures, migrates, backs up) |
 
 ## License

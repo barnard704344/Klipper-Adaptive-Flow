@@ -15,6 +15,9 @@ Usage:
     python3 analyze_print.py --lag                   # Thermal lag report
     python3 analyze_print.py --headroom              # Heater headroom analysis
     python3 analyze_print.py --pa-stability          # PA stability analysis
+    python3 analyze_print.py --dynz-map              # DynZ zone map
+    python3 analyze_print.py --distribution          # Speed/flow distribution
+    python3 analyze_print.py --serve                 # Web dashboard on port 7127
 """
 
 import os
@@ -22,8 +25,12 @@ import sys
 import json
 import csv
 import math
+import time
 import statistics
 import argparse
+import http.server
+import urllib.parse
+import socket
 from pathlib import Path
 from collections import defaultdict
 
@@ -1002,6 +1009,952 @@ def print_pa_stability_report(pa_data):
 
 
 # =============================================================================
+# DYNZ ZONE MAP
+# =============================================================================
+
+def analyze_dynz_zones(csv_file, bin_size=0.5):
+    """Analyze DynZ activation patterns by Z-height."""
+    bins = defaultdict(lambda: {
+        'samples': 0, 'dynz_active': 0, 'transitions': 0,
+        'accel_sum': 0, 'stress_sum': 0,
+    })
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    z = float(row.get('z_height', 0))
+                    dynz = int(row.get('dynz_active', 0))
+                    accel = float(row.get('accel', 0))
+                    speed = float(row.get('speed', 0))
+                    flow = float(row.get('flow', 0))
+                    pwm = float(row.get('pwm', 0))
+                    trans = int(row.get('dynz_transition', 0))
+                    bin_key = math.floor(z / bin_size) * bin_size
+                    b = bins[bin_key]
+                    b['samples'] += 1
+                    if dynz:
+                        b['dynz_active'] += 1
+                    if trans != 0:
+                        b['transitions'] += 1
+                    b['accel_sum'] += accel
+                    stress = (speed / max(flow, 0.1)) * pwm
+                    b['stress_sum'] += stress
+                except (KeyError, ValueError):
+                    continue
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return {}
+    result = {}
+    for key in sorted(bins.keys()):
+        b = bins[key]
+        if b['samples'] == 0:
+            continue
+        result[key] = {
+            'samples': b['samples'],
+            'active_pct': round(b['dynz_active'] / b['samples'] * 100, 1),
+            'transitions': b['transitions'],
+            'avg_accel': round(b['accel_sum'] / b['samples']),
+            'avg_stress': round(b['stress_sum'] / b['samples'], 2),
+        }
+    return result
+
+
+def print_dynz_map(zones, bin_size=0.5):
+    """Print the DynZ zone map to terminal."""
+    if not zones:
+        print("No DynZ data (DynZ may be inactive this print).")
+        return
+    print("\n" + "=" * 70)
+    print("  DYNZ ZONE MAP")
+    print("=" * 70)
+
+    any_active = any(v['active_pct'] > 0 for v in zones.values())
+    if not any_active:
+        print("\n  \u2713 DynZ was not active at any Z-height.")
+        print("=" * 70 + "\n")
+        return
+
+    max_active = max(v['active_pct'] for v in zones.values())
+
+    print(f"\n{'Z range':>14}  {'Active':>7}  {'Trans':>5}  "
+          f"{'Avg Accel':>10}  {'Stress':>7}  Bar")
+    print("\u2500" * 70)
+
+    for z in sorted(zones.keys()):
+        v = zones[z]
+        z_end = z + bin_size
+        label = f"{z:6.1f}-{z_end:.1f}mm"
+        bar = _bar(v['active_pct'], max(max_active, 0.1))
+        marker = '  <-- HIGH' if v['active_pct'] >= 50 else ''
+        print(f"{label:>14}  {v['active_pct']:>6.1f}%  {v['transitions']:>5}  "
+              f"{v['avg_accel']:>10}  {v['avg_stress']:>6.1f}  {bar}{marker}")
+
+    total_transitions = sum(v['transitions'] for v in zones.values())
+    avg_active = statistics.mean(v['active_pct'] for v in zones.values())
+
+    print(f"\n\u2500" * 70)
+    print("  SUMMARY")
+    print("\u2500" * 70)
+    print(f"  Avg activation: {avg_active:.1f}%")
+    print(f"  Total transitions: {total_transitions}")
+
+    high_zones = [z for z in zones if zones[z]['active_pct'] >= 50]
+    if high_zones:
+        print(f"  High-activity zones: "
+              f"{', '.join(f'{z:.1f}mm' for z in sorted(high_zones))}")
+        print(f"\n  \u26a0 DynZ heavily active at those heights.")
+        print("    \u2192 Check for thin walls, overhangs, or rapid geometry changes")
+        print("    \u2192 If banding appears there, try "
+              "dynz_relief_method: 'temp_reduction'")
+    else:
+        print(f"\n  \u2713 DynZ activation is mild throughout.")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
+# SPEED / FLOW DISTRIBUTION
+# =============================================================================
+
+def analyze_speed_flow_distribution(csv_file):
+    """Analyze time spent in speed and flow rate brackets."""
+    speed_edges = [0, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400]
+    flow_edges = [0, 2, 4, 6, 8, 10, 12, 15, 20, 25, 30, 40]
+    speed_brackets = defaultdict(lambda: {
+        'count': 0, 'boost_sum': 0, 'pa_sum': 0, 'pwm_sum': 0,
+    })
+    flow_brackets = defaultdict(lambda: {
+        'count': 0, 'boost_sum': 0, 'pa_sum': 0, 'pwm_sum': 0,
+    })
+
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    speed = float(row['speed'])
+                    flow = float(row['flow'])
+                    boost = float(row.get('boost', 0))
+                    pa = float(row.get('pa', 0))
+                    pwm = float(row.get('pwm', 0))
+
+                    placed = False
+                    for j in range(len(speed_edges) - 1):
+                        if speed_edges[j] <= speed < speed_edges[j + 1]:
+                            key = (speed_edges[j], speed_edges[j + 1])
+                            b = speed_brackets[key]
+                            b['count'] += 1
+                            b['boost_sum'] += boost
+                            b['pa_sum'] += pa
+                            b['pwm_sum'] += pwm
+                            placed = True
+                            break
+                    if not placed and speed >= speed_edges[-1]:
+                        key = (speed_edges[-1], 999)
+                        b = speed_brackets[key]
+                        b['count'] += 1
+                        b['boost_sum'] += boost
+                        b['pa_sum'] += pa
+                        b['pwm_sum'] += pwm
+
+                    placed = False
+                    for j in range(len(flow_edges) - 1):
+                        if flow_edges[j] <= flow < flow_edges[j + 1]:
+                            key = (flow_edges[j], flow_edges[j + 1])
+                            b = flow_brackets[key]
+                            b['count'] += 1
+                            b['boost_sum'] += boost
+                            b['pa_sum'] += pa
+                            b['pwm_sum'] += pwm
+                            placed = True
+                            break
+                    if not placed and flow >= flow_edges[-1]:
+                        key = (flow_edges[-1], 999)
+                        b = flow_brackets[key]
+                        b['count'] += 1
+                        b['boost_sum'] += boost
+                        b['pa_sum'] += pa
+                        b['pwm_sum'] += pwm
+                except (KeyError, ValueError):
+                    continue
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return None
+
+    def _fmt(brackets):
+        result = {}
+        total = sum(b['count'] for b in brackets.values())
+        for key in sorted(brackets.keys()):
+            b = brackets[key]
+            if b['count'] == 0:
+                continue
+            n = b['count']
+            result[key] = {
+                'count': n,
+                'pct': round(n / total * 100, 1) if total else 0,
+                'avg_boost': round(b['boost_sum'] / n, 1),
+                'avg_pa': round(b['pa_sum'] / n, 4),
+                'avg_pwm': round(b['pwm_sum'] / n, 3),
+            }
+        return result
+
+    return {'speed': _fmt(speed_brackets), 'flow': _fmt(flow_brackets)}
+
+
+def print_distribution(dist):
+    """Print speed/flow distribution analysis to terminal."""
+    if not dist:
+        print("No distribution data.")
+        return
+
+    print("\n" + "=" * 70)
+    print("  SPEED / FLOW DISTRIBUTION")
+    print("=" * 70)
+
+    print(f"\n\u2500" * 70)
+    print("  SPEED DISTRIBUTION")
+    print("\u2500" * 70)
+    print(f"\n{'Speed (mm/s)':>16}  {'% Time':>7}  {'Samples':>8}  "
+          f"{'Avg Boost':>10}  {'Avg PWM':>8}  Bar")
+    print("\u2500" * 70)
+
+    max_pct = max((v['pct'] for v in dist['speed'].values()), default=1)
+    for key in sorted(dist['speed'].keys()):
+        v = dist['speed'][key]
+        lo, hi = key
+        label = f"{lo}-{hi}" if hi < 999 else f"{lo}+"
+        bar = _bar(v['pct'], max(max_pct, 0.1), width=20)
+        print(f"{label:>16}  {v['pct']:>6.1f}%  {v['count']:>8}  "
+              f"{v['avg_boost']:>9.1f}\u00b0C  {v['avg_pwm']:>7.0%}  {bar}")
+
+    print(f"\n\u2500" * 70)
+    print("  FLOW DISTRIBUTION")
+    print("\u2500" * 70)
+    print(f"\n{'Flow (mm\u00b3/s)':>16}  {'% Time':>7}  {'Samples':>8}  "
+          f"{'Avg Boost':>10}  {'Avg PWM':>8}  Bar")
+    print("\u2500" * 70)
+
+    max_pct = max((v['pct'] for v in dist['flow'].values()), default=1)
+    for key in sorted(dist['flow'].keys()):
+        v = dist['flow'][key]
+        lo, hi = key
+        label = f"{lo}-{hi}" if hi < 999 else f"{lo}+"
+        bar = _bar(v['pct'], max(max_pct, 0.1), width=20)
+        print(f"{label:>16}  {v['pct']:>6.1f}%  {v['count']:>8}  "
+              f"{v['avg_boost']:>9.1f}\u00b0C  {v['avg_pwm']:>7.0%}  {bar}")
+
+    peak_speed = max(dist['speed'].items(), key=lambda x: x[1]['pct'])
+    peak_flow = max(dist['flow'].items(), key=lambda x: x[1]['pct'])
+    print(f"\n\u2500" * 70)
+    print("  INSIGHT")
+    print("\u2500" * 70)
+    lo_s, hi_s = peak_speed[0]
+    lo_f, hi_f = peak_flow[0]
+    s_lbl = f"{lo_s}-{hi_s}" if hi_s < 999 else f"{lo_s}+"
+    f_lbl = f"{lo_f}-{hi_f}" if hi_f < 999 else f"{lo_f}+"
+    print(f"  Most time at {s_lbl} mm/s speed ({peak_speed[1]['pct']:.1f}%)")
+    print(f"  Most time at {f_lbl} mm\u00b3/s flow ({peak_flow[1]['pct']:.1f}%)")
+
+    high_speed = {k: v for k, v in dist['speed'].items() if k[0] >= 150}
+    if high_speed:
+        high_pct = sum(v['pct'] for v in high_speed.values())
+        if high_pct < 5:
+            print(f"  \u26a0 Only {high_pct:.1f}% of time above 150mm/s "
+                  "\u2014 speeds may be throttled by acceleration limits")
+
+    print("\n" + "=" * 70 + "\n")
+
+
+# =============================================================================
+# WEB DASHBOARD
+# =============================================================================
+
+def read_csv_timeline(csv_file, max_points=800):
+    """Read CSV and downsample for timeline charts."""
+    rows = []
+    try:
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            all_rows = list(reader)
+    except Exception:
+        return []
+
+    step = max(1, len(all_rows) // max_points)
+    for i in range(0, len(all_rows), step):
+        row = all_rows[i]
+        try:
+            rows.append({
+                't': round(float(row['elapsed_s']), 1),
+                'ta': round(float(row['temp_actual']), 1),
+                'tt': round(float(row['temp_target']), 1),
+                'b': round(float(row.get('boost', 0)), 1),
+                'f': round(float(row['flow']), 1),
+                's': round(float(row['speed']), 1),
+                'pw': round(float(row['pwm']), 3),
+                'pa': round(float(row.get('pa', 0)), 4),
+                'z': round(float(row.get('z_height', 0)), 2),
+                'a': int(float(row.get('accel', 0))),
+                'dz': int(row.get('dynz_active', 0)),
+                'fn': round(float(row.get('fan_pct', 0)), 1),
+            })
+        except (KeyError, ValueError):
+            continue
+    return rows
+
+
+def find_active_print_csv(log_dir):
+    """Find a CSV that has no matching summary JSON — i.e., a print in progress.
+
+    Returns the CSV path or None.
+    """
+    csvs = sorted(
+        Path(log_dir).glob('*.csv'),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for csv_path in csvs[:5]:  # check most recent 5
+        summary_path = str(csv_path).replace('.csv', '_summary.json')
+        if not os.path.exists(summary_path):
+            # Confirm it's being actively written (modified in last 120s)
+            try:
+                age = time.time() - csv_path.stat().st_mtime
+                if age < 120:
+                    return str(csv_path)
+            except OSError:
+                continue
+    return None
+
+
+def synthesize_live_summary(csv_path):
+    """Build a summary dict from a live CSV (no summary JSON exists yet)."""
+    filename = os.path.basename(csv_path)
+    # Extract material from filename pattern: YYYYMMDD_HHMMSS_MATERIAL_name.csv
+    parts = filename.split('_')
+    material = parts[2] if len(parts) >= 3 else 'Unknown'
+    if material.lower() in ('summary',):
+        material = 'Unknown'
+
+    temps = []
+    boosts = []
+    pwms = []
+    flows = []
+    speeds = []
+    pa_vals = []
+    high_risk = 0
+    dynz_active = 0
+    accel_min = 99999
+    total = 0
+    start_time = ''
+    duration_s = 0
+
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    total += 1
+                    boosts.append(float(row.get('boost', 0)))
+                    pwms.append(float(row.get('pwm', 0)))
+                    flows.append(float(row.get('flow', 0)))
+                    speeds.append(float(row.get('speed', 0)))
+                    if float(row.get('pa', 0)) > 0:
+                        pa_vals.append(float(row['pa']))
+                    if int(row.get('dynz_active', 0)):
+                        dynz_active += 1
+                    accel = float(row.get('accel', 99999))
+                    if accel > 0:
+                        accel_min = min(accel_min, accel)
+                    if int(row.get('banding_risk', 0)) >= 5:
+                        high_risk += 1
+                    duration_s = float(row.get('elapsed_s', 0))
+                except (KeyError, ValueError):
+                    continue
+    except Exception:
+        return None
+
+    if total == 0:
+        return None
+
+    return {
+        'material': material,
+        'filename': filename,
+        'start_time': '',
+        'duration_min': round(duration_s / 60, 1),
+        'samples': total,
+        'avg_boost': round(statistics.mean(boosts), 1) if boosts else 0,
+        'max_boost': round(max(boosts), 1) if boosts else 0,
+        'avg_pwm': round(statistics.mean(pwms), 3) if pwms else 0,
+        'max_pwm': round(max(pwms), 3) if pwms else 0,
+        'dynz_active_pct': round(dynz_active / total * 100, 1) if total else 0,
+        'accel_min': int(accel_min) if accel_min < 99999 else 0,
+        'banding_analysis': {
+            'high_risk_events': high_risk,
+            'likely_culprit': 'in_progress',
+            'accel_changes': 0,
+            'pa_changes': 0,
+            'dynz_transitions': 0,
+            'temp_overshoots': 0,
+        },
+        '_live': True,
+    }
+
+
+def collect_dashboard_data(log_dir, summary_path=None, material=None):
+    """Gather all analysis data for the web dashboard."""
+    data = {
+        'summary': None, 'timeline': [], 'z_banding': {},
+        'thermal_lag': None, 'headroom': None, 'pa_stability': None,
+        'dynz_zones': {}, 'speed_flow': None, 'trends': None,
+        'sessions': [], 'selected_file': '', 'is_live': False,
+    }
+
+    all_sessions = find_recent_sessions(log_dir, count=50, material=material)
+    data['sessions'] = [
+        {
+            'filename': s['summary'].get('filename', ''),
+            'material': s['summary'].get('material', ''),
+            'start_time': s['summary'].get('start_time', ''),
+            'summary_file': os.path.basename(s['summary_file']),
+        }
+        for s in all_sessions
+    ]
+
+    # Check for an active (live) print first — a CSV with no summary JSON
+    csv_path = None
+    if summary_path is None:
+        live_csv = find_active_print_csv(log_dir)
+        if live_csv:
+            csv_path = live_csv
+            live_summary = synthesize_live_summary(live_csv)
+            if live_summary:
+                data['summary'] = live_summary
+                data['selected_file'] = os.path.basename(live_csv)
+                data['is_live'] = True
+
+    # Fall back to completed print
+    if data['summary'] is None:
+        if summary_path is None:
+            summary_path = find_latest_summary(log_dir)
+        if summary_path is None:
+            return data
+
+        data['selected_file'] = os.path.basename(summary_path)
+        summary = load_summary(summary_path)
+        if summary.get('_error'):
+            data['error'] = summary['_error']
+            return data
+        data['summary'] = summary
+        csv_path = summary_path.replace('_summary.json', '.csv')
+
+    if csv_path is None or not os.path.exists(csv_path):
+        return data
+
+    data['timeline'] = read_csv_timeline(csv_path)
+
+    data['z_banding'] = {
+        str(k): v for k, v in analyze_z_banding(csv_path, bin_size=0.5).items()
+    }
+
+    lag = analyze_thermal_lag(csv_path)
+    if lag:
+        lag['episodes'] = [
+            {'start_s': ep['start_s'],
+             'end_s': ep.get('end_s', ep['start_s']),
+             'max_lag': ep['max_lag'], 'max_flow': ep['max_flow'],
+             'z_start': ep['z_start']}
+            for ep in lag['episodes'][:20]
+        ]
+    data['thermal_lag'] = lag
+
+    headroom_raw = analyze_heater_headroom(csv_path)
+    if headroom_raw:
+        data['headroom'] = {
+            f"{k[0]}-{k[1]}": v for k, v in headroom_raw.items()
+        }
+
+    pa = analyze_pa_stability(csv_path)
+    if pa:
+        pa['oscillation_zones'] = [
+            {'start_s': z['start_s'],
+             'end_s': z.get('end_s', z['start_s']),
+             'pa_min': z['pa_min'], 'pa_max': z['pa_max'],
+             'z_start': z['z_start'], 'changes': z['changes']}
+            for z in pa['oscillation_zones'][:20]
+        ]
+    data['pa_stability'] = pa
+
+    data['dynz_zones'] = {
+        str(k): v for k, v in analyze_dynz_zones(csv_path).items()
+    }
+
+    sfd = analyze_speed_flow_distribution(csv_path)
+    if sfd:
+        data['speed_flow'] = {
+            'speed': {f"{k[0]}-{k[1]}": v for k, v in sfd['speed'].items()},
+            'flow': {f"{k[0]}-{k[1]}": v for k, v in sfd['flow'].items()},
+        }
+
+    if len(all_sessions) >= 2:
+        trend_data = []
+        for s in reversed(all_sessions[:10]):
+            sm = s['summary']
+            ba = sm.get('banding_analysis', {})
+            ts = sm.get('start_time', '')
+            trend_data.append({
+                'date': ts[:10] if len(ts) >= 10 else ts,
+                'material': sm.get('material', ''),
+                'avg_boost': sm.get('avg_boost', 0),
+                'max_boost': sm.get('max_boost', 0),
+                'avg_pwm': sm.get('avg_pwm', 0),
+                'max_pwm': sm.get('max_pwm', 0),
+                'high_risk': ba.get('high_risk_events', 0),
+                'culprit': ba.get('likely_culprit', '-'),
+            })
+        data['trends'] = trend_data
+
+    return data
+
+
+DASHBOARD_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adaptive Flow Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+background:#0d1117;color:#c9d1d9;line-height:1.5}
+.hdr{background:#161b22;border-bottom:1px solid #30363d;padding:14px 24px;
+display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.hdr h1{font-size:18px;font-weight:600}
+.hdr select{background:#21262d;color:#c9d1d9;border:1px solid #30363d;
+padding:6px 12px;border-radius:6px;font-size:13px;max-width:420px}
+.ctrls{display:flex;gap:12px;align-items:center}
+.ctrls label{font-size:13px;color:#8b949e;cursor:pointer}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+gap:12px;padding:16px 24px}
+.cd{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+.cd .lb{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+.cd .vl{font-size:22px;font-weight:600;margin-top:4px}
+.cd .sb{font-size:12px;color:#8b949e;margin-top:2px}
+.tabs{display:flex;gap:0;padding:0 24px;border-bottom:1px solid #30363d;
+background:#161b22;overflow-x:auto}
+.tab{padding:10px 16px;font-size:13px;color:#8b949e;cursor:pointer;
+border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s}
+.tab:hover{color:#c9d1d9}
+.tab.active{color:#58a6ff;border-bottom-color:#58a6ff}
+.area{padding:16px 24px}
+.box{background:#161b22;border:1px solid #30363d;border-radius:8px;
+padding:16px;margin-bottom:16px}
+.box h3{font-size:14px;margin-bottom:12px;color:#8b949e}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+canvas{max-height:350px}
+.w{color:#d29922}.d{color:#f85149}.g{color:#3fb950}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:6px 10px;color:#8b949e;border-bottom:1px solid #30363d}
+td{padding:6px 10px;border-bottom:1px solid #21262d}
+.foot{text-align:center;padding:16px;font-size:11px;color:#484f58}
+.pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media(max-width:768px){.row2{grid-template-columns:1fr}
+.cards{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h1>\u26a1 Adaptive Flow Dashboard</h1>
+<div class="ctrls">
+<span id="lv" style="display:none;font-size:12px;color:#3fb950">
+<span class="pulse">\u25cf</span> LIVE</span>
+<label><input type="checkbox" id="ar"> Auto-refresh</label>
+<select id="ss" onchange="go(this.value)"></select>
+</div></div>
+<div class="cards" id="cds"></div>
+<div class="tabs" id="tb"></div>
+<div class="area" id="ca"></div>
+<div class="foot" id="ft">Adaptive Flow Dashboard</div>
+<script>
+var D=__DASHBOARD_DATA__;
+var isLive=D.is_live||false;
+var sel=document.getElementById('ss');
+var lvi=document.getElementById('lv');
+var ftel=document.getElementById('ft');
+
+// Show LIVE indicator
+if(isLive)lvi.style.display='inline';
+
+// Populate session selector
+if(!isLive){
+(D.sessions||[]).forEach(function(s){var o=document.createElement('option');
+o.value=s.summary_file;
+o.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
+if(s.summary_file===D.selected_file)o.selected=true;sel.appendChild(o)});
+} else {
+var o=document.createElement('option');o.value='__live__';
+o.textContent='● LIVE PRINT';o.selected=true;sel.appendChild(o);
+(D.sessions||[]).forEach(function(s){var o2=document.createElement('option');
+o2.value=s.summary_file;
+o2.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
+sel.appendChild(o2)});
+}
+
+function go(f){
+if(f==='__live__')window.location.href='/';
+else window.location.href='/?session='+encodeURIComponent(f)}
+
+// Auto-refresh: 5s when live, 30s otherwise
+var arCb=document.getElementById('ar');
+var rt=null;
+if(isLive){arCb.checked=true; startPoll()}
+arCb.addEventListener('change',function(){
+if(this.checked)startPoll(); else stopPoll()});
+
+function startPoll(){
+stopPoll();
+var iv=isLive?5000:30000;
+rt=setInterval(pollData,iv);
+ftel.textContent='Auto-refresh '+(iv/1000)+'s'}
+function stopPoll(){if(rt)clearInterval(rt);rt=null;
+ftel.textContent='Adaptive Flow Dashboard'}
+
+function pollData(){
+var url='/api/data';
+var cur=sel.value;
+if(cur&&cur!=='__live__')url+='?session='+encodeURIComponent(cur);
+fetch(url).then(function(r){return r.json()}).then(function(nd){
+D=nd;isLive=D.is_live||false;
+if(isLive)lvi.style.display='inline'; else lvi.style.display='none';
+rc();rCh();
+}).catch(function(){})}
+
+function rc(){var c=document.getElementById('cds'),s=D.summary;
+if(!s){c.innerHTML='<div class="cd"><div class="vl d">No data</div></div>';return}
+var ba=s.banding_analysis||{},dp=s.dynz_active_pct||0;
+var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
+var items=[
+{l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':'')},
+{l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C'},
+{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.max_pwm||0)>0.95},
+{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive'},
+{l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10}];
+c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
+x.l+'</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
+'</div><div class="sb">'+x.s+'</div></div>'}).join('')}
+rc();
+
+var tabs=[{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
+{id:'pa',l:'PA'},{id:'dz',l:'DynZ'},{id:'ds',l:'Distribution'},{id:'tr',l:'Trends'}];
+var at='tl',tb=document.getElementById('tb'),ca=document.getElementById('ca');
+function rTabs(){tb.innerHTML=tabs.map(function(t){
+return '<div class="tab'+(t.id===at?' active':'')+
+'" onclick="sTab(this.dataset.t)" data-t="'+t.id+'">'+t.l+'</div>'}).join('')}
+function sTab(id){at=id;rTabs();rCh()}
+rTabs();
+
+Chart.defaults.color='#8b949e';
+Chart.defaults.borderColor='#30363d';
+Chart.defaults.font.size=12;
+var CH={};
+function dCh(){for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
+function mc(id){return '<canvas id="'+id+'"></canvas>'}
+
+function rCh(){dCh();var tl=D.timeline||[];
+if(at==='tl')rTimeline(tl);
+else if(at==='zh')rZH();
+else if(at==='ht')rHt();
+else if(at==='pa')rPA(tl);
+else if(at==='dz')rDZ();
+else if(at==='ds')rDist();
+else if(at==='tr')rTr()}
+
+function rTimeline(tl){
+if(!tl.length){ca.innerHTML='<p>No timeline data.</p>';return}
+ca.innerHTML='<div class="box"><h3>Temperature</h3>'+mc('c1')+
+'</div><div class="box"><h3>Flow &amp; Speed</h3>'+mc('c2')+'</div>';
+var lb=tl.map(function(r){return r.t});
+CH.c1=new Chart(document.getElementById('c1'),{type:'line',data:{labels:lb,
+datasets:[
+{label:'Target',data:tl.map(function(r){return r.tt}),borderColor:'#58a6ff',
+borderWidth:1.5,pointRadius:0,fill:false},
+{label:'Actual',data:tl.map(function(r){return r.ta}),borderColor:'#f85149',
+borderWidth:1.5,pointRadius:0,fill:false},
+{label:'Boost',data:tl.map(function(r){return r.b}),borderColor:'#d29922',
+borderWidth:1,pointRadius:0,fill:true,
+backgroundColor:'rgba(210,153,34,0.1)',yAxisID:'y1'}]},
+options:{responsive:true,animation:false,
+interaction:{intersect:false,mode:'index'},
+scales:{x:{title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:15}},
+y:{title:{display:true,text:'\u00b0C'},position:'left'},
+y1:{title:{display:true,text:'Boost \u00b0C'},position:'right',
+grid:{drawOnChartArea:false}}},
+plugins:{legend:{position:'top'}}}});
+CH.c2=new Chart(document.getElementById('c2'),{type:'line',data:{labels:lb,
+datasets:[
+{label:'Flow (mm\u00b3/s)',data:tl.map(function(r){return r.f}),
+borderColor:'#3fb950',borderWidth:1.5,pointRadius:0,fill:true,
+backgroundColor:'rgba(63,185,80,0.1)',yAxisID:'y'},
+{label:'Speed (mm/s)',data:tl.map(function(r){return r.s}),
+borderColor:'#d29922',borderWidth:1,pointRadius:0,fill:false,yAxisID:'y1'},
+{label:'PWM',data:tl.map(function(r){return r.pw}),
+borderColor:'#bc8cff',borderWidth:1,pointRadius:0,fill:false,yAxisID:'y2'}]},
+options:{responsive:true,animation:false,
+interaction:{intersect:false,mode:'index'},
+scales:{x:{title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:15}},
+y:{title:{display:true,text:'mm\u00b3/s'},position:'left'},
+y1:{title:{display:true,text:'mm/s'},position:'right',
+grid:{drawOnChartArea:false}},
+y2:{display:false}}}})}
+
+function rZH(){
+var zb=D.z_banding;
+if(!zb||!Object.keys(zb).length){ca.innerHTML='<p>No Z-height data.</p>';return}
+ca.innerHTML='<div class="box"><h3>Banding Risk by Z-Height</h3>'+mc('c3')+'</div>';
+var ks=Object.keys(zb).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+var risks=ks.map(function(k){return zb[k].samples?zb[k].risk_sum/zb[k].samples:0});
+var cols=risks.map(function(r){return r>=4?'#f85149':r>=2?'#d29922':'#3fb950'});
+CH.c3=new Chart(document.getElementById('c3'),{type:'bar',data:{
+labels:ks.map(function(k){return parseFloat(k).toFixed(1)+'mm'}),
+datasets:[{label:'Avg Risk',data:risks,backgroundColor:cols}]},
+options:{responsive:true,animation:false,indexAxis:'y',
+scales:{x:{title:{display:true,text:'Avg Risk Score'}}}}})}
+
+function rHt(){
+ca.innerHTML='';
+var hr=D.headroom;
+if(hr&&Object.keys(hr).length){
+ca.innerHTML+='<div class="box"><h3>Heater Headroom by Flow Rate</h3>'+mc('c4')+'</div>';
+var ks=Object.keys(hr).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+ks=ks.filter(function(k){return hr[k].count>=3});
+setTimeout(function(){
+CH.c4=new Chart(document.getElementById('c4'),{type:'bar',data:{
+labels:ks.map(function(k){return k.indexOf('inf')>=0?k.split('-')[0]+'+':k}),
+datasets:[
+{label:'Avg PWM',data:ks.map(function(k){return hr[k].avg_pwm*100}),
+backgroundColor:'#58a6ff'},
+{label:'P95 PWM',data:ks.map(function(k){return hr[k].p95_pwm*100}),
+backgroundColor:'#d29922'},
+{label:'Max PWM',data:ks.map(function(k){return hr[k].max_pwm*100}),
+backgroundColor:'#f85149'}]},
+options:{responsive:true,animation:false,
+scales:{x:{title:{display:true,text:'Flow (mm\u00b3/s)'}},
+y:{title:{display:true,text:'PWM %'},max:100}}}})},0)}
+var lg=D.thermal_lag;
+if(lg){var el=document.createElement('div');el.className='box';
+var h='<h3>Thermal Lag</h3><p>Avg: '+lg.avg_lag.toFixed(1)+
+'\u00b0C | Max: '+lg.max_lag.toFixed(1)+
+'\u00b0C | Time in lag: '+lg.lag_pct.toFixed(1)+'%</p>';
+if(lg.episodes.length){
+h+='<table><tr><th>#</th><th>Time</th><th>Max Lag</th><th>Flow</th><th>Z</th></tr>';
+lg.episodes.slice(0,8).forEach(function(e,i){
+h+='<tr><td>'+(i+1)+'</td><td>'+e.start_s.toFixed(0)+
+'s</td><td class="'+(e.max_lag>=5?'d':'w')+'">'+
+e.max_lag.toFixed(1)+'\u00b0C</td><td>'+
+e.max_flow.toFixed(1)+'</td><td>'+e.z_start.toFixed(1)+'mm</td></tr>'});
+h+='</table>'}else{h+='<p class="g">\u2713 No significant lag</p>'}
+el.innerHTML=h;ca.appendChild(el)}
+if(!hr&&!lg)ca.innerHTML='<p>No heater data.</p>'}
+
+function rPA(tl){
+ca.innerHTML='';
+if(tl.length){
+ca.innerHTML+='<div class="box"><h3>Pressure Advance over Time</h3>'+mc('c5')+'</div>';
+setTimeout(function(){
+CH.c5=new Chart(document.getElementById('c5'),{type:'line',data:{
+labels:tl.map(function(r){return r.t}),
+datasets:[{label:'PA',data:tl.map(function(r){return r.pa}),
+borderColor:'#58a6ff',borderWidth:1.5,pointRadius:0,fill:true,
+backgroundColor:'rgba(88,166,255,0.1)'}]},
+options:{responsive:true,animation:false,
+interaction:{intersect:false,mode:'index'},
+scales:{x:{title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:15}},
+y:{title:{display:true,text:'PA Value'}}}}})},0)}
+var pa=D.pa_stability;
+if(pa&&pa.samples>=10){var el=document.createElement('div');el.className='box';
+var h='<h3>PA Stability</h3><p>Range: '+pa.pa_min.toFixed(4)+
+' \u2014 '+pa.pa_max.toFixed(4)+' (span '+pa.pa_range.toFixed(4)+
+') | Stdev: '+pa.pa_stdev.toFixed(5)+' | Changes: '+pa.change_count+'</p>';
+if(pa.oscillation_zones.length){
+h+='<table><tr><th>#</th><th>Time</th><th>Dur</th><th>PA span</th><th>Changes</th><th>Z</th></tr>';
+pa.oscillation_zones.slice(0,8).forEach(function(z,i){
+h+='<tr><td>'+(i+1)+'</td><td>'+z.start_s.toFixed(0)+
+'s</td><td>'+(z.end_s-z.start_s).toFixed(0)+
+'s</td><td>'+(z.pa_max-z.pa_min).toFixed(4)+
+'</td><td>'+z.changes+'</td><td>'+z.z_start.toFixed(1)+'mm</td></tr>'});
+h+='</table>'}else{h+='<p class="g">\u2713 PA is stable</p>'}
+el.innerHTML=h;ca.appendChild(el)}
+if(!tl.length&&!pa)ca.innerHTML='<p>No PA data.</p>'}
+
+function rDZ(){
+var dz=D.dynz_zones;
+if(!dz||!Object.keys(dz).length){
+ca.innerHTML='<p>No DynZ data (may be inactive).</p>';return}
+ca.innerHTML='<div class="box"><h3>DynZ Activation by Z-Height</h3>'+mc('c6')+'</div>';
+var ks=Object.keys(dz).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+CH.c6=new Chart(document.getElementById('c6'),{type:'bar',data:{
+labels:ks.map(function(k){return parseFloat(k).toFixed(1)+'mm'}),
+datasets:[
+{label:'Active %',data:ks.map(function(k){return dz[k].active_pct}),
+backgroundColor:'#d29922',yAxisID:'y'},
+{label:'Transitions',data:ks.map(function(k){return dz[k].transitions}),
+backgroundColor:'#f85149',yAxisID:'y1'}]},
+options:{responsive:true,animation:false,
+scales:{x:{title:{display:true,text:'Z Height'}},
+y:{title:{display:true,text:'Active %'},position:'left'},
+y1:{title:{display:true,text:'Transitions'},position:'right',
+grid:{drawOnChartArea:false}}}}})}
+
+function rDist(){
+var sf=D.speed_flow;
+if(!sf){ca.innerHTML='<p>No distribution data.</p>';return}
+ca.innerHTML='<div class="row2"><div class="box"><h3>Time by Speed</h3>'+
+mc('c7')+'</div><div class="box"><h3>Time by Flow Rate</h3>'+mc('c8')+'</div></div>';
+if(sf.speed){
+var sk=Object.keys(sf.speed).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+CH.c7=new Chart(document.getElementById('c7'),{type:'bar',data:{
+labels:sk.map(function(k){return k.indexOf('999')>=0?k.split('-')[0]+'+':k}),
+datasets:[{label:'% Time',data:sk.map(function(k){return sf.speed[k].pct}),
+backgroundColor:'#d29922'}]},
+options:{responsive:true,animation:false,
+scales:{x:{title:{display:true,text:'Speed (mm/s)'}},
+y:{title:{display:true,text:'% of Print'}}}}})}
+if(sf.flow){
+var fk=Object.keys(sf.flow).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+CH.c8=new Chart(document.getElementById('c8'),{type:'bar',data:{
+labels:fk.map(function(k){return k.indexOf('999')>=0?k.split('-')[0]+'+':k}),
+datasets:[{label:'% Time',data:fk.map(function(k){return sf.flow[k].pct}),
+backgroundColor:'#3fb950'}]},
+options:{responsive:true,animation:false,
+scales:{x:{title:{display:true,text:'Flow (mm\u00b3/s)'}},
+y:{title:{display:true,text:'% of Print'}}}}})}}
+
+function rTr(){
+var tr=D.trends;
+if(!tr||tr.length<2){ca.innerHTML='<p>Need at least 2 prints for trends.</p>';return}
+var rows='';tr.forEach(function(t){
+rows+='<tr><td>'+t.date+'</td><td>'+t.material+
+'</td><td>'+t.avg_boost.toFixed(1)+'\u00b0C</td><td class="'+
+(t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
+'%</td><td class="'+(t.high_risk>10?'w':'')+'">'+t.high_risk+
+'</td><td>'+t.culprit+'</td></tr>'});
+ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+mc('c9')+
+'</div><div class="box"><h3>Details</h3><table><tr><th>Date</th><th>Material</th>'+
+'<th>Boost</th><th>Max PWM</th><th>Risk</th><th>Culprit</th></tr>'+rows+'</table></div>';
+CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
+labels:tr.map(function(t){return t.date}),
+datasets:[
+{label:'Avg Boost (\u00b0C)',data:tr.map(function(t){return t.avg_boost}),
+borderColor:'#d29922',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
+{label:'Risk Events',data:tr.map(function(t){return t.high_risk}),
+borderColor:'#f85149',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
+{label:'Avg PWM (%)',data:tr.map(function(t){return t.avg_pwm*100}),
+borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'}]},
+options:{responsive:true,animation:false,
+interaction:{intersect:false,mode:'index'},
+scales:{x:{title:{display:true,text:'Print Date'}},
+y:{title:{display:true,text:'\u00b0C / %'},position:'left'},
+y1:{title:{display:true,text:'Events'},position:'right',
+grid:{drawOnChartArea:false}}}}})}
+
+rCh();
+</script>
+</body>
+</html>"""
+
+
+def generate_dashboard_html(data):
+    """Generate a self-contained HTML dashboard with embedded Chart.js."""
+    data_json = json.dumps(data, default=str)
+    return DASHBOARD_TEMPLATE.replace('__DASHBOARD_DATA__', data_json)
+
+
+class DashboardHandler(http.server.BaseHTTPRequestHandler):
+    """HTTP request handler for the Adaptive Flow dashboard."""
+    log_dir = LOG_DIR
+    material = None
+
+    def _resolve_session(self, params):
+        """Resolve session file from query params to summary path."""
+        session_file = params.get('session', [None])[0]
+        if session_file:
+            candidate = os.path.join(self.log_dir, session_file)
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+
+        if parsed.path == '/api/data':
+            # JSON API for live polling — returns fresh analysis data
+            summary_path = self._resolve_session(params)
+            data = collect_dashboard_data(
+                self.log_dir,
+                summary_path=summary_path,
+                material=self.material,
+            )
+            payload = json.dumps(data, default=str)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(payload.encode('utf-8'))
+
+        elif parsed.path in ('/', ''):
+            summary_path = self._resolve_session(params)
+            data = collect_dashboard_data(
+                self.log_dir,
+                summary_path=summary_path,
+                material=self.material,
+            )
+            html = generate_dashboard_html(data)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(html.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # suppress default request logging
+
+
+def serve_dashboard(port, log_dir, material=None):
+    """Start the dashboard web server."""
+    DashboardHandler.log_dir = log_dir
+    DashboardHandler.material = material
+
+    server = http.server.HTTPServer(('0.0.0.0', port), DashboardHandler)
+
+    hostname = socket.gethostname()
+    try:
+        ip = socket.gethostbyname(hostname)
+    except socket.gaierror:
+        ip = '0.0.0.0'
+
+    print(f"\n{'=' * 60}")
+    print(f"  Adaptive Flow Dashboard")
+    print(f"{'=' * 60}")
+    print(f"\n  Local:   http://localhost:{port}")
+    print(f"  Network: http://{ip}:{port}")
+    print(f"\n  Log dir: {log_dir}")
+    if material:
+        print(f"  Material filter: {material}")
+    print(f"\n  Press Ctrl+C to stop")
+    print(f"{'=' * 60}\n")
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nDashboard stopped.")
+        server.server_close()
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
@@ -1037,6 +1990,16 @@ Examples:
 
   PA stability analysis:
     python3 analyze_print.py --pa-stability
+
+  DynZ zone map:
+    python3 analyze_print.py --dynz-map
+
+  Speed/flow distribution:
+    python3 analyze_print.py --distribution
+
+  Web dashboard (open in browser):
+    python3 analyze_print.py --serve
+    python3 analyze_print.py --serve --port 8080
         """,
     )
     parser.add_argument(
@@ -1067,6 +2030,18 @@ Examples:
         '--pa-stability', action='store_true',
         help='Show PA stability analysis for a single print')
     parser.add_argument(
+        '--dynz-map', action='store_true',
+        help='Show DynZ activation zone map for a single print')
+    parser.add_argument(
+        '--distribution', action='store_true',
+        help='Show speed/flow time distribution for a single print')
+    parser.add_argument(
+        '--serve', action='store_true',
+        help='Start web dashboard server')
+    parser.add_argument(
+        '--port', type=int, default=7127,
+        help='Port for web dashboard (default: 7127)')
+    parser.add_argument(
         '--material', '-m',
         help='Filter by material (PLA, PETG, etc.)')
     parser.add_argument(
@@ -1075,6 +2050,17 @@ Examples:
     args = parser.parse_args()
 
     log_dir = os.path.expanduser(args.log_dir)
+
+    # ------------------------------------------------------------------
+    # WEB DASHBOARD MODE
+    # ------------------------------------------------------------------
+    if args.serve:
+        if not os.path.exists(log_dir):
+            print(f"Log directory not found: {log_dir}")
+            print("Run a print first to generate logs.")
+            return 1
+        serve_dashboard(args.port, log_dir, material=args.material)
+        return 0
 
     # ------------------------------------------------------------------
     # PRINT-OVER-PRINT TRENDS MODE
@@ -1189,6 +2175,24 @@ Examples:
             return 1
         pa_data = analyze_pa_stability(csv_path)
         print_pa_stability_report(pa_data)
+
+    # DynZ zone map
+    if args.dynz_map:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        zones = analyze_dynz_zones(csv_path, bin_size=args.z_bin)
+        print_dynz_map(zones, bin_size=args.z_bin)
+
+    # Speed/flow distribution
+    if args.distribution:
+        csv_path = summary_path.replace('_summary.json', '.csv')
+        if not os.path.exists(csv_path):
+            print(f"CSV log not found: {csv_path}")
+            return 1
+        dist = analyze_speed_flow_distribution(csv_path)
+        print_distribution(dist)
 
     return 0
 

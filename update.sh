@@ -237,5 +237,40 @@ echo ""
 echo "[>>] Restarting Klipper..."
 sudo systemctl restart klipper
 
+# ==========================================================================
+# DASHBOARD SERVICE
+# ==========================================================================
+DASH_SERVICE="adaptive-flow-dashboard.service"
+DASH_FILE="/etc/systemd/system/$DASH_SERVICE"
+
+echo ""
+echo "[>>] Setting up Adaptive Flow Dashboard service..."
+
+# Install/update the service file
+if [ -f "$REPO_DIR/adaptive_flow_dashboard.service" ]; then
+    sudo cp "$REPO_DIR/adaptive_flow_dashboard.service" "$DASH_FILE"
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$DASH_SERVICE" 2>/dev/null
+
+    # Restart dashboard to pick up new code
+    if systemctl is-active --quiet "$DASH_SERVICE"; then
+        sudo systemctl restart "$DASH_SERVICE"
+        echo "[OK] Dashboard service restarted"
+    else
+        sudo systemctl start "$DASH_SERVICE"
+        echo "[OK] Dashboard service started"
+    fi
+
+    # Show access URL
+    IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$IP_ADDR" ]; then
+        echo "[OK] Dashboard: http://${IP_ADDR}:7127"
+    else
+        echo "[OK] Dashboard: http://localhost:7127"
+    fi
+else
+    echo "[!] Dashboard service file not found, skipping"
+fi
+
 echo ""
 echo "[OK] All done! Your custom settings are preserved."
