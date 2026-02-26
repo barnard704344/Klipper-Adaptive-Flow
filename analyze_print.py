@@ -1539,9 +1539,21 @@ padding:6px 12px;border-radius:6px;font-size:13px;max-width:420px}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
 gap:12px;padding:16px 24px}
 .cd{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
-.cd .lb{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+.cd .lb{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;
+display:flex;align-items:center;gap:4px}
 .cd .vl{font-size:22px;font-weight:600;margin-top:4px}
 .cd .sb{font-size:12px;color:#8b949e;margin-top:2px}
+.cd .tip{position:relative;display:inline-flex;align-items:center;justify-content:center;
+width:14px;height:14px;border-radius:50%;background:#30363d;color:#8b949e;
+font-size:9px;cursor:help;flex-shrink:0}
+.cd .tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);
+left:50%;transform:translateX(-50%);background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
+border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.4;white-space:normal;
+width:200px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
+box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.cd .tip:hover::before{content:'';position:absolute;bottom:calc(100% + 2px);
+left:50%;transform:translateX(-50%);border:4px solid transparent;
+border-top-color:#30363d;z-index:11}
 .tabs{display:flex;gap:0;padding:0 24px;border-bottom:1px solid #30363d;
 background:#161b22;overflow-x:auto}
 .tab{padding:10px 16px;font-size:13px;color:#8b949e;cursor:pointer;
@@ -1636,13 +1648,19 @@ if(!s){c.innerHTML='<div class="cd"><div class="vl d">No data</div></div>';retur
 var ba=s.banding_analysis||{},dp=s.dynz_active_pct||0;
 var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
 var items=[
-{l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':'')},
-{l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C'},
-{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.max_pwm||0)>0.95},
-{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive'},
-{l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10}];
+{l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),
+d:'Active material profile and total print duration'},
+{l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',
+d:'Average temperature added above base temp to meet flow demand. Higher values mean the hotend is working harder'},
+{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.max_pwm||0)>0.95,
+d:'Heater PWM usage (0\u2013100%). Sustained values above 95% indicate the heater is near its limit'},
+{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
+d:'Dynamic Z-Window: % of layers where acceleration was reduced to handle challenging geometry like domes or overhangs'},
+{l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
+d:'Number of samples flagged as high banding risk. Caused by rapid temp, PA, or acceleration changes'}];
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
-x.l+'</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
+x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
+'</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
 '</div><div class="sb">'+x.s+'</div></div>'}).join('')}
 rc();
 
