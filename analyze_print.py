@@ -1424,27 +1424,48 @@ def generate_recommendations(data):
     dynz_pct = s.get('dynz_active_pct', 0)
 
     # --- Heater saturation ---
+    # IMPORTANT: max_pwm hitting 100% is NORMAL during PID ramp-up when the
+    # target temperature changes.  A 40W heater will briefly go to full power
+    # every time the script requests a new temp — this is expected PID behavior,
+    # not true saturation.
+    #
+    # True saturation = sustained high PWM AND the heater can't reach the target.
+    # We use thermal lag data (% time behind target) + avg PWM to distinguish
+    # "heater genuinely can't keep up" from "heater momentarily ramping".
     max_pwm = s.get('max_pwm', 0)
     avg_pwm = s.get('avg_pwm', 0)
-    if max_pwm >= 0.98:
+    lag_pct = lag.get('lag_pct', 0)
+    max_lag_val = lag.get('max_lag', 0)
+
+    if avg_pwm >= 0.85 and lag_pct > 10:
+        # High average duty AND significant time behind target = real saturation
         recs.append({
             'severity': 'bad', 'category': 'Heater',
-            'title': 'Heater fully saturated',
-            'detail': f'Max PWM hit {max_pwm*100:.0f}% \u2014 the heater maxed out and likely couldn\u2019t maintain target temperature.',
-            'action': 'Reduce flow_k by 0.2\u20130.5, or lower max_boost_limit. If printing fast, reduce slicer volumetric flow limit.',
+            'title': f'Heater can\u2019t keep up (avg {avg_pwm*100:.0f}% PWM, {lag_pct:.0f}% lag)',
+            'detail': f'The heater averaged {avg_pwm*100:.0f}% duty and fell behind target for {lag_pct:.0f}% of the print (max lag: {max_lag_val:.1f}\u00b0C). This is genuine heater saturation, not just PID ramp-up.',
+            'action': 'Reduce flow_k by 0.2\u20130.5 to lower temperature demand. If boost is already moderate, the heater may be undersized for this speed/flow combo \u2014 consider a 60W heater cartridge.',
         })
-    elif max_pwm >= 0.95:
+    elif avg_pwm >= 0.80 and lag_pct > 5:
+        # Moderate concern
         recs.append({
             'severity': 'warn', 'category': 'Heater',
-            'title': 'Heater near saturation',
-            'detail': f'Max PWM reached {max_pwm*100:.0f}% \u2014 close to the heater\u2019s limit.',
-            'action': 'Monitor for temperature drops during high-flow sections. Consider reducing flow_k by 0.1\u20130.2 for safety margin.',
+            'title': f'Heater working hard (avg {avg_pwm*100:.0f}% PWM)',
+            'detail': f'Avg heater duty is {avg_pwm*100:.0f}% with {lag_pct:.0f}% lag time. The heater is coping but has little margin.',
+            'action': 'Consider reducing flow_k by 0.1\u20130.2 for more headroom, especially if pushing higher speeds.',
         })
-    elif max_pwm > 0 and max_pwm < 0.70:
+    elif max_pwm >= 0.98 and lag_pct <= 2:
+        # Hits 100% briefly but keeps up — this is normal PID ramp-up
+        recs.append({
+            'severity': 'good', 'category': 'Heater',
+            'title': 'Heater keeping up well',
+            'detail': f'Max PWM hit {max_pwm*100:.0f}% during ramp-up (normal PID behavior) but only {lag_pct:.1f}% lag time \u2014 the heater is reaching target quickly.',
+            'action': 'No changes needed. Brief 100% PWM during temperature transitions is expected.',
+        })
+    elif max_pwm > 0 and avg_pwm < 0.60:
         recs.append({
             'severity': 'good', 'category': 'Heater',
             'title': 'Plenty of heater headroom',
-            'detail': f'Max PWM was only {max_pwm*100:.0f}% \u2014 the heater barely broke a sweat.',
+            'detail': f'Avg PWM was only {avg_pwm*100:.0f}% \u2014 the heater barely broke a sweat.',
             'action': 'You could increase flow_k by 0.1\u20130.3 to get better flow adaptation, or print faster.',
         })
 
@@ -1905,7 +1926,7 @@ border-radius:4px;letter-spacing:.5px}
 .rec .rec-detail{font-size:13px;color:#8b949e;margin:4px 0 8px}
 .rec .rec-action{font-size:13px;color:#c9d1d9;background:#0d1117;border-radius:6px;
 padding:10px 14px;display:flex;gap:8px;align-items:flex-start}
-.rec .rec-action::before{content:'\2192';color:#58a6ff;font-weight:700;flex-shrink:0}
+.rec .rec-action::before{content:'\\2192';color:#58a6ff;font-weight:700;flex-shrink:0}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
@@ -1987,8 +2008,8 @@ var items=[
 d:'Active material profile and total print duration.'},
 {l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',
 d:'Extra temperature added above base to meet flow demand. \u2022 0\u201310\u00b0C = light load (good) \u2022 10\u201325\u00b0C = moderate \u2022 25\u00b0C+ = heavy load, check if heater can keep up'},
-{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.max_pwm||0)>0.95,
-d:'Heater power usage. \u2022 Under 70% = plenty of headroom (good) \u2022 70\u201390% = healthy \u2022 90\u201395% = getting warm \u2022 95%+ = near limit, risk of temp drops'},
+{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,
+d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behavior). \u2022 Avg under 60% = lots of headroom (good) \u2022 60\u201380% = healthy \u2022 80%+ avg with thermal lag = heater struggling'},
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
 d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
 {l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
