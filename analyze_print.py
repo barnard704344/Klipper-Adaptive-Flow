@@ -125,6 +125,80 @@ def _format_value(value):
     return str(value)
 
 
+# =============================================================================
+# CONFIG CHANGE LOG — track when Apply button is used
+# =============================================================================
+_CONFIG_CHANGE_LOG = os.path.join(LOG_DIR, 'config_changes_log.json')
+
+
+def _log_config_change(variable, old_value, new_value, material=None):
+    """Append a record to the config change log."""
+    entry = {
+        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'variable': variable,
+        'old_value': old_value,
+        'new_value': new_value,
+        'material': (material or '').strip().upper() or None,
+    }
+    entries = _load_config_change_log()
+    entries.append(entry)
+    try:
+        os.makedirs(os.path.dirname(_CONFIG_CHANGE_LOG), exist_ok=True)
+        with open(_CONFIG_CHANGE_LOG, 'w') as f:
+            json.dump(entries, f, indent=2, default=str)
+    except (IOError, OSError) as exc:
+        print(f'Warning: could not write config change log: {exc}')
+
+
+def _load_config_change_log():
+    """Load the config change log. Returns list of dicts."""
+    if not os.path.exists(_CONFIG_CHANGE_LOG):
+        return []
+    try:
+        with open(_CONFIG_CHANGE_LOG) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError, OSError):
+        return []
+
+
+def _last_change_for(variable, material=None):
+    """Find the most recent config change entry for a variable+material.
+
+    Returns ``(timestamp_str, old_value, new_value)`` or ``(None, None, None)``.
+    """
+    mat_upper = (material or '').strip().upper() or None
+    entries = _load_config_change_log()
+    for entry in reversed(entries):
+        if entry.get('variable') == variable:
+            entry_mat = (entry.get('material') or '').strip().upper() or None
+            if mat_upper == entry_mat:
+                return (
+                    entry.get('timestamp'),
+                    entry.get('old_value'),
+                    entry.get('new_value'),
+                )
+    return None, None, None
+
+
+def _count_prints_since(log_dir, material, since_timestamp):
+    """Count prints of *material* started after *since_timestamp*."""
+    if not since_timestamp:
+        return 0
+    count = 0
+    for f in Path(log_dir).glob('*_summary.json'):
+        try:
+            with open(f) as fh:
+                s = json.load(fh)
+            if material and (s.get('material', '').upper() != material.upper()):
+                continue
+            if (s.get('start_time', '') or '') > since_timestamp:
+                count += 1
+        except Exception:
+            continue
+    return count
+
+
 def _apply_config_change(variable, new_value, material=None):
     """Write a single variable change to the appropriate user config file.
 
@@ -188,6 +262,10 @@ def _apply_config_change(variable, new_value, material=None):
             f.writelines(lines)
     except (IOError, OSError) as exc:
         return False, f'Cannot write {os.path.basename(user_file)}: {exc}'
+
+    # ---- Record in change log ------------------------------------------
+    old_val = _get_config_value(variable, material)
+    _log_config_change(variable, old_val, new_value, material)
 
     return True, (
         f'Saved {variable} = {val_str} to {os.path.basename(user_file)}. '
@@ -2106,6 +2184,96 @@ def generate_recommendations(data):
     return recs
 
 
+def annotate_recommendations(recs, log_dir, material=None):
+    """Post-process recommendations to detect already-applied config changes.
+
+    For each config_change in a recommendation, check whether the current
+    config value already matches (or is beyond) the suggested value.
+    If so, mark it as ``applied`` and count how many prints have happened
+    since the change was applied.
+
+    Modifies recs in place and returns them.
+    """
+    for rec in recs:
+        changes = rec.get('config_changes')
+        if not changes:
+            continue
+
+        all_applied = True
+        any_applied = False
+
+        for chg in changes:
+            var = chg.get('variable')
+            mat = chg.get('material') or material or None
+            suggested = chg.get('suggested')
+            current = _get_config_value(var, mat)
+
+            # Check if current config already matches or surpasses the suggestion
+            if current is not None and suggested is not None:
+                # "Matches" means within a small tolerance, or already moved
+                # further in the suggested direction
+                diff = abs(current - suggested)
+                already_applied = diff < 0.0001
+                # Also count if moved even further (e.g. suggested 0.9, user set 0.8)
+                if not already_applied and chg.get('current') is not None:
+                    old = chg['current']
+                    if suggested < old:  # reduce direction
+                        already_applied = current <= suggested
+                    elif suggested > old:  # increase direction
+                        already_applied = current >= suggested
+            else:
+                already_applied = False
+
+            if already_applied:
+                any_applied = True
+                chg['applied'] = True
+                # Look up when it was applied from the change log
+                ts, _old, _new = _last_change_for(var, mat)
+                chg['applied_at'] = ts
+                if ts and log_dir:
+                    prints_since = _count_prints_since(log_dir, mat, ts)
+                    chg['prints_since'] = prints_since
+                else:
+                    chg['prints_since'] = 0
+            else:
+                all_applied = False
+                chg['applied'] = False
+
+        if all_applied and changes:
+            # All changes for this rec already applied — downgrade
+            best_prints_since = max(c.get('prints_since', 0) for c in changes)
+            if best_prints_since >= 5:
+                rec['severity'] = 'good'
+                rec['title'] = '\u2713 ' + rec['title'] + ' (resolved)'
+                rec['detail'] += (
+                    f' \\u2014 Settings applied and {best_prints_since} prints completed since. '
+                    f'Data now reflects the new config.'
+                )
+            elif best_prints_since >= 1:
+                rec['severity'] = 'info'
+                rec['title'] = '\u231b ' + rec['title'] + ' (monitoring)'
+                rec['detail'] += (
+                    f' \\u2014 Settings applied, {best_prints_since} of ~5 prints completed. '
+                    f'Recommendation will update as more data arrives.'
+                )
+            else:
+                rec['severity'] = 'info'
+                rec['title'] = '\u2713 ' + rec['title'] + ' (applied, awaiting prints)'
+                rec['detail'] += (
+                    ' \\u2014 Settings saved but no prints completed yet with the new config. '
+                    'Print with this material to see the effect.'
+                )
+        elif any_applied and changes:
+            # Some changes applied, some not
+            rec['title'] = rec['title'] + ' (partially applied)'
+
+    # Re-sort after severity changes
+    severity_order = {'bad': 0, 'warn': 1, 'info': 2, 'good': 3}
+    recs.sort(key=lambda r: severity_order.get(r['severity'], 9))
+
+    return recs
+
+
 # =========================================================================
 # MATERIAL-AGGREGATED ANALYSIS
 # =========================================================================
@@ -2402,6 +2570,7 @@ def collect_material_overview(log_dir, material):
 
     # Generate recommendations from aggregated data
     data['recommendations'] = generate_recommendations(data)
+    annotate_recommendations(data['recommendations'], log_dir, material)
 
     return data
 
@@ -2544,6 +2713,8 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
 
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
+    mat = (data.get('summary') or {}).get('material') or material
+    annotate_recommendations(data['recommendations'], log_dir, mat)
 
     return data
 
@@ -2629,6 +2800,9 @@ font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:back
 .cfg-btn:hover{background:#2ea043}
 .cfg-btn:disabled{background:#21262d;color:#484f58;cursor:default}
 .cfg-btn.applied{background:#1a7f37}
+.cfg-applied-badge{display:inline-block;background:#1a7f37;color:#3fb950;border-radius:6px;
+padding:4px 12px;font-size:12px;font-weight:600;white-space:nowrap}
+.cfg-monitor{display:inline-block;font-size:11px;color:#8b949e;margin-left:8px;font-style:italic}
 .cfg-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
 background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 20px;
 font-size:13px;color:#c9d1d9;box-shadow:0 4px 24px rgba(0,0,0,.5);z-index:9999;
@@ -3041,10 +3215,16 @@ if(r.config_changes&&r.config_changes.length){
 html+='<div class="cfg-changes"><div class="cfg-hd">Suggested config changes</div>';
 r.config_changes.forEach(function(c,ci){
 var id='cfg_'+ri+'_'+ci;
-html+='<div class="cfg-row">'+
-'<span class="cfg-desc">'+c.description+'</span>'+
-'<button class="cfg-btn" id="'+id+'" onclick="applyChange(\\''+id+'\\',\\''+
-c.variable+'\\','+c.suggested+',\\''+(c.material||'')+'\\')">Apply</button></div>'});
+html+='<div class="cfg-row">';
+html+='<span class="cfg-desc">'+c.description+'</span>';
+if(c.applied){
+html+='<span class="cfg-applied-badge">\\u2713 Applied</span>';
+if(c.prints_since>0){
+html+='<span class="cfg-monitor">'+c.prints_since+' print'+(c.prints_since>1?'s':'')+' since change</span>'}
+else{html+='<span class="cfg-monitor">Awaiting new prints</span>'}}
+else{html+='<button class="cfg-btn" id="'+id+'" onclick="applyChange(\\''+id+'\\',\\''+
+c.variable+'\\','+c.suggested+',\\''+(c.material||'')+'\\')">Apply</button>'}
+html+='</div>'});
 html+='<div style="font-size:11px;color:#484f58;margin-top:6px">' +
 'Saves to your user config. Restart Klipper to activate.</div></div>'}
 html+='</div>';return html}).join('');
