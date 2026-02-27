@@ -344,6 +344,28 @@ python3 analyze_print.py --log-dir /path/to/logs
 - Port 7127 accessible from your browser's network
 - At least one completed print with Adaptive Flow enabled
 
+### Slicer Filename Format
+
+For **completed prints**, the material is read from the summary JSON (populated by the `MATERIAL=` parameter passed to `AT_START`). This always works regardless of filename.
+
+For **live prints** (no summary exists yet), the dashboard extracts the material from the gcode filename. Your slicer's output filename must include the filament type as a separate token. The dashboard recognises: `PLA`, `PETG`, `ABS`, `ASA`, `TPU`, `PA`, `PC`, `NYLON`, `HIPS`, `PVA`, `PP`, `PEI`, `PCTG`, `CPE`.
+
+**OrcaSlicer / PrusaSlicer** — set the filename format in **Print Settings → Output → Output filename format**:
+
+```
+{input_filename_base}_{filament_type[0]}_{print_time}.gcode
+```
+
+This produces filenames like `Voron Design Cube v7_PETG_19m57s.gcode`, from which the dashboard can identify `PETG`.
+
+**Cura** — set **Preferences → Project → Default output filename**:
+
+```
+{file_name}_{material_type}_{print_time}
+```
+
+If your filenames don't include a material token, live prints will show "Unknown" for the material. Completed prints are unaffected since they use the `AT_START MATERIAL=` parameter.
+
 ---
 
 ## Troubleshooting
