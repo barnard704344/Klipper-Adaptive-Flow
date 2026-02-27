@@ -2292,9 +2292,14 @@ opacity:0;transition:opacity .3s}
 <div class="cards" id="cds"></div>
 <div class="tabs" id="tb"></div>
 <div class="area" id="ca"></div>
+<div id="_err" style="display:none;margin:24px;padding:16px;background:#2d1214;border:1px solid #f85149;border-radius:8px;color:#f85149;font-family:monospace;white-space:pre-wrap"></div>
 <div class="foot" id="ft">Adaptive Flow Dashboard</div>
 <script>
-var D=__DASHBOARD_DATA__;
+var D;
+try{D=__DASHBOARD_DATA__}catch(e){
+document.getElementById('_err').style.display='block';
+document.getElementById('_err').textContent='Data parse error: '+e;throw e}
+try{
 var isLive=D.is_live||false;
 var sel=document.getElementById('ss');
 var lvi=document.getElementById('lv');
@@ -2633,14 +2638,33 @@ else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,fa
 .catch(function(e){btn.textContent='Apply';btn.disabled=false;showToast('Request failed: '+e,false)})}
 
 rCh();
+}catch(e){
+document.getElementById('_err').style.display='block';
+document.getElementById('_err').textContent='Dashboard error: '+e+'\n'+(e.stack||'');
+console.error('Dashboard error',e)}
 </script>
 </body>
 </html>"""
 
 
+def _safe_json_for_html(obj):
+    """Serialize *obj* to JSON safe for embedding inside <script>.
+
+    Escapes '</script>' and '<!--' sequences that would break the HTML
+    parser, and replaces NaN/Infinity with null.
+    """
+    raw = json.dumps(obj, default=str)
+    # Replace tokens that json.dumps emits for non-finite floats
+    raw = raw.replace('NaN', 'null').replace('Infinity', 'null')
+    # Prevent premature </script> or HTML comment injection
+    raw = raw.replace('</', '<\\/')
+    raw = raw.replace('<!--', '<\\!--')
+    return raw
+
+
 def generate_dashboard_html(data):
     """Generate a self-contained HTML dashboard with embedded Chart.js."""
-    data_json = json.dumps(data, default=str)
+    data_json = _safe_json_for_html(data)
     return DASHBOARD_TEMPLATE.replace('__DASHBOARD_DATA__', data_json)
 
 
@@ -2694,7 +2718,11 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 import traceback
                 traceback.print_exc()
                 data = {'error': str(exc), 'summary': None, 'recommendations': [],
-                        'timeline': [], 'trends': [], 'sessions': []}
+                        'timeline': [], 'trends': [], 'sessions': [],
+                        'is_live': False, 'selected_file': '',
+                        'z_banding': {}, 'thermal_lag': None,
+                        'headroom': None, 'pa_stability': None,
+                        'dynz_zones': {}, 'speed_flow': None}
             html = generate_dashboard_html(data)
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
