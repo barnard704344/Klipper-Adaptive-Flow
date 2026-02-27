@@ -2194,7 +2194,7 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Adaptive Flow Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4" onerror="document.title='Chart.js FAILED to load'"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -2289,9 +2289,10 @@ opacity:0;transition:opacity .3s}
 <label><input type="checkbox" id="ar"> Auto-refresh</label>
 <select id="ss" onchange="go(this.value)"></select>
 </div></div>
-<div class="cards" id="cds"></div>
+<div class="cards" id="cds"><div class="cd"><div class="vl" style="color:#8b949e">Loading\u2026</div></div></div>
 <div class="tabs" id="tb"></div>
 <div class="area" id="ca"></div>
+<noscript><div style="margin:24px;padding:16px;background:#2d1214;border:1px solid #f85149;border-radius:8px;color:#f85149">JavaScript is disabled or failed to load. The dashboard requires JavaScript.</div></noscript>
 <div id="_err" style="display:none;margin:24px;padding:16px;background:#2d1214;border:1px solid #f85149;border-radius:8px;color:#f85149;font-family:monospace;white-space:pre-wrap"></div>
 <div class="foot" id="ft">Adaptive Flow Dashboard</div>
 <script>
@@ -2382,9 +2383,10 @@ return '<div class="tab'+(t.id===at?' active':'')+
 function sTab(id){at=id;rTabs();rCh()}
 rTabs();
 
+if(typeof Chart!=='undefined'){
 Chart.defaults.color='#8b949e';
 Chart.defaults.borderColor='#30363d';
-Chart.defaults.font.size=12;
+Chart.defaults.font.size=12;}
 var CH={};
 function dCh(){for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
 function mc(id){return '<canvas id="'+id+'"></canvas>'}
@@ -2739,7 +2741,9 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             html = generate_dashboard_html(data)
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
             self.end_headers()
             self.wfile.write(html.encode('utf-8'))
         else:
