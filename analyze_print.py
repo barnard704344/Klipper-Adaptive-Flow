@@ -214,6 +214,9 @@ def _apply_config_change(variable, new_value, material=None):
     new_line = f'{var_key}: {val_str}'
     section_header = f'[{section}]'
 
+    # ---- Save old value BEFORE writing ------------------------------------
+    old_val = _get_config_value(variable, material)
+
     # ---- Read existing file ------------------------------------------------
     lines = []
     if os.path.exists(user_file):
@@ -264,7 +267,6 @@ def _apply_config_change(variable, new_value, material=None):
         return False, f'Cannot write {os.path.basename(user_file)}: {exc}'
 
     # ---- Record in change log ------------------------------------------
-    old_val = _get_config_value(variable, material)
     _log_config_change(variable, old_val, new_value, material)
 
     return True, (
@@ -2185,15 +2187,24 @@ def generate_recommendations(data):
 
 
 def annotate_recommendations(recs, log_dir, material=None):
-    """Post-process recommendations to detect already-applied config changes.
+    """Post-process recommendations to detect recently-applied config changes.
 
-    For each config_change in a recommendation, check whether the current
-    config value already matches (or is beyond) the suggested value.
-    If so, mark it as ``applied`` and count how many prints have happened
-    since the change was applied.
+    Uses the config change log to determine whether the user has already
+    acted on a variable.  If a change was logged for the same variable +
+    material and fewer than 5 prints have completed since, the
+    recommendation is downgraded to 'info' (monitoring) or 'good'
+    (resolved) and the Apply button is replaced with a status badge.
 
-    Modifies recs in place and returns them.
+    After 5+ prints the old data has fully cycled out; if the
+    recommendation still fires at *bad/warn* it means the change wasn't
+    enough and a fresh Apply button is shown.
+
+    Modifies *recs* in place and returns them.
     """
+    change_log = _load_config_change_log()
+    if not change_log:
+        return recs  # nothing ever applied — skip annotation
+
     for rec in recs:
         changes = rec.get('config_changes')
         if not changes:
@@ -2204,56 +2215,49 @@ def annotate_recommendations(recs, log_dir, material=None):
 
         for chg in changes:
             var = chg.get('variable')
-            mat = chg.get('material') or material or None
-            suggested = chg.get('suggested')
-            current = _get_config_value(var, mat)
-
-            # Check if current config already matches or surpasses the suggestion
-            if current is not None and suggested is not None:
-                # "Matches" means within a small tolerance, or already moved
-                # further in the suggested direction
-                diff = abs(current - suggested)
-                already_applied = diff < 0.0001
-                # Also count if moved even further (e.g. suggested 0.9, user set 0.8)
-                if not already_applied and chg.get('current') is not None:
-                    old = chg['current']
-                    if suggested < old:  # reduce direction
-                        already_applied = current <= suggested
-                    elif suggested > old:  # increase direction
-                        already_applied = current >= suggested
+            # Use the material from the config_change itself ('' means
+            # global/non-material-specific).  Only fall back to the
+            # function-level material when the key is completely absent.
+            chg_mat = chg.get('material')
+            if chg_mat is None:
+                mat = material  # key absent — fall back
+            elif chg_mat == '':
+                mat = None       # explicitly global variable
             else:
-                already_applied = False
+                mat = chg_mat    # material-specific variable
 
-            if already_applied:
-                any_applied = True
-                chg['applied'] = True
-                # Look up when it was applied from the change log
-                ts, _old, _new = _last_change_for(var, mat)
-                chg['applied_at'] = ts
-                if ts and log_dir:
-                    prints_since = _count_prints_since(log_dir, mat, ts)
-                    chg['prints_since'] = prints_since
-                else:
-                    chg['prints_since'] = 0
-            else:
-                all_applied = False
+            # Look up the most recent dashboard-applied change for this var
+            ts, old_val, new_val = _last_change_for(var, mat)
+
+            if ts is None:
+                # Never applied through the dashboard
                 chg['applied'] = False
+                all_applied = False
+                continue
+
+            # Count prints of this material since the change
+            prints_since = _count_prints_since(log_dir, mat, ts) if log_dir else 0
+
+            if prints_since >= 5:
+                # Enough new data — if the rec still fires, the old change
+                # was insufficient.  Show a fresh Apply button.
+                chg['applied'] = False
+                all_applied = False
+            else:
+                chg['applied'] = True
+                chg['applied_at'] = ts
+                chg['prints_since'] = prints_since
+                chg['applied_old'] = old_val
+                chg['applied_new'] = new_val
+                any_applied = True
 
         if all_applied and changes:
-            # All changes for this rec already applied — downgrade
-            best_prints_since = max(c.get('prints_since', 0) for c in changes)
-            if best_prints_since >= 5:
-                rec['severity'] = 'good'
-                rec['title'] = '\u2713 ' + rec['title'] + ' (resolved)'
-                rec['detail'] += (
-                    f' \\u2014 Settings applied and {best_prints_since} prints completed since. '
-                    f'Data now reflects the new config.'
-                )
-            elif best_prints_since >= 1:
+            best_prints = max(c.get('prints_since', 0) for c in changes)
+            if best_prints >= 1:
                 rec['severity'] = 'info'
                 rec['title'] = '\u231b ' + rec['title'] + ' (monitoring)'
                 rec['detail'] += (
-                    f' \\u2014 Settings applied, {best_prints_since} of ~5 prints completed. '
+                    f' \\u2014 Settings applied, {best_prints} of ~5 prints completed. '
                     f'Recommendation will update as more data arrives.'
                 )
             else:
@@ -2264,7 +2268,6 @@ def annotate_recommendations(recs, log_dir, material=None):
                     'Print with this material to see the effect.'
                 )
         elif any_applied and changes:
-            # Some changes applied, some not
             rec['title'] = rec['title'] + ' (partially applied)'
 
     # Re-sort after severity changes
