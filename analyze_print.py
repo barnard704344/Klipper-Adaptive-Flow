@@ -308,6 +308,62 @@ def _suggest_change(variable, direction, amount, material=None,
 # SINGLE-PRINT STATS
 # =============================================================================
 
+# =============================================================================
+# SHARED CSV LOADER — read once, feed all analyzers
+# =============================================================================
+
+def load_csv_rows(csv_file):
+    """Read a CSV file once into a list of row dicts.
+
+    Returns an empty list on any I/O or parse error.  The result
+    should be passed to all ``analyze_*`` functions via the ``rows``
+    parameter so they don't each re-open the same file.
+    """
+    try:
+        with open(csv_file, 'r') as f:
+            return list(csv.DictReader(f))
+    except Exception as exc:
+        print(f"Warning: Could not read {csv_file}: {exc}")
+        return []
+
+
+# =============================================================================
+# TTL RESULT CACHE — avoid re-analyzing on rapid refreshes
+# =============================================================================
+
+import threading as _threading
+
+_cache_lock = _threading.Lock()
+_cache_store = {}  # key → (timestamp, value)
+_CACHE_TTL = 15    # seconds — stale after this
+
+
+def _cache_get(key):
+    """Return cached value if still fresh, else None."""
+    with _cache_lock:
+        entry = _cache_store.get(key)
+        if entry and (time.time() - entry[0]) < _CACHE_TTL:
+            return entry[1]
+    return None
+
+
+def _cache_set(key, value):
+    """Store *value* in the cache under *key* with current timestamp."""
+    with _cache_lock:
+        _cache_store[key] = (time.time(), value)
+
+
+def _cache_invalidate(prefix=None):
+    """Drop all cache entries, or only those whose key starts with *prefix*."""
+    with _cache_lock:
+        if prefix is None:
+            _cache_store.clear()
+        else:
+            for k in list(_cache_store):
+                if k.startswith(prefix):
+                    del _cache_store[k]
+
+
 def find_latest_summary(log_dir):
     """Find the most recent *_summary.json file."""
     summaries = sorted(
@@ -658,7 +714,7 @@ def print_banding_report(agg):
 # Z-HEIGHT BANDING HEATMAP
 # =============================================================================
 
-def analyze_z_banding(csv_file, bin_size=0.5):
+def analyze_z_banding(csv_file, bin_size=0.5, rows=None):
     """Analyze banding risk by Z-height bins from a single CSV log."""
     bins = defaultdict(lambda: {
         'samples': 0,
@@ -671,9 +727,8 @@ def analyze_z_banding(csv_file, bin_size=0.5):
     })
 
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     z = float(row.get('z_height', 0))
                     risk = int(row.get('banding_risk', 0))
@@ -870,7 +925,7 @@ def print_trends(sessions):
 # THERMAL LAG REPORT
 # =============================================================================
 
-def analyze_thermal_lag(csv_file, lag_threshold=3.0):
+def analyze_thermal_lag(csv_file, lag_threshold=3.0, rows=None):
     """Identify moments where temp_actual falls behind temp_target.
 
     Returns a list of lag episodes and overall statistics.
@@ -881,9 +936,8 @@ def analyze_thermal_lag(csv_file, lag_threshold=3.0):
     flow_at_lag = []
 
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     elapsed = float(row['elapsed_s'])
                     t_actual = float(row['temp_actual'])
@@ -1011,7 +1065,7 @@ def print_thermal_lag_report(lag_data, threshold=3.0):
 # HEATER HEADROOM ANALYSIS
 # =============================================================================
 
-def analyze_heater_headroom(csv_file, flow_bins=None):
+def analyze_heater_headroom(csv_file, flow_bins=None, rows=None):
     """Analyze flow rate vs PWM to determine heater capacity.
 
     Groups samples by flow-rate brackets and computes avg/max PWM for each.
@@ -1022,9 +1076,8 @@ def analyze_heater_headroom(csv_file, flow_bins=None):
     brackets = defaultdict(lambda: {'pwm_values': [], 'count': 0})
 
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     flow = float(row['flow'])
                     pwm = float(row['pwm'])
@@ -1133,16 +1186,15 @@ def print_headroom_report(headroom):
 # PA STABILITY ANALYSIS
 # =============================================================================
 
-def analyze_pa_stability(csv_file, window_s=10.0):
+def analyze_pa_stability(csv_file, window_s=10.0, rows=None):
     """Analyze PA value stability over time.
 
     Detects oscillation zones where PA changes frequently within a time window.
     """
     samples = []
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     elapsed = float(row['elapsed_s'])
                     pa = float(row.get('pa', 0))
@@ -1321,16 +1373,15 @@ def print_pa_stability_report(pa_data):
 # DYNZ ZONE MAP
 # =============================================================================
 
-def analyze_dynz_zones(csv_file, bin_size=0.5):
+def analyze_dynz_zones(csv_file, bin_size=0.5, rows=None):
     """Analyze DynZ activation patterns by Z-height."""
     bins = defaultdict(lambda: {
         'samples': 0, 'dynz_active': 0, 'transitions': 0,
         'accel_sum': 0, 'stress_sum': 0,
     })
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     z = float(row.get('z_height', 0))
                     dynz = int(row.get('dynz_active', 0))
@@ -1426,7 +1477,7 @@ def print_dynz_map(zones, bin_size=0.5):
 # SPEED / FLOW DISTRIBUTION
 # =============================================================================
 
-def analyze_speed_flow_distribution(csv_file):
+def analyze_speed_flow_distribution(csv_file, rows=None):
     """Analyze time spent in speed and flow rate brackets."""
     speed_edges = [0, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400]
     flow_edges = [0, 2, 4, 6, 8, 10, 12, 15, 20, 25, 30, 40]
@@ -1438,9 +1489,8 @@ def analyze_speed_flow_distribution(csv_file):
     })
 
     try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_file)
+        for row in _rows:
                 try:
                     speed = float(row['speed'])
                     flow = float(row['flow'])
@@ -1580,21 +1630,18 @@ def print_distribution(dist):
 # WEB DASHBOARD
 # =============================================================================
 
-def read_csv_timeline(csv_file, max_points=800):
+def read_csv_timeline(csv_file, max_points=800, rows=None):
     """Read CSV and downsample for timeline charts."""
-    rows = []
-    try:
-        with open(csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            all_rows = list(reader)
-    except Exception:
+    out = []
+    all_rows = rows if rows is not None else load_csv_rows(csv_file)
+    if not all_rows:
         return []
 
     step = max(1, len(all_rows) // max_points)
     for i in range(0, len(all_rows), step):
         row = all_rows[i]
         try:
-            rows.append({
+            out.append({
                 't': round(float(row['elapsed_s']), 1),
                 'ta': round(float(row['temp_actual']), 1),
                 'tt': round(float(row['temp_target']), 1),
@@ -1610,7 +1657,7 @@ def read_csv_timeline(csv_file, max_points=800):
             })
         except (KeyError, ValueError):
             continue
-    return rows
+    return out
 
 
 def find_active_print_csv(log_dir):
@@ -1636,7 +1683,7 @@ def find_active_print_csv(log_dir):
     return None
 
 
-def synthesize_live_summary(csv_path):
+def synthesize_live_summary(csv_path, rows=None):
     """Build a summary dict from a live CSV (no summary JSON exists yet)."""
     filename = os.path.basename(csv_path)
     # Extract material from filename pattern: YYYYMMDD_HHMMSS_MATERIAL_name.csv
@@ -1659,9 +1706,8 @@ def synthesize_live_summary(csv_path):
     duration_s = 0
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        _rows = rows if rows is not None else load_csv_rows(csv_path)
+        for row in _rows:
                 try:
                     total += 1
                     boosts.append(float(row.get('boost', 0)))
@@ -2425,8 +2471,11 @@ def collect_material_overview(log_dir, material):
     MAX_CSVS = 5  # cap to avoid very slow aggregation on low-power hardware
     recent_csvs = csv_files[:MAX_CSVS]
 
+    # Pre-load each CSV once (single I/O per file)
+    csv_row_cache = {c: load_csv_rows(c) for c in recent_csvs}
+
     # Thermal lag
-    all_lag = [analyze_thermal_lag(c) for c in recent_csvs]
+    all_lag = [analyze_thermal_lag(c, rows=csv_row_cache[c]) for c in recent_csvs]
     all_lag = [l for l in all_lag if l]
     if all_lag:
         lag_samples = [l.get('total_samples', 1) for l in all_lag]
@@ -2448,7 +2497,7 @@ def collect_material_overview(log_dir, material):
         agg_lag = None
 
     # Heater headroom
-    all_hr = [analyze_heater_headroom(c) for c in recent_csvs]
+    all_hr = [analyze_heater_headroom(c, rows=csv_row_cache[c]) for c in recent_csvs]
     all_hr_fmt = []
     for hr in all_hr:
         if hr:
@@ -2456,7 +2505,7 @@ def collect_material_overview(log_dir, material):
     agg_headroom = _merge_headroom(all_hr_fmt) if all_hr_fmt else None
 
     # PA stability
-    all_pa = [analyze_pa_stability(c) for c in recent_csvs]
+    all_pa = [analyze_pa_stability(c, rows=csv_row_cache[c]) for c in recent_csvs]
     all_pa = [p for p in all_pa if p and 'pa_min' in p]
     if all_pa:
         pa_samples = [p.get('samples', 1) for p in all_pa]
@@ -2482,14 +2531,14 @@ def collect_material_overview(log_dir, material):
     # Z-banding
     all_zb = []
     for c in recent_csvs:
-        raw = analyze_z_banding(c, bin_size=0.5)
+        raw = analyze_z_banding(c, bin_size=0.5, rows=csv_row_cache[c])
         all_zb.append({str(k): v for k, v in raw.items()})
     agg_zb = _merge_z_banding(all_zb) if all_zb else {}
 
     # DynZ zones
     all_dz = []
     for c in recent_csvs:
-        raw = analyze_dynz_zones(c, bin_size=0.5)
+        raw = analyze_dynz_zones(c, bin_size=0.5, rows=csv_row_cache[c])
         all_dz.append({str(k): v for k, v in raw.items()})
     agg_dynz = {}
     for dz in all_dz:
@@ -2517,7 +2566,7 @@ def collect_material_overview(log_dir, material):
     # Speed/flow distribution
     all_sf = []
     for c in recent_csvs:
-        raw = analyze_speed_flow_distribution(c)
+        raw = analyze_speed_flow_distribution(c, rows=csv_row_cache[c])
         if raw:
             all_sf.append({
                 'speed': {f"{k[0]}-{k[1]}": v for k, v in raw['speed'].items()},
@@ -2623,11 +2672,13 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
 
     # Check for an active (live) print first — a CSV with no summary JSON
     csv_path = None
+    csv_rows = None   # will be loaded once when csv_path is known
     if summary_path is None:
         live_csv = find_active_print_csv(log_dir)
         if live_csv:
             csv_path = live_csv
-            live_summary = synthesize_live_summary(live_csv)
+            csv_rows = load_csv_rows(live_csv)
+            live_summary = synthesize_live_summary(live_csv, rows=csv_rows)
             if live_summary:
                 data['summary'] = live_summary
                 data['selected_file'] = os.path.basename(live_csv)
@@ -2651,13 +2702,17 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     if csv_path is None or not os.path.exists(csv_path):
         return data
 
-    data['timeline'] = read_csv_timeline(csv_path)
+    # === Load CSV once and pass to all analyzers ===
+    if csv_rows is None:
+        csv_rows = load_csv_rows(csv_path)
+
+    data['timeline'] = read_csv_timeline(csv_path, rows=csv_rows)
 
     data['z_banding'] = {
-        str(k): v for k, v in analyze_z_banding(csv_path, bin_size=0.5).items()
+        str(k): v for k, v in analyze_z_banding(csv_path, bin_size=0.5, rows=csv_rows).items()
     }
 
-    lag = analyze_thermal_lag(csv_path)
+    lag = analyze_thermal_lag(csv_path, rows=csv_rows)
     if lag:
         lag['episodes'] = [
             {'start_s': ep['start_s'],
@@ -2668,13 +2723,13 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         ]
     data['thermal_lag'] = lag
 
-    headroom_raw = analyze_heater_headroom(csv_path)
+    headroom_raw = analyze_heater_headroom(csv_path, rows=csv_rows)
     if headroom_raw:
         data['headroom'] = {
             f"{k[0]}-{k[1]}": v for k, v in headroom_raw.items()
         }
 
-    pa = analyze_pa_stability(csv_path)
+    pa = analyze_pa_stability(csv_path, rows=csv_rows)
     if pa:
         pa['oscillation_zones'] = [
             {'start_s': z['start_s'],
@@ -2686,10 +2741,10 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     data['pa_stability'] = pa
 
     data['dynz_zones'] = {
-        str(k): v for k, v in analyze_dynz_zones(csv_path).items()
+        str(k): v for k, v in analyze_dynz_zones(csv_path, rows=csv_rows).items()
     }
 
-    sfd = analyze_speed_flow_distribution(csv_path)
+    sfd = analyze_speed_flow_distribution(csv_path, rows=csv_rows)
     if sfd:
         data['speed_flow'] = {
             'speed': {f"{k[0]}-{k[1]}": v for k, v in sfd['speed'].items()},
@@ -3316,16 +3371,22 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == '/api/data':
             # JSON API for live polling — returns fresh analysis data
             summary_path = self._resolve_session(params)
-            try:
-                data = collect_dashboard_data(
-                    self.log_dir,
-                    summary_path=summary_path,
-                    material=self.material,
-                )
-            except Exception as exc:
-                import traceback
-                traceback.print_exc()
-                data = {'error': str(exc)}
+            cache_key = f"api_data:{summary_path}:{self.material}"
+            data = _cache_get(cache_key)
+            if data is None:
+                try:
+                    data = collect_dashboard_data(
+                        self.log_dir,
+                        summary_path=summary_path,
+                        material=self.material,
+                    )
+                except Exception as exc:
+                    import traceback
+                    traceback.print_exc()
+                    data = {'error': str(exc)}
+                # Don't cache live prints (data changes every second)
+                if not data.get('is_live'):
+                    _cache_set(cache_key, data)
             payload = json.dumps(data, default=str).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -3340,12 +3401,17 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             if not mat:
                 data = {'error': 'material parameter required'}
             else:
-                try:
-                    data = collect_material_overview(self.log_dir, mat.strip().upper())
-                except Exception as exc:
-                    import traceback
-                    traceback.print_exc()
-                    data = {'error': str(exc)}
+                mat_upper = mat.strip().upper()
+                cache_key = f"mat_data:{mat_upper}"
+                data = _cache_get(cache_key)
+                if data is None:
+                    try:
+                        data = collect_material_overview(self.log_dir, mat_upper)
+                    except Exception as exc:
+                        import traceback
+                        traceback.print_exc()
+                        data = {'error': str(exc)}
+                    _cache_set(cache_key, data)
             payload = json.dumps(data, default=str).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -3402,6 +3468,8 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 resp = {'success': False, 'message': 'Missing variable or value.'}
             else:
                 ok, msg = _apply_config_change(variable, value, material=mat)
+                if ok:
+                    _cache_invalidate()  # config changed — stale analysis
                 resp = {'success': ok, 'message': msg}
 
             payload = json.dumps(resp).encode('utf-8')
