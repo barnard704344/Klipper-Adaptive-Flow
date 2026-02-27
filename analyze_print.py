@@ -38,6 +38,190 @@ from collections import defaultdict
 # CONFIGURATION
 # =============================================================================
 LOG_DIR = os.path.expanduser('~/printer_data/logs/adaptive_flow')
+CONFIG_DIR = os.path.expanduser('~/printer_data/config')
+
+
+# =============================================================================
+# CONFIG FILE HELPERS  (read / write user config for Apply button)
+# =============================================================================
+
+# Material-specific variables live in material_profiles_user.cfg;
+# everything else lives in auto_flow_user.cfg.
+_MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k', 'sc_flow_k'])
+
+
+def _parse_config_variables(filepath):
+    """Parse a Klipper config file into {section: {variable: value_str}}.
+
+    Only reads ``variable_*`` lines (not commented-out ones).
+    """
+    result = {}
+    current_section = None
+    if not os.path.exists(filepath):
+        return result
+    try:
+        with open(filepath) as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith('[') and ']' in stripped:
+                    current_section = stripped[1:stripped.index(']')]
+                    result.setdefault(current_section, {})
+                elif current_section and stripped.startswith('variable_'):
+                    parts = stripped.split(':', 1)
+                    if len(parts) == 2:
+                        result[current_section][parts[0].strip()] = parts[1].strip()
+    except (IOError, OSError):
+        pass
+    return result
+
+
+def _config_paths_for(variable, material=None):
+    """Return (user_file, defaults_file, section) for a variable."""
+    if variable in _MATERIAL_VARS:
+        mat = (material or '').strip().upper()
+        section = f'gcode_macro _AF_PROFILE_{mat}' if mat else None
+        return (
+            os.path.join(CONFIG_DIR, 'material_profiles_user.cfg'),
+            os.path.join(CONFIG_DIR, 'material_profiles_defaults.cfg'),
+            section,
+        )
+    return (
+        os.path.join(CONFIG_DIR, 'auto_flow_user.cfg'),
+        os.path.join(CONFIG_DIR, 'auto_flow_defaults.cfg'),
+        'gcode_macro _AUTO_TEMP_CORE',
+    )
+
+
+def _get_config_value(variable, material=None):
+    """Get the current value of a config variable (user override → default).
+
+    Returns a float, or *None* if the variable was not found.
+    """
+    user_file, defaults_file, section = _config_paths_for(variable, material)
+    if section is None:
+        return None
+    var_key = f'variable_{variable}'
+    for filepath in (user_file, defaults_file):
+        cfg = _parse_config_variables(filepath)
+        val_str = cfg.get(section, {}).get(var_key)
+        if val_str is not None:
+            try:
+                return float(val_str)
+            except ValueError:
+                return None
+    return None
+
+
+def _format_value(value):
+    """Format a numeric value for config file output."""
+    if isinstance(value, float):
+        if value == int(value) and abs(value) >= 10:
+            return str(int(value))
+        if abs(value) < 0.01:
+            return f'{value:.4f}'
+        if abs(value) < 1:
+            return f'{value:.3f}'
+        return f'{value:.2f}'
+    return str(value)
+
+
+def _apply_config_change(variable, new_value, material=None):
+    """Write a single variable change to the appropriate user config file.
+
+    Creates the file / section if they don't exist.
+    Returns ``(success, message)``.
+    """
+    user_file, _defaults, section = _config_paths_for(variable, material)
+    if section is None:
+        return False, 'Material name is required for this parameter.'
+
+    var_key = f'variable_{variable}'
+    val_str = _format_value(new_value)
+    new_line = f'{var_key}: {val_str}'
+    section_header = f'[{section}]'
+
+    # ---- Read existing file ------------------------------------------------
+    lines = []
+    if os.path.exists(user_file):
+        try:
+            with open(user_file) as f:
+                lines = f.readlines()
+        except (IOError, OSError) as exc:
+            return False, f'Cannot read {os.path.basename(user_file)}: {exc}'
+
+    # ---- Locate section & variable ----------------------------------------
+    section_idx = None
+    var_idx = None
+    commented_var_idx = None
+    next_section_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            section_idx = i
+        elif section_idx is not None and next_section_idx is None:
+            if stripped.startswith('[') and ']' in stripped:
+                next_section_idx = i
+            elif stripped == f'{var_key}:' or stripped.startswith(f'{var_key}:'):
+                var_idx = i
+            elif stripped.startswith(f'# {var_key}:'):
+                commented_var_idx = i
+
+    # ---- Apply edit -------------------------------------------------------
+    if var_idx is not None:
+        lines[var_idx] = new_line + '\n'
+    elif commented_var_idx is not None:
+        lines[commented_var_idx] = new_line + '\n'
+    elif section_idx is not None:
+        insert_at = section_idx + 1
+        lines.insert(insert_at, new_line + '\n')
+    else:
+        if lines and not lines[-1].endswith('\n'):
+            lines.append('\n')
+        lines.append(f'\n{section_header}\n')
+        lines.append(new_line + '\n')
+
+    # ---- Write back -------------------------------------------------------
+    try:
+        os.makedirs(os.path.dirname(user_file), exist_ok=True)
+        with open(user_file, 'w') as f:
+            f.writelines(lines)
+    except (IOError, OSError) as exc:
+        return False, f'Cannot write {os.path.basename(user_file)}: {exc}'
+
+    return True, (
+        f'Saved {variable} = {val_str} to {os.path.basename(user_file)}. '
+        f'Restart Klipper to activate.'
+    )
+
+
+def _suggest_change(variable, direction, amount, material=None,
+                    minimum=None, maximum=None):
+    """Build a config_change dict for a recommendation.
+
+    *direction* is ``'reduce'`` or ``'increase'``.
+    Returns ``None`` if the current value can't be read.
+    """
+    current = _get_config_value(variable, material)
+    if current is None:
+        return None
+    if direction == 'reduce':
+        suggested = round(current - amount, 4)
+    else:
+        suggested = round(current + amount, 4)
+    if minimum is not None and suggested < minimum:
+        suggested = minimum
+    if maximum is not None and suggested > maximum:
+        suggested = maximum
+    if suggested == current:
+        return None
+    return {
+        'variable': variable,
+        'current': current,
+        'suggested': suggested,
+        'material': material or '',
+        'description': f'{variable}: {_format_value(current)} \u2192 {_format_value(suggested)}',
+    }
 
 
 # =============================================================================
@@ -1488,6 +1672,7 @@ def generate_recommendations(data):
 
     Returns a list of dicts: {severity, category, title, detail, action}
     severity: 'good', 'info', 'warn', 'bad'
+    Optional key ``config_changes`` is a list of param dicts the UI can apply.
     """
     recs = []
     s = data.get('summary') or {}
@@ -1496,6 +1681,7 @@ def generate_recommendations(data):
     pa = data.get('pa_stability') or {}
     ba = s.get('banding_analysis') or {}
     dynz_pct = s.get('dynz_active_pct', 0)
+    material = (s.get('material') or '').strip().upper() or None
 
     # --- Heater saturation ---
     # IMPORTANT: max_pwm hitting 100% is NORMAL during PID ramp-up when the
@@ -1513,20 +1699,28 @@ def generate_recommendations(data):
 
     if avg_pwm >= 0.85 and lag_pct > 10:
         # High average duty AND significant time behind target = real saturation
-        recs.append({
+        rec = {
             'severity': 'bad', 'category': 'Heater',
             'title': f'Heater can\u2019t keep up (avg {avg_pwm*100:.0f}% PWM, {lag_pct:.0f}% lag)',
             'detail': f'The heater averaged {avg_pwm*100:.0f}% duty and fell behind target for {lag_pct:.0f}% of the print (max lag: {max_lag_val:.1f}\u00b0C). This is genuine heater saturation, not just PID ramp-up.',
-            'action': 'Reduce flow_k by 0.2\u20130.5 to lower temperature demand. If boost is already moderate, the heater may be undersized for this speed/flow combo \u2014 consider a 60W heater cartridge.',
-        })
+            'action': 'Reduce flow_k to lower temperature demand. If boost is already moderate, the heater may be undersized \u2014 consider a 60W heater cartridge.',
+        }
+        chg = _suggest_change('flow_k', 'reduce', 0.3, material=material, minimum=0.1)
+        if chg:
+            rec['config_changes'] = [chg]
+        recs.append(rec)
     elif avg_pwm >= 0.80 and lag_pct > 5:
         # Moderate concern
-        recs.append({
+        rec = {
             'severity': 'warn', 'category': 'Heater',
             'title': f'Heater working hard (avg {avg_pwm*100:.0f}% PWM)',
             'detail': f'Avg heater duty is {avg_pwm*100:.0f}% with {lag_pct:.0f}% lag time. The heater is coping but has little margin.',
-            'action': 'Consider reducing flow_k by 0.1\u20130.2 for more headroom, especially if pushing higher speeds.',
-        })
+            'action': 'Consider reducing flow_k for more headroom, especially if pushing higher speeds.',
+        }
+        chg = _suggest_change('flow_k', 'reduce', 0.15, material=material, minimum=0.1)
+        if chg:
+            rec['config_changes'] = [chg]
+        recs.append(rec)
     elif max_pwm >= 0.98 and lag_pct <= 2:
         # Hits 100% briefly but keeps up — this is normal PID ramp-up
         recs.append({
@@ -1562,31 +1756,49 @@ def generate_recommendations(data):
                     saturated_brackets.append(bracket_key)
         if saturated_brackets:
             first = saturated_brackets[0]
-            recs.append({
+            rec = {
                 'severity': 'warn', 'category': 'Heater',
                 'title': f'Heater saturates above {first} mm\u00b3/s',
                 'detail': f'P95 PWM exceeds 95% in flow brackets: {", ".join(saturated_brackets)}.',
-                'action': f'You\u2019re hitting heater limits at {first}+ mm\u00b3/s. Reduce flow_k by 0.1\u20130.3 to lower temperature demand, or cap speeds in your slicer to stay under this flow rate.',
-            })
+                'action': f'You\u2019re hitting heater limits at {first}+ mm\u00b3/s. Reduce flow_k to lower temperature demand, or cap speeds in your slicer to stay under this flow rate.',
+            }
+            chg = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
+            if chg:
+                rec['config_changes'] = [chg]
+            recs.append(rec)
 
     # --- Thermal lag ---
     lag_pct = lag.get('lag_pct', 0)
     max_lag_val = lag.get('max_lag', 0)
     episodes = lag.get('episodes', [])
     if lag_pct > 15:
-        recs.append({
+        rec = {
             'severity': 'bad', 'category': 'Thermal',
             'title': f'Significant thermal lag ({lag_pct:.0f}% of print)',
             'detail': f'The heater fell behind target temperature for {lag_pct:.0f}% of the print (max lag: {max_lag_val:.1f}\u00b0C).',
-            'action': 'Increase ramp_up_rate to pre-heat faster, or reduce flow_k so less temperature is demanded. Check heater wiring for loose connections.',
-        })
+            'action': 'Increase ramp rate to pre-heat faster, or reduce flow_k so less temperature is demanded.',
+        }
+        changes = []
+        c = _suggest_change('ramp_rate_rise', 'increase', 1.0, minimum=2.0, maximum=8.0)
+        if c:
+            changes.append(c)
+        c = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
+        if c:
+            changes.append(c)
+        if changes:
+            rec['config_changes'] = changes
+        recs.append(rec)
     elif lag_pct > 5:
-        recs.append({
+        rec = {
             'severity': 'warn', 'category': 'Thermal',
             'title': f'Moderate thermal lag ({lag_pct:.0f}% of print)',
             'detail': f'The heater occasionally fell behind target ({len(episodes)} lag episodes, max {max_lag_val:.1f}\u00b0C).',
-            'action': 'Try increasing ramp_up_rate by 1\u20132 \u00b0C/s, or add a small lookahead_boost_pct to pre-heat earlier.',
-        })
+            'action': 'Try increasing ramp rate to pre-heat faster.',
+        }
+        c = _suggest_change('ramp_rate_rise', 'increase', 1.0, minimum=2.0, maximum=8.0)
+        if c:
+            rec['config_changes'] = [c]
+        recs.append(rec)
     elif lag.get('total_samples', 0) > 50 and lag_pct < 1:
         recs.append({
             'severity': 'good', 'category': 'Thermal',
@@ -1600,19 +1812,33 @@ def generate_recommendations(data):
     pa_range = pa.get('pa_range', 0)
     pa_changes = pa.get('change_count', 0)
     if len(pa_zones) > 5:
-        recs.append({
+        rec = {
             'severity': 'bad', 'category': 'Pressure Advance',
             'title': f'PA oscillating ({len(pa_zones)} unstable zones)',
             'detail': f'PA changed significantly {pa_changes} times with {len(pa_zones)} oscillation zones. This causes fine ribbing/banding on walls.',
-            'action': 'Increase pa_deadband to 0.005\u20130.008 to filter small PA changes. If still oscillating, reduce pa_boost_k by 20\u201330%.',
-        })
+            'action': 'Increase pa_deadband to filter small PA changes. If still oscillating, reduce pa_boost_k.',
+        }
+        changes = []
+        c = _suggest_change('pa_deadband', 'increase', 0.003, minimum=0.004, maximum=0.012)
+        if c:
+            changes.append(c)
+        c = _suggest_change('pa_boost_k', 'reduce', 0.0002, material=material, minimum=0.0002)
+        if c:
+            changes.append(c)
+        if changes:
+            rec['config_changes'] = changes
+        recs.append(rec)
     elif len(pa_zones) > 0:
-        recs.append({
+        rec = {
             'severity': 'info', 'category': 'Pressure Advance',
             'title': f'{len(pa_zones)} PA oscillation zone(s)',
             'detail': f'Minor PA instability detected. PA range: {pa_range:.4f}, changes: {pa_changes}.',
-            'action': 'If you see ribbing at specific Z-heights, increase pa_deadband slightly (try 0.004).',
-        })
+            'action': 'If you see ribbing at specific Z-heights, increase pa_deadband slightly.',
+        }
+        c = _suggest_change('pa_deadband', 'increase', 0.001, minimum=0.003, maximum=0.008)
+        if c:
+            rec['config_changes'] = [c]
+        recs.append(rec)
     elif pa.get('samples', 0) > 50 and pa_range < 0.01:
         recs.append({
             'severity': 'good', 'category': 'Pressure Advance',
@@ -1625,20 +1851,55 @@ def generate_recommendations(data):
     high_risk = ba.get('high_risk_events', 0)
     culprit = ba.get('likely_culprit', '')
     culprit_friendly = _culprit_name(culprit) if culprit else 'Unknown'
+
+    def _culprit_config_changes(code):
+        """Build config_changes list appropriate for a banding culprit."""
+        changes = []
+        if not code:
+            return changes
+        if 'temp' in code:
+            c = _suggest_change('ramp_rate_rise', 'reduce', 1.0, minimum=2.0, maximum=6.0)
+            if c:
+                changes.append(c)
+            c = _suggest_change('flow_smoothing', 'increase', 0.15, minimum=0.2, maximum=0.8)
+            if c:
+                changes.append(c)
+        elif 'pa' in code:
+            c = _suggest_change('pa_deadband', 'increase', 0.003, minimum=0.004, maximum=0.012)
+            if c:
+                changes.append(c)
+        elif 'dynz_accel' in code:
+            c = _suggest_change('dynz_activate_score', 'increase', 2.0, minimum=4.0, maximum=12.0)
+            if c:
+                changes.append(c)
+        elif 'slicer_accel' in code:
+            c = _suggest_change('flow_smoothing', 'increase', 0.1, minimum=0.2, maximum=0.6)
+            if c:
+                changes.append(c)
+        return changes
+
     if high_risk > 50:
-        recs.append({
+        rec = {
             'severity': 'bad', 'category': 'Banding',
             'title': f'{high_risk} high-risk banding events',
-            'detail': f'Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "Too many events — visible banding is very likely."}',
+            'detail': f'Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "Too many events \u2014 visible banding is very likely."}',
             'action': _culprit_fix(culprit) if culprit else 'Investigate belt tension, Z-axis, and nozzle condition.',
-        })
+        }
+        changes = _culprit_config_changes(culprit)
+        if changes:
+            rec['config_changes'] = changes
+        recs.append(rec)
     elif high_risk > 20:
-        recs.append({
+        rec = {
             'severity': 'warn', 'category': 'Banding',
             'title': f'{high_risk} banding risk events',
             'detail': f'Moderate banding risk. Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "May be visible on smooth surfaces."}',
             'action': f'Inspect the print at flagged Z-heights. {_culprit_fix(culprit) if culprit else "If visible, check mechanical and slicer settings."}',
-        })
+        }
+        changes = _culprit_config_changes(culprit)
+        if changes:
+            rec['config_changes'] = changes
+        recs.append(rec)
     elif high_risk <= 5 and s.get('duration_min', 0) > 5:
         recs.append({
             'severity': 'good', 'category': 'Banding',
@@ -1651,12 +1912,16 @@ def generate_recommendations(data):
     avg_boost = s.get('avg_boost', 0)
     max_boost = s.get('max_boost', 0)
     if max_boost > 30:
-        recs.append({
+        rec = {
             'severity': 'warn', 'category': 'Temperature',
             'title': f'Very high temp boost (max {max_boost:.0f}\u00b0C)',
             'detail': 'Large temperature swings can cause oozing, stringing, and inconsistent extrusion.',
-            'action': 'Reduce flow_k by 0.2\u20130.5, or lower max_boost_limit to cap the boost. Consider if base temp is too low for this material.',
-        })
+            'action': 'Reduce flow_k to lower temp demand, or lower max_boost_limit to cap the boost.',
+        }
+        chg = _suggest_change('flow_k', 'reduce', 0.3, material=material, minimum=0.1)
+        if chg:
+            rec['config_changes'] = [chg]
+        recs.append(rec)
     elif avg_boost > 0 and avg_boost < 3 and max_boost < 8:
         recs.append({
             'severity': 'info', 'category': 'Temperature',
@@ -1741,12 +2006,16 @@ def generate_recommendations(data):
         if len(culprits_real) >= 2 and len(set(culprits_real)) == 1:
             repeated = culprits_real[0]
             repeated_name = _culprit_name(repeated)
-            recs.append({
+            rec = {
                 'severity': 'warn', 'category': 'Trend',
                 'title': f'Same cause repeating for {mat_label}: {repeated_name}',
                 'detail': f'"{repeated_name}" has appeared in your last {len(culprits_real)} {mat_label} prints. {_culprit_explain(repeated)}',
                 'action': _culprit_fix(repeated),
-            })
+            }
+            changes = _culprit_config_changes(repeated)
+            if changes:
+                rec['config_changes'] = changes
+            recs.append(rec)
 
     elif len(same_mat) >= 2:
         # With just 2 same-material prints, check for a big jump
@@ -1985,6 +2254,23 @@ border-radius:4px;letter-spacing:.5px}
 .rec .rec-action{font-size:13px;color:#c9d1d9;background:#0d1117;border-radius:6px;
 padding:10px 14px;display:flex;gap:8px;align-items:flex-start}
 .rec .rec-action::before{content:'\\2192';color:#58a6ff;font-weight:700;flex-shrink:0}
+.cfg-changes{margin-top:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px 14px}
+.cfg-changes .cfg-hd{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.cfg-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;
+border-bottom:1px solid #21262d}
+.cfg-row:last-child{border-bottom:none}
+.cfg-desc{font-size:13px;color:#c9d1d9;font-family:'SF Mono',Consolas,monospace}
+.cfg-btn{background:#238636;color:#fff;border:none;border-radius:6px;padding:5px 14px;
+font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s}
+.cfg-btn:hover{background:#2ea043}
+.cfg-btn:disabled{background:#21262d;color:#484f58;cursor:default}
+.cfg-btn.applied{background:#1a7f37}
+.cfg-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 20px;
+font-size:13px;color:#c9d1d9;box-shadow:0 4px 24px rgba(0,0,0,.5);z-index:9999;
+opacity:0;transition:opacity .3s}
+.cfg-toast.show{opacity:1}
+.cfg-toast.ok{border-color:#3fb950}.cfg-toast.err{border-color:#f85149}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
@@ -2303,17 +2589,44 @@ if(badCount>0)h+='<span style="color:#f85149">'+badCount+' issue'+(badCount>1?'s
 else if(warnCount>0)h+='<span style="color:#d29922">'+warnCount+' warning'+(warnCount>1?'s':'')+'</span> to review';
 else h+='<span style="color:#3fb950">All looking good</span>';
 h+='</h3><p style="font-size:12px;color:#484f58">Based on heater, thermal lag, PA, banding, and DynZ analysis</p></div>';
-h+=recs.map(function(r){
-return '<div class="rec sev-'+r.severity+'">'+
+h+=recs.map(function(r,ri){
+var html='<div class="rec sev-'+r.severity+'">'+
 '<div class="rec-hd">'+
 '<span class="rec-badge">'+(sevLabel[r.severity]||r.severity)+'</span>'+
 '<span class="rec-cat">'+r.category+'</span>'+
 '</div>'+
 '<div class="rec-title">'+r.title+'</div>'+
 '<div class="rec-detail">'+r.detail+'</div>'+
-'<div class="rec-action">'+r.action+'</div>'+
-'</div>'}).join('');
+'<div class="rec-action">'+r.action+'</div>';
+if(r.config_changes&&r.config_changes.length){
+html+='<div class="cfg-changes"><div class="cfg-hd">Suggested config changes</div>';
+r.config_changes.forEach(function(c,ci){
+var id='cfg_'+ri+'_'+ci;
+html+='<div class="cfg-row">'+
+'<span class="cfg-desc">'+c.description+'</span>'+
+'<button class="cfg-btn" id="'+id+'" onclick="applyChange(\''+id+'\',\''+
+c.variable+'\','+c.suggested+',\''+(c.material||'')+'\')">Apply</button></div>'});
+html+='<div style="font-size:11px;color:#484f58;margin-top:6px">' +
+'Saves to your user config. Restart Klipper to activate.</div></div>'}
+html+='</div>';return html}).join('');
 ca.innerHTML=h}
+
+function showToast(msg,ok){
+var t=document.createElement('div');t.className='cfg-toast '+(ok?'ok':'err');
+t.textContent=msg;document.body.appendChild(t);
+setTimeout(function(){t.classList.add('show')},10);
+setTimeout(function(){t.classList.remove('show');setTimeout(function(){t.remove()},300)},4000)}
+
+function applyChange(btnId,variable,value,material){
+var btn=document.getElementById(btnId);if(!btn||btn.disabled)return;
+btn.disabled=true;btn.textContent='Applying...';
+fetch('/api/apply-config',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({variable:variable,value:value,material:material||null})})
+.then(function(r){return r.json()})
+.then(function(d){
+if(d.success){btn.textContent='\u2713 Applied';btn.classList.add('applied');showToast(d.message,true)}
+else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,false)}})
+.catch(function(e){btn.textContent='Apply';btn.disabled=false;showToast('Request failed: '+e,false)})}
 
 rCh();
 </script>
@@ -2373,6 +2686,35 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             self.wfile.write(html.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path == '/api/apply-config':
+            length = int(self.headers.get('Content-Length', 0))
+            try:
+                body = json.loads(self.rfile.read(length)) if length else {}
+            except (json.JSONDecodeError, ValueError):
+                body = {}
+
+            variable = body.get('variable', '')
+            value = body.get('value')
+            mat = body.get('material') or None
+
+            if not variable or value is None:
+                resp = {'success': False, 'message': 'Missing variable or value.'}
+            else:
+                ok, msg = _apply_config_change(variable, value, material=mat)
+                resp = {'success': ok, 'message': msg}
+
+            payload = json.dumps(resp)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(payload.encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
