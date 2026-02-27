@@ -2665,11 +2665,16 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == '/api/data':
             # JSON API for live polling — returns fresh analysis data
             summary_path = self._resolve_session(params)
-            data = collect_dashboard_data(
-                self.log_dir,
-                summary_path=summary_path,
-                material=self.material,
-            )
+            try:
+                data = collect_dashboard_data(
+                    self.log_dir,
+                    summary_path=summary_path,
+                    material=self.material,
+                )
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                data = {'error': str(exc)}
             payload = json.dumps(data, default=str)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -2679,11 +2684,17 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
         elif parsed.path in ('/', ''):
             summary_path = self._resolve_session(params)
-            data = collect_dashboard_data(
-                self.log_dir,
-                summary_path=summary_path,
-                material=self.material,
-            )
+            try:
+                data = collect_dashboard_data(
+                    self.log_dir,
+                    summary_path=summary_path,
+                    material=self.material,
+                )
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                data = {'error': str(exc), 'summary': None, 'recommendations': [],
+                        'timeline': [], 'trends': [], 'sessions': []}
             html = generate_dashboard_html(data)
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
