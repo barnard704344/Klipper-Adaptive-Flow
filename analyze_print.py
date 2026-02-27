@@ -1686,11 +1686,22 @@ def find_active_print_csv(log_dir):
 def synthesize_live_summary(csv_path, rows=None):
     """Build a summary dict from a live CSV (no summary JSON exists yet)."""
     filename = os.path.basename(csv_path)
-    # Extract material from filename pattern: YYYYMMDD_HHMMSS_MATERIAL_name.csv
-    parts = filename.split('_')
-    material = parts[2] if len(parts) >= 3 else 'Unknown'
-    if material.lower() in ('summary',):
-        material = 'Unknown'
+    # Extract material from filename.
+    # Filename pattern: YYYYMMDD_HHMMSS_PrintName_MATERIAL_duration.gcode.csv
+    # Material is a short uppercase token (PLA, PETG, ABS, ASA, TPU, etc.)
+    # embedded in the gcode name. Scan parts from the end for a known pattern.
+    _KNOWN_MATERIALS = {
+        'PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'PA', 'PC', 'NYLON',
+        'HIPS', 'PVA', 'PP', 'PEI', 'PCTG', 'CPE',
+    }
+    parts = filename.replace('.gcode.csv', '').replace('.csv', '').split('_')
+    material = 'Unknown'
+    # Scan from the end (material is typically second-to-last before duration)
+    for part in reversed(parts[2:]):  # skip date & time
+        upper = part.strip().upper()
+        if upper in _KNOWN_MATERIALS:
+            material = upper
+            break
 
     temps = []
     boosts = []
