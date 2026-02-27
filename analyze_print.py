@@ -99,7 +99,7 @@ def print_single_summary(summary, path):
     if ba:
         hr = ba.get('high_risk_events', 0)
         culprit = ba.get('likely_culprit', 'none')
-        print(f"Banding  : {hr} high-risk events \u2014 culprit: {culprit}")
+        print(f"Banding  : {hr} high-risk events \u2014 cause: {_culprit_name(culprit)}")
     else:
         print("Banding  : no banding data (update extruder_monitor?)")
 
@@ -358,11 +358,11 @@ def print_banding_report(agg):
     print("\u2500" * 70)
     print("  DIAGNOSIS")
     print("\u2500" * 70)
-    print(f"Most common culprit: {agg['most_common_culprit']}")
+    print(f"Most common cause: {_culprit_name(agg['most_common_culprit'])}")
     print("Breakdown:")
     for culprit, count in sorted(agg['culprits'].items(),
                                   key=lambda x: x[1], reverse=True):
-        print(f"  - {culprit}: {count} print{'s' if count != 1 else ''}")
+        print(f"  - {_culprit_name(culprit)}: {count} print{'s' if count != 1 else ''}")
 
     culprit = agg['most_common_culprit']
     diagnosis, fix = _diagnose_fix(culprit)
@@ -382,7 +382,7 @@ def print_banding_report(agg):
         print(f"\n{i}. {s['filename']} ({s['material']}, {s['duration_min']:.1f}min)")
         print(f"   Events: {ba.get('high_risk_events', 0)} high-risk, "
               f"{ba.get('accel_changes', 0)} accel, {ba.get('pa_changes', 0)} PA")
-        print(f"   Culprit: {ba.get('likely_culprit', 'unknown')}")
+        print(f"   Cause: {_culprit_name(ba.get('likely_culprit', 'unknown'))}")
 
     if len(agg['sessions']) > 5:
         print(f"\n   ... and {len(agg['sessions']) - 5} more")
@@ -548,13 +548,13 @@ def print_trends(sessions):
         boosts.append(summary.get('avg_boost', summary.get('auto_temp', {}).get('avg_boost', 0)))
         pwms.append(summary.get('avg_pwm', summary.get('heater', {}).get('avg_pwm', 0)))
         risk_events.append(ba.get('high_risk_events', 0))
-        culprits.append(ba.get('likely_culprit', '-'))
+        culprits.append(_culprit_name(ba.get('likely_culprit', '-')))
 
     # Print table
     n = len(ordered)
     col_w = max(12, max(len(l) for l in labels) + 1) if labels else 12
 
-    print(f"\n{'Print':<{col_w}} {'Boost':>7} {'Heater':>8} {'Risk Ev':>8} Culprit")
+    print(f"\n{'Print':<{col_w}} {'Boost':>7} {'Heater':>8} {'Risk Ev':>8} Cause")
     print("\u2500" * 70)
     for i in range(n):
         pwm_str = f"{pwms[i]:.0%}" if isinstance(pwms[i], float) else f"{pwms[i]}"
@@ -1409,6 +1409,80 @@ def synthesize_live_summary(csv_path):
     }
 
 
+# Map internal banding culprit codes to human-readable descriptions and fixes
+_CULPRIT_INFO = {
+    'slicer_accel_control': {
+        'name': 'Slicer acceleration changes',
+        'explain': 'Your slicer is sending frequent acceleration changes (SET_VELOCITY_LIMIT commands). Each change can cause a brief extrusion inconsistency that shows as a line on the print.',
+        'fix': 'In your slicer, reduce the number of different acceleration values. OrcaSlicer/PrusaSlicer: try disabling per-feature acceleration overrides, or use fewer distinct values. Reducing max acceleration by 10\u201320% can also help.',
+    },
+    'pa_oscillation': {
+        'name': 'Pressure Advance oscillation',
+        'explain': 'The PA value is changing too frequently as temperature fluctuates. Each PA change slightly alters extrusion pressure, leaving a mark on walls.',
+        'fix': 'Increase pa_deadband to 0.006\u20130.010 to filter out small PA adjustments. If still oscillating, reduce pa_boost_k by 20\u201330%.',
+    },
+    'temp_instability': {
+        'name': 'Temperature swings',
+        'explain': 'The nozzle temperature is changing rapidly \u2014 ramping up and down too aggressively. Each swing affects melt viscosity and shows as banding.',
+        'fix': 'Reduce ramp_up_rate by 1\u20132 \u00b0C/s (try 2.0\u20133.0). Increase flow_smoothing to 0.5+ to dampen flow spikes that trigger temp changes.',
+    },
+    'dynz_accel_switching': {
+        'name': 'DynZ acceleration switching',
+        'explain': 'The Dynamic Z-Window system is frequently changing acceleration limits as it detects stress zones. Each switch can cause a visible line.',
+        'fix': 'Increase dynz_min_accel to soften the acceleration drops (try 2000\u20133000). Or increase dynz_activate_score so DynZ only triggers on clearly stressed zones.',
+    },
+    'dynz_temp_swings': {
+        'name': 'DynZ temperature swings',
+        'explain': 'DynZ is using temperature reduction for stress relief, causing frequent temp target changes.',
+        'fix': 'Increase dynz_activate_score so it triggers less often. Or switch dynz_relief_method to "accel_limit" if you prefer speed reduction over temp changes.',
+    },
+    'no_obvious_culprit': {
+        'name': 'No clear cause',
+        'explain': 'Banding events detected but no single cause dominates. Could be a combination of factors or something mechanical.',
+        'fix': 'Check belt tension, Z-axis binding, and filament consistency. If the print looks fine, these may be false positives.',
+    },
+    'likely_mechanical': {
+        'name': 'Likely mechanical issue',
+        'explain': 'Banding detected but no software-related cause found. This usually points to a mechanical problem.',
+        'fix': 'Check belt tension and idler bearings. Inspect Z-axis lead screws for binding. Verify frame rigidity.',
+    },
+    'insufficient_data': {
+        'name': 'Not enough data',
+        'explain': 'Print was too short or had too few samples to determine a cause.',
+        'fix': 'Run a longer test print for better diagnostics.',
+    },
+    'print_too_short': {
+        'name': 'Print too short',
+        'explain': 'Print duration was too short to reliably detect patterns.',
+        'fix': 'Run a longer test print (10+ minutes) for meaningful analysis.',
+    },
+}
+
+
+def _culprit_name(code):
+    """Translate an internal culprit code to a human-readable name."""
+    info = _CULPRIT_INFO.get(code)
+    if info:
+        return info['name']
+    return code.replace('_', ' ').title() if code else 'Unknown'
+
+
+def _culprit_fix(code):
+    """Get the fix action for a culprit code."""
+    info = _CULPRIT_INFO.get(code)
+    if info:
+        return info['fix']
+    return f'Investigate the "{code}" cause in the banding analysis.'
+
+
+def _culprit_explain(code):
+    """Get the plain-English explanation for a culprit code."""
+    info = _CULPRIT_INFO.get(code)
+    if info:
+        return info['explain']
+    return f'The banding analysis identified "{code}" as a possible cause.'
+
+
 def generate_recommendations(data):
     """Analyze dashboard data and produce actionable tuning recommendations.
 
@@ -1550,26 +1624,20 @@ def generate_recommendations(data):
     # --- Banding risk ---
     high_risk = ba.get('high_risk_events', 0)
     culprit = ba.get('likely_culprit', '')
+    culprit_friendly = _culprit_name(culprit) if culprit else 'Unknown'
     if high_risk > 50:
-        action = 'Check the likely culprit below and address it.'
-        if 'temp' in culprit.lower():
-            action = 'Temperature instability is the cause. Reduce ramp rates or increase smoothing.'
-        elif 'pa' in culprit.lower():
-            action = 'PA oscillation is the cause. Increase pa_deadband or reduce pa_boost_k.'
-        elif 'accel' in culprit.lower() or 'dynz' in culprit.lower():
-            action = 'Acceleration changes are the cause. Tune DynZ sensitivity or use gentler accel ramps in slicer.'
         recs.append({
             'severity': 'bad', 'category': 'Banding',
             'title': f'{high_risk} high-risk banding events',
-            'detail': f'Likely culprit: {culprit or "unknown"}. This many events usually means visible banding on the print.',
-            'action': action,
+            'detail': f'Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "Too many events — visible banding is very likely."}',
+            'action': _culprit_fix(culprit) if culprit else 'Investigate belt tension, Z-axis, and nozzle condition.',
         })
     elif high_risk > 20:
         recs.append({
             'severity': 'warn', 'category': 'Banding',
             'title': f'{high_risk} banding risk events',
-            'detail': f'Moderate banding risk. Culprit: {culprit or "unknown"}. May be visible on smooth surfaces.',
-            'action': 'Inspect the print at flagged Z-heights. If visible, address the likely culprit.',
+            'detail': f'Moderate banding risk. Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "May be visible on smooth surfaces."}',
+            'action': f'Inspect the print at flagged Z-heights. {_culprit_fix(culprit) if culprit else "If visible, check mechanical and slicer settings."}',
         })
     elif high_risk <= 5 and s.get('duration_min', 0) > 5:
         recs.append({
@@ -1672,22 +1740,12 @@ def generate_recommendations(data):
         culprits_real = [c for c in culprits if c and c != '-' and c.lower() != 'none']
         if len(culprits_real) >= 2 and len(set(culprits_real)) == 1:
             repeated = culprits_real[0]
-            action = f'The same banding culprit "{repeated}" has appeared in your last {len(culprits_real)} prints.'
-            if 'temp' in repeated.lower():
-                fix = 'Reduce ramp_up_rate and ramp_down_rate by 1\u20132 \u00b0C/s. Increase temp_smoothing_window.'
-            elif 'pa' in repeated.lower():
-                fix = 'Increase pa_deadband to 0.006\u20130.010. Consider reducing pa_boost_k by 20%.'
-            elif 'accel' in repeated.lower() or 'dynz' in repeated.lower():
-                fix = 'Increase dynz_min_accel to soften acceleration drops. Or reduce slicer acceleration by 10\u201320%.'
-            elif 'slicer' in repeated.lower():
-                fix = 'Your slicer\u2019s acceleration settings are causing rapid changes. Enable jerk/junction deviation smoothing or reduce accel in slicer.'
-            else:
-                fix = f'Address the "{repeated}" culprit as noted above.'
+            repeated_name = _culprit_name(repeated)
             recs.append({
                 'severity': 'warn', 'category': 'Trend',
-                'title': f'Same culprit repeating for {mat_label}: "{repeated}"',
-                'detail': action,
-                'action': fix,
+                'title': f'Same cause repeating for {mat_label}: {repeated_name}',
+                'detail': f'"{repeated_name}" has appeared in your last {len(culprits_real)} {mat_label} prints. {_culprit_explain(repeated)}',
+                'action': _culprit_fix(repeated),
             })
 
     elif len(same_mat) >= 2:
