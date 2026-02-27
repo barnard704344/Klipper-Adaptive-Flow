@@ -1549,7 +1549,7 @@ font-size:9px;cursor:help;flex-shrink:0}
 .cd .tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);
 left:50%;transform:translateX(-50%);background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
 border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.4;white-space:normal;
-width:200px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
+width:240px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
 box-shadow:0 4px 12px rgba(0,0,0,.4)}
 .cd .tip:hover::before{content:'';position:absolute;bottom:calc(100% + 2px);
 left:50%;transform:translateX(-50%);border:4px solid transparent;
@@ -1649,15 +1649,15 @@ var ba=s.banding_analysis||{},dp=s.dynz_active_pct||0;
 var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
 var items=[
 {l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),
-d:'Active material profile and total print duration'},
+d:'Active material profile and total print duration.'},
 {l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',
-d:'Average temperature added above base temp to meet flow demand. Higher values mean the hotend is working harder'},
+d:'Extra temperature added above base to meet flow demand. \u2022 0\u201310\u00b0C = light load (good) \u2022 10\u201325\u00b0C = moderate \u2022 25\u00b0C+ = heavy load, check if heater can keep up'},
 {l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.max_pwm||0)>0.95,
-d:'Heater PWM usage (0\u2013100%). Sustained values above 95% indicate the heater is near its limit'},
+d:'Heater power usage. \u2022 Under 70% = plenty of headroom (good) \u2022 70\u201390% = healthy \u2022 90\u201395% = getting warm \u2022 95%+ = near limit, risk of temp drops'},
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
-d:'Dynamic Z-Window: % of layers where acceleration was reduced to handle challenging geometry like domes or overhangs'},
+d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
 {l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
-d:'Number of samples flagged as high banding risk. Caused by rapid temp, PA, or acceleration changes'}];
+d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}];
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
