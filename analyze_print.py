@@ -809,6 +809,10 @@ def print_headroom_report(headroom):
     print(f"{_hdr_flow:>16}  {'Samples':>7}  {'Avg PWM':>8}  {'P95 PWM':>8}  {'Max PWM':>8}  Headroom")
     print("\u2500" * 70)
 
+    # Only flag saturation at meaningful flow rates (>=8 mm³/s).
+    # Low-flow brackets show high PWM during ramp-up/retractions — not real limits.
+    MIN_FLOW_SAT = 8.0
+
     saturation_flow = None
     for key in sorted(headroom.keys()):
         d = headroom[key]
@@ -826,10 +830,13 @@ def print_headroom_report(headroom):
 
         warning = ''
         if d['p95_pwm'] >= 0.95:
-            warning = ' SATURATED'
-            if saturation_flow is None:
-                saturation_flow = lo
-        elif d['p95_pwm'] >= 0.85:
+            if lo >= MIN_FLOW_SAT:
+                warning = ' SATURATED'
+                if saturation_flow is None:
+                    saturation_flow = lo
+            else:
+                warning = ' (normal at low flow)'
+        elif d['p95_pwm'] >= 0.85 and lo >= MIN_FLOW_SAT:
             warning = ' !'
 
         print(f"{label:>16}  {d['count']:>7}  {d['avg_pwm']:>7.0%}  "
@@ -842,8 +849,8 @@ def print_headroom_report(headroom):
     if saturation_flow is not None:
         print(f"\n  \u26a0 Heater saturates at ~{saturation_flow:.0f} mm\u00b3/s flow rate.")
         print(f"    Above this, the heater cannot keep up with temperature demand.")
-        print(f"    \u2192 Limit speeds/flow to stay under {saturation_flow:.0f} mm\u00b3/s")
-        print(f"    \u2192 Or lower flow_k / max_boost_limit to reduce demand")
+        print(f"    \u2192 Reduce flow_k by 0.1\u20130.3 to lower temperature demand")
+        print(f"    \u2192 Or cap speeds in slicer to stay under {saturation_flow:.0f} mm\u00b3/s")
     else:
         print(f"\n  \u2713 Heater has headroom across all flow rates \u2014 no saturation detected.")
         # Find highest-flow bracket with data
@@ -1442,19 +1449,29 @@ def generate_recommendations(data):
         })
 
     # --- Heater headroom by flow bracket ---
+    # Only flag saturation in meaningful flow brackets (>=8 mm³/s).
+    # Low-flow brackets often show high PWM during ramp-up, retractions,
+    # or travel moves — not actual flow-related heater limits.
+    MIN_FLOW_FOR_SATURATION = 8  # mm³/s — below this, high PWM is normal
     if headroom:
         saturated_brackets = []
         for bracket_key, hd in headroom.items():
             p95 = hd.get('p95_pwm', 0)
             if p95 >= 0.95 and hd.get('count', 0) >= 5:
-                saturated_brackets.append(bracket_key)
+                # Parse the lower bound from the bracket key (e.g. "10-12")
+                try:
+                    lo = float(bracket_key.split('-')[0])
+                except (ValueError, IndexError):
+                    lo = 0
+                if lo >= MIN_FLOW_FOR_SATURATION:
+                    saturated_brackets.append(bracket_key)
         if saturated_brackets:
             first = saturated_brackets[0]
             recs.append({
                 'severity': 'warn', 'category': 'Heater',
                 'title': f'Heater saturates above {first} mm\u00b3/s',
                 'detail': f'P95 PWM exceeds 95% in flow brackets: {", ".join(saturated_brackets)}.',
-                'action': f'In your slicer, set max volumetric flow to stay under {first} mm\u00b3/s, or reduce flow_k to lower heater demand at high flows.',
+                'action': f'You\u2019re hitting heater limits at {first}+ mm\u00b3/s. Reduce flow_k by 0.1\u20130.3 to lower temperature demand, or cap speeds in your slicer to stay under this flow rate.',
             })
 
     # --- Thermal lag ---
