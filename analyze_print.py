@@ -2647,15 +2647,28 @@ console.error('Dashboard error',e)}
 </html>"""
 
 
+def _sanitize_floats(obj):
+    """Recursively replace NaN/Infinity floats with None so json.dumps
+    (with allow_nan=False) won't choke."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
+
+
 def _safe_json_for_html(obj):
     """Serialize *obj* to JSON safe for embedding inside <script>.
 
     Escapes '</script>' and '<!--' sequences that would break the HTML
-    parser, and replaces NaN/Infinity with null.
+    parser, and converts NaN/Infinity floats to null.
     """
-    raw = json.dumps(obj, default=str)
-    # Replace tokens that json.dumps emits for non-finite floats
-    raw = raw.replace('NaN', 'null').replace('Infinity', 'null')
+    clean = _sanitize_floats(obj)
+    raw = json.dumps(clean, default=str, allow_nan=False)
     # Prevent premature </script> or HTML comment injection
     raw = raw.replace('</', '<\\/')
     raw = raw.replace('<!--', '<\\!--')
