@@ -2615,8 +2615,8 @@ r.config_changes.forEach(function(c,ci){
 var id='cfg_'+ri+'_'+ci;
 html+='<div class="cfg-row">'+
 '<span class="cfg-desc">'+c.description+'</span>'+
-'<button class="cfg-btn" id="'+id+'" onclick="applyChange(\''+id+'\',\''+
-c.variable+'\','+c.suggested+',\''+(c.material||'')+'\')">Apply</button></div>'});
+'<button class="cfg-btn" id="'+id+'" onclick="applyChange(\\''+id+'\\',\\''+
+c.variable+'\\','+c.suggested+',\\''+(c.material||'')+'\\')">Apply</button></div>'});
 html+='<div style="font-size:11px;color:#484f58;margin-top:6px">' +
 'Saves to your user config. Restart Klipper to activate.</div></div>'}
 html+='</div>';return html}).join('');
@@ -2642,7 +2642,7 @@ else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,fa
 rCh();
 }catch(e){
 document.getElementById('_err').style.display='block';
-document.getElementById('_err').textContent='Dashboard error: '+e+'\n'+(e.stack||'');
+document.getElementById('_err').textContent='Dashboard error: '+e+'\\n'+(e.stack||'');
 console.error('Dashboard error',e)}
 </script>
 </body>
@@ -2687,6 +2687,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for the Adaptive Flow dashboard."""
     log_dir = LOG_DIR
     material = None
+    timeout = 30  # seconds – prevents stale connections from blocking the server
 
     def _resolve_session(self, params):
         """Resolve session file from query params to summary path."""
@@ -2714,12 +2715,13 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 import traceback
                 traceback.print_exc()
                 data = {'error': str(exc)}
-            payload = json.dumps(data, default=str)
+            payload = json.dumps(data, default=str).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
             self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
-            self.wfile.write(payload.encode('utf-8'))
+            self.wfile.write(payload)
 
         elif parsed.path in ('/', ''):
             summary_path = self._resolve_session(params)
@@ -2738,14 +2740,15 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                         'z_banding': {}, 'thermal_lag': None,
                         'headroom': None, 'pa_stability': None,
                         'dynz_zones': {}, 'speed_flow': None}
-            html = generate_dashboard_html(data)
+            html = generate_dashboard_html(data).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(html)))
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.send_header('Pragma', 'no-cache')
             self.send_header('Expires', '0')
             self.end_headers()
-            self.wfile.write(html.encode('utf-8'))
+            self.wfile.write(html)
         else:
             self.send_response(404)
             self.end_headers()
@@ -2770,11 +2773,12 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 ok, msg = _apply_config_change(variable, value, material=mat)
                 resp = {'success': ok, 'message': msg}
 
-            payload = json.dumps(resp)
+            payload = json.dumps(resp).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload.encode('utf-8'))
+            self.wfile.write(payload)
         else:
             self.send_response(404)
             self.end_headers()
@@ -2788,7 +2792,7 @@ def serve_dashboard(port, log_dir, material=None):
     DashboardHandler.log_dir = log_dir
     DashboardHandler.material = material
 
-    server = http.server.HTTPServer(('0.0.0.0', port), DashboardHandler)
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', port), DashboardHandler)
 
     hostname = socket.gethostname()
     try:
