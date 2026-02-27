@@ -1092,17 +1092,54 @@ def analyze_pa_stability(csv_file, window_s=10.0):
     change_count = sum(1 for s in samples if abs(s['delta']) > 0.003)
 
     # Detect oscillation zones: sliding window, count changes per window
+    # Pre-compute which samples are "significant changes"
+    sig_changes = [abs(s['delta']) > 0.003 for s in samples]
+    n_samples = len(samples)
     oscillation_zones = []
     current_zone = None
 
+    # Two-pointer window for O(n) instead of O(n^2)
+    win_lo = 0
+    changes_in_window = 0
     for i, s in enumerate(samples):
-        # Count changes in the surrounding window
-        t_start = s['time'] - window_s / 2
-        t_end = s['time'] + window_s / 2
-        changes_in_window = sum(
-            1 for other in samples
-            if t_start <= other['time'] <= t_end and abs(other['delta']) > 0.003
-        )
+        t_center = s['time']
+        t_start = t_center - window_s / 2
+        t_end = t_center + window_s / 2
+
+        # Shrink window from left
+        while win_lo < n_samples and samples[win_lo]['time'] < t_start:
+            if sig_changes[win_lo]:
+                changes_in_window -= 1
+            win_lo += 1
+
+        # Expand window to the right to include new samples entering
+        # We need to track an explicit right pointer too
+        if i == 0:
+            # Initialize: count all samples in the first window
+            changes_in_window = 0
+            win_lo = 0
+            win_hi = 0
+            while win_hi < n_samples and samples[win_hi]['time'] <= t_end:
+                if sig_changes[win_hi]:
+                    changes_in_window += 1
+                win_hi += 1
+            # Shrink from left
+            while win_lo < n_samples and samples[win_lo]['time'] < t_start:
+                if sig_changes[win_lo]:
+                    changes_in_window -= 1
+                win_lo += 1
+        else:
+            # Add new samples entering from the right
+            while win_hi < n_samples and samples[win_hi]['time'] <= t_end:
+                if sig_changes[win_hi]:
+                    changes_in_window += 1
+                win_hi += 1
+            # Remove samples leaving from the left
+            while win_lo < n_samples and samples[win_lo]['time'] < t_start:
+                if sig_changes[win_lo]:
+                    changes_in_window -= 1
+                win_lo += 1
+
         # An oscillation zone has >=4 changes in the window
         if changes_in_window >= 4:
             if current_zone is None:
@@ -2069,6 +2106,318 @@ def generate_recommendations(data):
     return recs
 
 
+# =========================================================================
+# MATERIAL-AGGREGATED ANALYSIS
+# =========================================================================
+
+def _weighted_avg(values, weights):
+    """Return weighted average, or 0 if no data."""
+    total_w = sum(weights)
+    if total_w == 0:
+        return 0
+    return sum(v * w for v, w in zip(values, weights)) / total_w
+
+
+def _merge_headroom(all_headroom):
+    """Merge heater headroom dicts from multiple prints."""
+    merged = {}
+    for hr in all_headroom:
+        for bracket, data in hr.items():
+            if bracket not in merged:
+                merged[bracket] = {'count': 0, 'sum_avg_pwm': 0, 'sum_p95': 0,
+                                   'sum_max': 0, 'total_count': 0}
+            n = data.get('count', 0)
+            merged[bracket]['total_count'] += n
+            merged[bracket]['count'] += 1
+            merged[bracket]['sum_avg_pwm'] += data.get('avg_pwm', 0) * n
+            merged[bracket]['sum_p95'] += data.get('p95_pwm', 0) * n
+            merged[bracket]['sum_max'] = max(merged[bracket]['sum_max'],
+                                             data.get('max_pwm', 0))
+    result = {}
+    for bracket, m in merged.items():
+        tc = m['total_count']
+        if tc == 0:
+            continue
+        result[bracket] = {
+            'count': tc,
+            'avg_pwm': round(m['sum_avg_pwm'] / tc, 4),
+            'p95_pwm': round(m['sum_p95'] / tc, 4),
+            'max_pwm': m['sum_max'],
+        }
+    return result
+
+
+def _merge_z_banding(all_zb):
+    """Merge z-banding dicts from multiple prints."""
+    merged = {}
+    for zb in all_zb:
+        for zkey, data in zb.items():
+            if zkey not in merged:
+                merged[zkey] = {'samples': 0, 'risk_sum': 0, 'high_risk': 0,
+                                'accel_changes': 0, 'pa_changes': 0,
+                                'dynz_transitions': 0, 'events': []}
+            merged[zkey]['samples'] += data.get('samples', 0)
+            merged[zkey]['risk_sum'] += data.get('risk_sum', 0)
+            merged[zkey]['high_risk'] += data.get('high_risk', 0)
+            merged[zkey]['accel_changes'] += data.get('accel_changes', 0)
+            merged[zkey]['pa_changes'] += data.get('pa_changes', 0)
+            merged[zkey]['dynz_transitions'] += data.get('dynz_transitions', 0)
+            # Keep a capped list of events
+            merged[zkey]['events'].extend(data.get('events', [])[:5])
+    return merged
+
+
+def _merge_speed_flow(all_sf):
+    """Merge speed/flow distribution dicts from multiple prints."""
+    merged = {'speed': {}, 'flow': {}}
+    for sf in all_sf:
+        for kind in ('speed', 'flow'):
+            for bracket, data in sf.get(kind, {}).items():
+                if bracket not in merged[kind]:
+                    merged[kind][bracket] = {'count': 0, 'pct_sum': 0,
+                                             'boost_sum': 0, 'pa_sum': 0,
+                                             'pwm_sum': 0, 'n': 0}
+                n = data.get('count', 0)
+                merged[kind][bracket]['count'] += n
+                merged[kind][bracket]['n'] += 1
+                merged[kind][bracket]['pct_sum'] += data.get('pct', 0)
+                merged[kind][bracket]['boost_sum'] += data.get('avg_boost', 0) * n
+                merged[kind][bracket]['pa_sum'] += data.get('avg_pa', 0) * n
+                merged[kind][bracket]['pwm_sum'] += data.get('avg_pwm', 0) * n
+    result = {'speed': {}, 'flow': {}}
+    for kind in ('speed', 'flow'):
+        for bracket, m in merged[kind].items():
+            tc = m['count']
+            if tc == 0:
+                continue
+            result[kind][bracket] = {
+                'count': tc,
+                'pct': round(m['pct_sum'] / m['n'], 1) if m['n'] else 0,
+                'avg_boost': round(m['boost_sum'] / tc, 1),
+                'avg_pa': round(m['pa_sum'] / tc, 4),
+                'avg_pwm': round(m['pwm_sum'] / tc, 3),
+            }
+    return result
+
+
+def collect_material_overview(log_dir, material):
+    """Aggregate analysis data across all prints of a given material.
+
+    Returns a dict with the same shape as collect_dashboard_data() but with
+    merged/averaged values across all sessions of *material*.
+    """
+    sessions = find_recent_sessions(log_dir, count=50, material=material)
+    if not sessions:
+        return {'error': f'No sessions found for {material}',
+                'material': material, 'session_count': 0}
+
+    n = len(sessions)
+    summaries = [s['summary'] for s in sessions]
+    csv_files = [s['csv_file'] for s in sessions]
+
+    # --- Aggregated summary stats (weighted by sample count) ---
+    samples_list = [s.get('samples', 1) for s in summaries]
+    total_samples = sum(samples_list)
+    total_duration = sum(s.get('duration_min', 0) for s in summaries)
+
+    agg_summary = {
+        'material': material,
+        'session_count': n,
+        'duration_min': round(total_duration, 1),
+        'samples': total_samples,
+        'avg_boost': round(_weighted_avg(
+            [s.get('avg_boost', 0) for s in summaries], samples_list), 1),
+        'max_boost': round(max((s.get('max_boost', 0) for s in summaries), default=0), 1),
+        'avg_pwm': round(_weighted_avg(
+            [s.get('avg_pwm', 0) for s in summaries], samples_list), 3),
+        'max_pwm': round(max((s.get('max_pwm', 0) for s in summaries), default=0), 2),
+        'avg_flow': round(_weighted_avg(
+            [s.get('avg_flow', 0) for s in summaries], samples_list), 1),
+        'max_flow': round(max((s.get('max_flow', 0) for s in summaries), default=0), 1),
+        'max_speed': round(max((s.get('max_speed', 0) for s in summaries), default=0), 1),
+        'avg_thermal_lag': round(_weighted_avg(
+            [s.get('avg_thermal_lag', 0) for s in summaries], samples_list), 2),
+        'dynz_active_pct': round(_weighted_avg(
+            [s.get('dynz_active_pct', 0) for s in summaries], samples_list), 1),
+        'banding_analysis': {
+            'high_risk_events': sum(
+                s.get('banding_analysis', {}).get('high_risk_events', 0)
+                for s in summaries),
+            'avg_high_risk_per_print': round(sum(
+                s.get('banding_analysis', {}).get('high_risk_events', 0)
+                for s in summaries) / n, 1),
+            'likely_culprit': _agg_most_common_culprit(summaries),
+        },
+    }
+
+    # --- Per-CSV deep analysis (heavier — only latest N) ---
+    MAX_CSVS = 5  # cap to avoid very slow aggregation on low-power hardware
+    recent_csvs = csv_files[:MAX_CSVS]
+
+    # Thermal lag
+    all_lag = [analyze_thermal_lag(c) for c in recent_csvs]
+    all_lag = [l for l in all_lag if l]
+    if all_lag:
+        lag_samples = [l.get('total_samples', 1) for l in all_lag]
+        agg_lag = {
+            'avg_lag': round(_weighted_avg(
+                [l['avg_lag'] for l in all_lag], lag_samples), 2),
+            'max_lag': round(max(l['max_lag'] for l in all_lag), 1),
+            'lag_pct': round(_weighted_avg(
+                [l['lag_pct'] for l in all_lag], lag_samples), 1),
+            'total_samples': sum(lag_samples),
+            'episodes': [],  # flatten top episodes
+        }
+        all_eps = []
+        for l in all_lag:
+            all_eps.extend(l.get('episodes', [])[:5])
+        all_eps.sort(key=lambda e: e.get('max_lag', 0), reverse=True)
+        agg_lag['episodes'] = all_eps[:10]
+    else:
+        agg_lag = None
+
+    # Heater headroom
+    all_hr = [analyze_heater_headroom(c) for c in recent_csvs]
+    all_hr_fmt = []
+    for hr in all_hr:
+        if hr:
+            all_hr_fmt.append({f"{k[0]}-{k[1]}": v for k, v in hr.items()})
+    agg_headroom = _merge_headroom(all_hr_fmt) if all_hr_fmt else None
+
+    # PA stability
+    all_pa = [analyze_pa_stability(c) for c in recent_csvs]
+    all_pa = [p for p in all_pa if p and 'pa_min' in p]
+    if all_pa:
+        pa_samples = [p.get('samples', 1) for p in all_pa]
+        agg_pa = {
+            'samples': sum(pa_samples),
+            'pa_min': round(min(p['pa_min'] for p in all_pa), 4),
+            'pa_max': round(max(p['pa_max'] for p in all_pa), 4),
+            'pa_range': round(max(p['pa_max'] for p in all_pa) -
+                              min(p['pa_min'] for p in all_pa), 4),
+            'pa_stdev': round(_weighted_avg(
+                [p['pa_stdev'] for p in all_pa], pa_samples), 5),
+            'change_count': sum(p.get('change_count', 0) for p in all_pa),
+            'oscillation_zones': [],
+        }
+        all_zones = []
+        for p in all_pa:
+            all_zones.extend(p.get('oscillation_zones', [])[:5])
+        all_zones.sort(key=lambda z: z.get('changes', 0), reverse=True)
+        agg_pa['oscillation_zones'] = all_zones[:15]
+    else:
+        agg_pa = None
+
+    # Z-banding
+    all_zb = []
+    for c in recent_csvs:
+        raw = analyze_z_banding(c, bin_size=0.5)
+        all_zb.append({str(k): v for k, v in raw.items()})
+    agg_zb = _merge_z_banding(all_zb) if all_zb else {}
+
+    # DynZ zones
+    all_dz = []
+    for c in recent_csvs:
+        raw = analyze_dynz_zones(c, bin_size=0.5)
+        all_dz.append({str(k): v for k, v in raw.items()})
+    agg_dynz = {}
+    for dz in all_dz:
+        for zk, data in dz.items():
+            if zk not in agg_dynz:
+                agg_dynz[zk] = {'samples': 0, 'active_sum': 0, 'transitions': 0,
+                                'accel_sum': 0, 'stress_sum': 0}
+            n_s = data.get('samples', 0)
+            agg_dynz[zk]['samples'] += n_s
+            agg_dynz[zk]['active_sum'] += data.get('active_pct', 0) * n_s
+            agg_dynz[zk]['transitions'] += data.get('transitions', 0)
+            agg_dynz[zk]['accel_sum'] += data.get('avg_accel', 0) * n_s
+            agg_dynz[zk]['stress_sum'] += data.get('avg_stress', 0) * n_s
+    for zk in agg_dynz:
+        s_n = agg_dynz[zk]['samples']
+        if s_n:
+            agg_dynz[zk] = {
+                'samples': s_n,
+                'active_pct': round(agg_dynz[zk]['active_sum'] / s_n, 1),
+                'transitions': agg_dynz[zk]['transitions'],
+                'avg_accel': round(agg_dynz[zk]['accel_sum'] / s_n),
+                'avg_stress': round(agg_dynz[zk]['stress_sum'] / s_n, 1),
+            }
+
+    # Speed/flow distribution
+    all_sf = []
+    for c in recent_csvs:
+        raw = analyze_speed_flow_distribution(c)
+        if raw:
+            all_sf.append({
+                'speed': {f"{k[0]}-{k[1]}": v for k, v in raw['speed'].items()},
+                'flow': {f"{k[0]}-{k[1]}": v for k, v in raw['flow'].items()},
+            })
+    agg_sf = _merge_speed_flow(all_sf) if all_sf else None
+
+    # Trends (for the selected material)
+    trend_data = []
+    for s_info in reversed(sessions[:10]):
+        sm = s_info['summary']
+        ba = sm.get('banding_analysis', {})
+        ts = sm.get('start_time', '')
+        trend_data.append({
+            'date': ts[:10] if len(ts) >= 10 else ts,
+            'material': sm.get('material', ''),
+            'avg_boost': sm.get('avg_boost', 0),
+            'max_boost': sm.get('max_boost', 0),
+            'avg_pwm': sm.get('avg_pwm', 0),
+            'max_pwm': sm.get('max_pwm', 0),
+            'high_risk': ba.get('high_risk_events', 0),
+            'culprit': ba.get('likely_culprit', '-'),
+        })
+
+    # Session list (this material only)
+    session_list = [
+        {
+            'filename': s['summary'].get('filename', ''),
+            'material': s['summary'].get('material', ''),
+            'start_time': s['summary'].get('start_time', ''),
+            'summary_file': os.path.basename(s['summary_file']),
+        }
+        for s in sessions
+    ]
+
+    data = {
+        'summary': agg_summary,
+        'timeline': [],  # no combined timeline for aggregate
+        'z_banding': agg_zb,
+        'thermal_lag': agg_lag,
+        'headroom': agg_headroom,
+        'pa_stability': agg_pa,
+        'dynz_zones': agg_dynz,
+        'speed_flow': agg_sf,
+        'trends': trend_data,
+        'sessions': session_list,
+        'selected_file': '',
+        'is_live': False,
+        'is_aggregate': True,
+        'aggregate_material': material,
+        'aggregate_sessions': n,
+    }
+
+    # Generate recommendations from aggregated data
+    data['recommendations'] = generate_recommendations(data)
+
+    return data
+
+
+def _agg_most_common_culprit(summaries):
+    """Find the most repeated banding culprit across summaries."""
+    counts = defaultdict(int)
+    for s in summaries:
+        c = s.get('banding_analysis', {}).get('likely_culprit', '')
+        if c and c != '-' and c.lower() != 'none':
+            counts[c] += 1
+    if not counts:
+        return 'none'
+    return max(counts, key=counts.get)
+
+
 def collect_dashboard_data(log_dir, summary_path=None, material=None):
     """Gather all analysis data for the web dashboard."""
     data = {
@@ -2076,9 +2425,20 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         'thermal_lag': None, 'headroom': None, 'pa_stability': None,
         'dynz_zones': {}, 'speed_flow': None, 'trends': None,
         'sessions': [], 'selected_file': '', 'is_live': False,
+        'materials': [],
     }
 
     all_sessions = find_recent_sessions(log_dir, count=50, material=material)
+
+    # Build list of unique materials across all sessions (unfiltered)
+    all_unfiltered = find_recent_sessions(log_dir, count=100)
+    mat_set = set()
+    for s in all_unfiltered:
+        m = (s['summary'].get('material') or '').strip().upper()
+        if m:
+            mat_set.add(m)
+    data['materials'] = sorted(mat_set)
+
     data['sessions'] = [
         {
             'filename': s['summary'].get('filename', ''),
@@ -2276,6 +2636,15 @@ opacity:0;transition:opacity .3s}
 .cfg-toast.show{opacity:1}
 .cfg-toast.ok{border-color:#3fb950}.cfg-toast.err{border-color:#f85149}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.mat-sel{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.mat-btn{background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:6px;
+padding:4px 12px;font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.mat-btn:hover{color:#c9d1d9;border-color:#58a6ff}
+.mat-btn.active{background:#1f6feb;color:#fff;border-color:#1f6feb}
+.mat-btn.agg{background:#0d419d;color:#58a6ff;border-color:#1f6feb}
+.agg-badge{display:inline-block;background:rgba(88,166,255,.15);color:#58a6ff;
+font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;
+letter-spacing:.5px;margin-left:6px;text-transform:uppercase}
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -2284,6 +2653,7 @@ opacity:0;transition:opacity .3s}
 <div class="hdr">
 <h1>\u26a1 Adaptive Flow Dashboard</h1>
 <div class="ctrls">
+<div class="mat-sel" id="matsel"></div>
 <span id="lv" style="display:none;font-size:12px;color:#3fb950">
 <span class="pulse">\u25cf</span> LIVE</span>
 <label><input type="checkbox" id="ar"> Auto-refresh</label>
@@ -2302,12 +2672,48 @@ document.getElementById('_err').style.display='block';
 document.getElementById('_err').textContent='Data parse error: '+e;throw e}
 try{
 var isLive=D.is_live||false;
+var isAgg=D.is_aggregate||false;
 var sel=document.getElementById('ss');
 var lvi=document.getElementById('lv');
 var ftel=document.getElementById('ft');
+var matSelEl=document.getElementById('matsel');
+var activeMat=null;
 
 // Show LIVE indicator
 if(isLive)lvi.style.display='inline';
+
+// --- Material buttons ---
+function renderMatBtns(){
+var mats=D.materials||[];
+if(mats.length<2){matSelEl.style.display='none';return}
+matSelEl.style.display='';
+var h='<span style="font-size:11px;color:#484f58;margin-right:4px">View:</span>';
+h+='<button class="mat-btn'+(activeMat?'':' active')+'" onclick="setMat(null)">Per-Print</button>';
+mats.forEach(function(m){
+h+='<button class="mat-btn'+(activeMat===m?' active agg':'')+'" onclick="setMat(\\''+m+'\\')">'+m+' Aggregate</button>'});
+matSelEl.innerHTML=h}
+renderMatBtns();
+
+function setMat(m){
+if(m===activeMat)return;
+activeMat=m;
+renderMatBtns();
+if(m){
+sel.style.display='none';
+fetchAgg(m)}
+else{
+sel.style.display='';
+window.location.href='/'}}
+
+function fetchAgg(m){
+ftel.textContent='Loading '+m+' aggregate...';
+fetch('/api/material-data?material='+encodeURIComponent(m))
+.then(function(r){return r.json()}).then(function(nd){
+D=nd;isLive=false;isAgg=true;
+sel.style.display='none';
+ftel.textContent=m+ ' \u2014 Aggregated across '+nd.aggregate_sessions+' prints';
+rc();buildTabs();rCh()})
+.catch(function(e){ftel.textContent='Error loading: '+e})}
 
 // Populate session selector
 if(!isLive){
@@ -2317,7 +2723,7 @@ o.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
 if(s.summary_file===D.selected_file)o.selected=true;sel.appendChild(o)});
 } else {
 var o=document.createElement('option');o.value='__live__';
-o.textContent='● LIVE PRINT';o.selected=true;sel.appendChild(o);
+o.textContent='\u25cf LIVE PRINT';o.selected=true;sel.appendChild(o);
 (D.sessions||[]).forEach(function(s){var o2=document.createElement('option');
 o2.value=s.summary_file;
 o2.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
@@ -2341,14 +2747,15 @@ var iv=isLive?5000:30000;
 rt=setInterval(pollData,iv);
 ftel.textContent='Auto-refresh '+(iv/1000)+'s'}
 function stopPoll(){if(rt)clearInterval(rt);rt=null;
-ftel.textContent='Adaptive Flow Dashboard'}
+ftel.textContent=isAgg?(D.aggregate_material+' aggregate'):'Adaptive Flow Dashboard'}
 
 function pollData(){
+if(isAgg&&activeMat){fetchAgg(activeMat);return}
 var url='/api/data';
 var cur=sel.value;
 if(cur&&cur!=='__live__')url+='?session='+encodeURIComponent(cur);
 fetch(url).then(function(r){return r.json()}).then(function(nd){
-D=nd;isLive=D.is_live||false;
+D=nd;isLive=D.is_live||false;isAgg=D.is_aggregate||false;
 if(isLive)lvi.style.display='inline'; else lvi.style.display='none';
 rc();rCh();
 }).catch(function(){})}
@@ -2357,7 +2764,23 @@ function rc(){var c=document.getElementById('cds'),s=D.summary;
 if(!s){c.innerHTML='<div class="cd"><div class="vl d">No data</div></div>';return}
 var ba=s.banding_analysis||{},dp=s.dynz_active_pct||0;
 var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
-var items=[
+var aggBadge=isAgg?'<span class="agg-badge">'+s.session_count+' prints</span>':'';
+var items;
+if(isAgg){
+items=[
+{l:'Material',v:(s.material||'?')+aggBadge,s:s.session_count+' prints, '+(s.duration_min||0).toFixed(0)+' min total',
+d:'Aggregated data across all prints with this material.'},
+{l:'Avg Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C across all prints',
+d:'Weighted average temp boost across all prints of this material.'},
+{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,
+d:'Weighted average heater duty across all prints.'},
+{l:'Avg Banding/Print',v:''+(ba.avg_high_risk_per_print!=null?ba.avg_high_risk_per_print.toFixed(0):(ba.high_risk_events||0)),
+s:'total '+(ba.high_risk_events||0)+', culprit: '+(ba.likely_culprit||'none'),w:(ba.high_risk_events||0)>50,
+d:'Average banding risk events per print. Total across all prints shown.'},
+{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'averaged':'inactive across prints',
+d:'Weighted average DynZ activation across prints.'}]}
+else{
+items=[
 {l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),
 d:'Active material profile and total print duration.'},
 {l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',
@@ -2367,19 +2790,24 @@ d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behav
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
 d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
 {l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
-d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}];
+d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}]}
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
 '</div><div class="sb">'+x.s+'</div></div>'}).join('')}
 rc();
 
-var tabs=[{id:'rx',l:'\u2699 Recommendations'},{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
+var allTabs=[{id:'rx',l:'\u2699 Recommendations'},{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
 {id:'pa',l:'PA'},{id:'dz',l:'DynZ'},{id:'ds',l:'Distribution'},{id:'tr',l:'Trends'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
-function rTabs(){tb.innerHTML=tabs.map(function(t){
+function buildTabs(){
+var tabs=allTabs;
+if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'});
+if(isAgg&&at==='tl')at='rx';
+tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
 '" onclick="sTab(this.dataset.t)" data-t="'+t.id+'">'+t.l+'</div>'}).join('')}
+function rTabs(){buildTabs()}
 function sTab(id){at=id;rTabs();rCh()}
 rTabs();
 
@@ -2715,6 +3143,26 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 import traceback
                 traceback.print_exc()
                 data = {'error': str(exc)}
+            payload = json.dumps(data, default=str).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif parsed.path == '/api/material-data':
+            # Aggregated data for a single material across all prints
+            mat = params.get('material', [None])[0]
+            if not mat:
+                data = {'error': 'material parameter required'}
+            else:
+                try:
+                    data = collect_material_overview(self.log_dir, mat.strip().upper())
+                except Exception as exc:
+                    import traceback
+                    traceback.print_exc()
+                    data = {'error': str(exc)}
             payload = json.dumps(data, default=str).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
