@@ -1878,11 +1878,13 @@ def generate_recommendations(data):
                 changes.append(c)
         return changes
 
+    _banding_fallback = 'Too many events \u2014 visible banding is very likely.'
     if high_risk > 50:
+        detail_explain = _culprit_explain(culprit) if culprit else _banding_fallback
         rec = {
             'severity': 'bad', 'category': 'Banding',
             'title': f'{high_risk} high-risk banding events',
-            'detail': f'Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "Too many events \u2014 visible banding is very likely."}',
+            'detail': f'Cause: {culprit_friendly}. {detail_explain}',
             'action': _culprit_fix(culprit) if culprit else 'Investigate belt tension, Z-axis, and nozzle condition.',
         }
         changes = _culprit_config_changes(culprit)
@@ -1890,11 +1892,13 @@ def generate_recommendations(data):
             rec['config_changes'] = changes
         recs.append(rec)
     elif high_risk > 20:
+        detail_explain = _culprit_explain(culprit) if culprit else 'May be visible on smooth surfaces.'
+        action_fix = _culprit_fix(culprit) if culprit else 'If visible, check mechanical and slicer settings.'
         rec = {
             'severity': 'warn', 'category': 'Banding',
             'title': f'{high_risk} banding risk events',
-            'detail': f'Moderate banding risk. Cause: {culprit_friendly}. {_culprit_explain(culprit) if culprit else "May be visible on smooth surfaces."}',
-            'action': f'Inspect the print at flagged Z-heights. {_culprit_fix(culprit) if culprit else "If visible, check mechanical and slicer settings."}',
+            'detail': f'Moderate banding risk. Cause: {culprit_friendly}. {detail_explain}',
+            'action': f'Inspect the print at flagged Z-heights. {action_fix}',
         }
         changes = _culprit_config_changes(culprit)
         if changes:
