@@ -1402,6 +1402,304 @@ def synthesize_live_summary(csv_path):
     }
 
 
+def generate_recommendations(data):
+    """Analyze dashboard data and produce actionable tuning recommendations.
+
+    Returns a list of dicts: {severity, category, title, detail, action}
+    severity: 'good', 'info', 'warn', 'bad'
+    """
+    recs = []
+    s = data.get('summary') or {}
+    lag = data.get('thermal_lag') or {}
+    headroom = data.get('headroom') or {}
+    pa = data.get('pa_stability') or {}
+    ba = s.get('banding_analysis') or {}
+    dynz_pct = s.get('dynz_active_pct', 0)
+
+    # --- Heater saturation ---
+    max_pwm = s.get('max_pwm', 0)
+    avg_pwm = s.get('avg_pwm', 0)
+    if max_pwm >= 0.98:
+        recs.append({
+            'severity': 'bad', 'category': 'Heater',
+            'title': 'Heater fully saturated',
+            'detail': f'Max PWM hit {max_pwm*100:.0f}% \u2014 the heater maxed out and likely couldn\u2019t maintain target temperature.',
+            'action': 'Reduce flow_k by 0.2\u20130.5, or lower max_boost_limit. If printing fast, reduce slicer volumetric flow limit.',
+        })
+    elif max_pwm >= 0.95:
+        recs.append({
+            'severity': 'warn', 'category': 'Heater',
+            'title': 'Heater near saturation',
+            'detail': f'Max PWM reached {max_pwm*100:.0f}% \u2014 close to the heater\u2019s limit.',
+            'action': 'Monitor for temperature drops during high-flow sections. Consider reducing flow_k by 0.1\u20130.2 for safety margin.',
+        })
+    elif max_pwm > 0 and max_pwm < 0.70:
+        recs.append({
+            'severity': 'good', 'category': 'Heater',
+            'title': 'Plenty of heater headroom',
+            'detail': f'Max PWM was only {max_pwm*100:.0f}% \u2014 the heater barely broke a sweat.',
+            'action': 'You could increase flow_k by 0.1\u20130.3 to get better flow adaptation, or print faster.',
+        })
+
+    # --- Heater headroom by flow bracket ---
+    if headroom:
+        saturated_brackets = []
+        for bracket_key, hd in headroom.items():
+            p95 = hd.get('p95_pwm', 0)
+            if p95 >= 0.95 and hd.get('count', 0) >= 5:
+                saturated_brackets.append(bracket_key)
+        if saturated_brackets:
+            first = saturated_brackets[0]
+            recs.append({
+                'severity': 'warn', 'category': 'Heater',
+                'title': f'Heater saturates above {first} mm\u00b3/s',
+                'detail': f'P95 PWM exceeds 95% in flow brackets: {", ".join(saturated_brackets)}.',
+                'action': f'In your slicer, set max volumetric flow to stay under {first} mm\u00b3/s, or reduce flow_k to lower heater demand at high flows.',
+            })
+
+    # --- Thermal lag ---
+    lag_pct = lag.get('lag_pct', 0)
+    max_lag_val = lag.get('max_lag', 0)
+    episodes = lag.get('episodes', [])
+    if lag_pct > 15:
+        recs.append({
+            'severity': 'bad', 'category': 'Thermal',
+            'title': f'Significant thermal lag ({lag_pct:.0f}% of print)',
+            'detail': f'The heater fell behind target temperature for {lag_pct:.0f}% of the print (max lag: {max_lag_val:.1f}\u00b0C).',
+            'action': 'Increase ramp_up_rate to pre-heat faster, or reduce flow_k so less temperature is demanded. Check heater wiring for loose connections.',
+        })
+    elif lag_pct > 5:
+        recs.append({
+            'severity': 'warn', 'category': 'Thermal',
+            'title': f'Moderate thermal lag ({lag_pct:.0f}% of print)',
+            'detail': f'The heater occasionally fell behind target ({len(episodes)} lag episodes, max {max_lag_val:.1f}\u00b0C).',
+            'action': 'Try increasing ramp_up_rate by 1\u20132 \u00b0C/s, or add a small lookahead_boost_pct to pre-heat earlier.',
+        })
+    elif lag.get('total_samples', 0) > 50 and lag_pct < 1:
+        recs.append({
+            'severity': 'good', 'category': 'Thermal',
+            'title': 'Excellent thermal tracking',
+            'detail': f'Heater stayed within target throughout \u2014 only {lag_pct:.1f}% lag time.',
+            'action': 'No changes needed. Thermal control is well-tuned.',
+        })
+
+    # --- PA stability ---
+    pa_zones = pa.get('oscillation_zones', [])
+    pa_range = pa.get('pa_range', 0)
+    pa_changes = pa.get('change_count', 0)
+    if len(pa_zones) > 5:
+        recs.append({
+            'severity': 'bad', 'category': 'Pressure Advance',
+            'title': f'PA oscillating ({len(pa_zones)} unstable zones)',
+            'detail': f'PA changed significantly {pa_changes} times with {len(pa_zones)} oscillation zones. This causes fine ribbing/banding on walls.',
+            'action': 'Increase pa_deadband to 0.005\u20130.008 to filter small PA changes. If still oscillating, reduce pa_boost_k by 20\u201330%.',
+        })
+    elif len(pa_zones) > 0:
+        recs.append({
+            'severity': 'info', 'category': 'Pressure Advance',
+            'title': f'{len(pa_zones)} PA oscillation zone(s)',
+            'detail': f'Minor PA instability detected. PA range: {pa_range:.4f}, changes: {pa_changes}.',
+            'action': 'If you see ribbing at specific Z-heights, increase pa_deadband slightly (try 0.004).',
+        })
+    elif pa.get('samples', 0) > 50 and pa_range < 0.01:
+        recs.append({
+            'severity': 'good', 'category': 'Pressure Advance',
+            'title': 'PA is stable',
+            'detail': f'PA stayed within a {pa_range:.4f} range with no oscillation zones.',
+            'action': 'No changes needed. PA tuning is good.',
+        })
+
+    # --- Banding risk ---
+    high_risk = ba.get('high_risk_events', 0)
+    culprit = ba.get('likely_culprit', '')
+    if high_risk > 50:
+        action = 'Check the likely culprit below and address it.'
+        if 'temp' in culprit.lower():
+            action = 'Temperature instability is the cause. Reduce ramp rates or increase smoothing.'
+        elif 'pa' in culprit.lower():
+            action = 'PA oscillation is the cause. Increase pa_deadband or reduce pa_boost_k.'
+        elif 'accel' in culprit.lower() or 'dynz' in culprit.lower():
+            action = 'Acceleration changes are the cause. Tune DynZ sensitivity or use gentler accel ramps in slicer.'
+        recs.append({
+            'severity': 'bad', 'category': 'Banding',
+            'title': f'{high_risk} high-risk banding events',
+            'detail': f'Likely culprit: {culprit or "unknown"}. This many events usually means visible banding on the print.',
+            'action': action,
+        })
+    elif high_risk > 20:
+        recs.append({
+            'severity': 'warn', 'category': 'Banding',
+            'title': f'{high_risk} banding risk events',
+            'detail': f'Moderate banding risk. Culprit: {culprit or "unknown"}. May be visible on smooth surfaces.',
+            'action': 'Inspect the print at flagged Z-heights. If visible, address the likely culprit.',
+        })
+    elif high_risk <= 5 and s.get('duration_min', 0) > 5:
+        recs.append({
+            'severity': 'good', 'category': 'Banding',
+            'title': 'Minimal banding risk',
+            'detail': f'Only {high_risk} risk events \u2014 excellent for print quality.',
+            'action': 'No changes needed.',
+        })
+
+    # --- Temp boost ---
+    avg_boost = s.get('avg_boost', 0)
+    max_boost = s.get('max_boost', 0)
+    if max_boost > 30:
+        recs.append({
+            'severity': 'warn', 'category': 'Temperature',
+            'title': f'Very high temp boost (max {max_boost:.0f}\u00b0C)',
+            'detail': 'Large temperature swings can cause oozing, stringing, and inconsistent extrusion.',
+            'action': 'Reduce flow_k by 0.2\u20130.5, or lower max_boost_limit to cap the boost. Consider if base temp is too low for this material.',
+        })
+    elif avg_boost > 0 and avg_boost < 3 and max_boost < 8:
+        recs.append({
+            'severity': 'info', 'category': 'Temperature',
+            'title': 'Low temp boost needed',
+            'detail': f'Average boost was only {avg_boost:.1f}\u00b0C \u2014 this print didn\u2019t push the hotend hard.',
+            'action': 'Flow demands were low. You could increase flow_k slightly if you want more responsiveness at higher speeds.',
+        })
+
+    # --- DynZ ---
+    if dynz_pct > 20:
+        recs.append({
+            'severity': 'info', 'category': 'DynZ',
+            'title': f'DynZ active {dynz_pct}% of layers',
+            'detail': 'Very complex geometry required frequent acceleration reduction.',
+            'action': 'This is normal for domes/spheres. If print quality is fine, no changes needed. If too slow, increase dynz_min_accel.',
+        })
+
+    # =====================================================================
+    # CROSS-PRINT TREND ANALYSIS (same material only)
+    # =====================================================================
+    trends = data.get('trends') or []
+    current_material = (s.get('material') or '').strip().upper()
+
+    # Filter to same material — comparing PLA vs ABS would be meaningless
+    if current_material:
+        same_mat = [t for t in trends
+                    if (t.get('material') or '').strip().upper() == current_material]
+    else:
+        same_mat = trends  # unknown material, use all
+
+    mat_label = current_material or 'this material'
+
+    if len(same_mat) >= 3:
+        recent = same_mat[-3:]  # last 3 same-material prints (chronological)
+
+        # --- Banding trend ---
+        risk_vals = [t.get('high_risk', 0) for t in recent]
+        if all(risk_vals[i] < risk_vals[i + 1] for i in range(len(risk_vals) - 1)):
+            delta = risk_vals[-1] - risk_vals[0]
+            if delta > 5:
+                recs.append({
+                    'severity': 'warn', 'category': 'Trend',
+                    'title': f'Banding risk climbing ({risk_vals[0]} \u2192 {risk_vals[-1]} over 3 {mat_label} prints)',
+                    'detail': 'Risk events have increased each print. Something is degrading \u2014 nozzle wear, partial clog, or a config change made things worse.',
+                    'action': 'Compare what changed between prints. If nothing was changed, inspect nozzle for wear or partial blockage. Cold pull recommended.',
+                })
+        elif all(risk_vals[i] > risk_vals[i + 1] for i in range(len(risk_vals) - 1)):
+            if risk_vals[0] > 10:
+                recs.append({
+                    'severity': 'good', 'category': 'Trend',
+                    'title': f'Banding improving ({risk_vals[0]} \u2192 {risk_vals[-1]} across {mat_label})',
+                    'detail': 'Risk events dropping over recent prints \u2014 your changes are working.',
+                    'action': 'Keep current settings. Continue monitoring.',
+                })
+
+        # --- Heater duty trend ---
+        pwm_vals = [t.get('max_pwm', 0) for t in recent]
+        if all(pwm_vals[i] < pwm_vals[i + 1] for i in range(len(pwm_vals) - 1)):
+            if pwm_vals[-1] > 0.85:
+                recs.append({
+                    'severity': 'warn', 'category': 'Trend',
+                    'title': f'Heater duty trending up for {mat_label} ({pwm_vals[0]*100:.0f}% \u2192 {pwm_vals[-1]*100:.0f}%)',
+                    'detail': 'Max PWM has increased over recent prints. Could indicate nozzle wear, partial clog increasing back-pressure, or ambient temp drop.',
+                    'action': 'Check nozzle for blockage. If nozzle is clean, the heater may be losing efficiency \u2014 check thermistor and heater cartridge connections.',
+                })
+
+        # --- Boost trend ---
+        boost_vals = [t.get('avg_boost', 0) for t in recent]
+        if all(boost_vals[i] < boost_vals[i + 1] for i in range(len(boost_vals) - 1)):
+            delta = boost_vals[-1] - boost_vals[0]
+            if delta > 3:
+                recs.append({
+                    'severity': 'info', 'category': 'Trend',
+                    'title': f'Avg boost climbing for {mat_label} ({boost_vals[0]:.1f} \u2192 {boost_vals[-1]:.1f}\u00b0C)',
+                    'detail': 'Prints are requiring more temperature boost. Could be printing faster/thicker, or increased back-pressure from wear.',
+                    'action': 'If intentional (faster prints), this is fine. If not, check nozzle condition.',
+                })
+
+        # --- Repeated same culprit ---
+        culprits = [t.get('culprit', '-') for t in recent]
+        culprits_real = [c for c in culprits if c and c != '-' and c.lower() != 'none']
+        if len(culprits_real) >= 2 and len(set(culprits_real)) == 1:
+            repeated = culprits_real[0]
+            action = f'The same banding culprit "{repeated}" has appeared in your last {len(culprits_real)} prints.'
+            if 'temp' in repeated.lower():
+                fix = 'Reduce ramp_up_rate and ramp_down_rate by 1\u20132 \u00b0C/s. Increase temp_smoothing_window.'
+            elif 'pa' in repeated.lower():
+                fix = 'Increase pa_deadband to 0.006\u20130.010. Consider reducing pa_boost_k by 20%.'
+            elif 'accel' in repeated.lower() or 'dynz' in repeated.lower():
+                fix = 'Increase dynz_min_accel to soften acceleration drops. Or reduce slicer acceleration by 10\u201320%.'
+            elif 'slicer' in repeated.lower():
+                fix = 'Your slicer\u2019s acceleration settings are causing rapid changes. Enable jerk/junction deviation smoothing or reduce accel in slicer.'
+            else:
+                fix = f'Address the "{repeated}" culprit as noted above.'
+            recs.append({
+                'severity': 'warn', 'category': 'Trend',
+                'title': f'Same culprit repeating for {mat_label}: "{repeated}"',
+                'detail': action,
+                'action': fix,
+            })
+
+    elif len(same_mat) >= 2:
+        # With just 2 same-material prints, check for a big jump
+        prev, curr = same_mat[-2], same_mat[-1]
+        risk_jump = curr.get('high_risk', 0) - prev.get('high_risk', 0)
+        if risk_jump > 20:
+            recs.append({
+                'severity': 'warn', 'category': 'Trend',
+                'title': f'Banding risk jumped +{risk_jump} since last print',
+                'detail': f'Previous: {prev.get("high_risk", 0)} events, now: {curr.get("high_risk", 0)}.',
+                'action': 'Something changed between these prints. Review config changes, material, or slicer settings.',
+            })
+        pwm_jump = curr.get('max_pwm', 0) - prev.get('max_pwm', 0)
+        if pwm_jump > 0.10:
+            recs.append({
+                'severity': 'info', 'category': 'Trend',
+                'title': f'Heater duty jumped +{pwm_jump*100:.0f}% since last print',
+                'detail': f'Previous max PWM: {prev.get("max_pwm", 0)*100:.0f}%, now: {curr.get("max_pwm", 0)*100:.0f}%.',
+                'action': 'Higher flow demand or ambient temp change? If unexpected, check nozzle condition.',
+            })
+
+    # --- No trend data note ---
+    if len(same_mat) < 2 and s.get('duration_min', 0) > 0:
+        extra = ''
+        if current_material and len(trends) >= 2:
+            extra = f' ({len(trends)} total prints on record, but only {len(same_mat)} with {mat_label})'
+        recs.append({
+            'severity': 'info', 'category': 'Trend',
+            'title': f'Not enough {mat_label} prints for trends',
+            'detail': f'Only {len(same_mat)} {mat_label} print(s) on record.{extra} Need at least 2 for comparisons, 3+ for trend detection.',
+            'action': f'Keep printing with {mat_label} \u2014 recommendations will get smarter as data accumulates.',
+        })
+
+    # --- All good ---
+    if not recs or all(r['severity'] == 'good' for r in recs):
+        recs.append({
+            'severity': 'good', 'category': 'Overall',
+            'title': 'Print looks well-tuned',
+            'detail': 'No significant issues detected across heater, thermal lag, PA, or banding analysis.',
+            'action': 'Keep current settings. If you want to push speed/flow higher, do it incrementally and check the next print\u2019s dashboard.',
+        })
+
+    # Sort: bad first, then warn, info, good
+    severity_order = {'bad': 0, 'warn': 1, 'info': 2, 'good': 3}
+    recs.sort(key=lambda r: severity_order.get(r['severity'], 9))
+
+    return recs
+
+
 def collect_dashboard_data(log_dir, summary_path=None, material=None):
     """Gather all analysis data for the web dashboard."""
     data = {
@@ -1515,6 +1813,9 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             })
         data['trends'] = trend_data
 
+    # Generate actionable recommendations based on all collected data
+    data['recommendations'] = generate_recommendations(data)
+
     return data
 
 
@@ -1571,6 +1872,23 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:6px 10px;color:#8b949e;border-bottom:1px solid #30363d}
 td{padding:6px 10px;border-bottom:1px solid #21262d}
 .foot{text-align:center;padding:16px;font-size:11px;color:#484f58}
+.rec{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;
+margin-bottom:12px;border-left:4px solid #30363d}
+.rec.sev-bad{border-left-color:#f85149}.rec.sev-warn{border-left-color:#d29922}
+.rec.sev-info{border-left-color:#58a6ff}.rec.sev-good{border-left-color:#3fb950}
+.rec .rec-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.rec .rec-badge{font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 8px;
+border-radius:4px;letter-spacing:.5px}
+.sev-bad .rec-badge{background:rgba(248,81,73,.15);color:#f85149}
+.sev-warn .rec-badge{background:rgba(210,153,34,.15);color:#d29922}
+.sev-info .rec-badge{background:rgba(88,166,255,.15);color:#58a6ff}
+.sev-good .rec-badge{background:rgba(63,185,80,.15);color:#3fb950}
+.rec .rec-cat{font-size:11px;color:#8b949e}
+.rec .rec-title{font-size:15px;font-weight:600}
+.rec .rec-detail{font-size:13px;color:#8b949e;margin:4px 0 8px}
+.rec .rec-action{font-size:13px;color:#c9d1d9;background:#0d1117;border-radius:6px;
+padding:10px 14px;display:flex;gap:8px;align-items:flex-start}
+.rec .rec-action::before{content:'\2192';color:#58a6ff;font-weight:700;flex-shrink:0}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
@@ -1664,9 +1982,9 @@ x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="sb">'+x.s+'</div></div>'}).join('')}
 rc();
 
-var tabs=[{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
+var tabs=[{id:'rx',l:'\u2699 Recommendations'},{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
 {id:'pa',l:'PA'},{id:'dz',l:'DynZ'},{id:'ds',l:'Distribution'},{id:'tr',l:'Trends'}];
-var at='tl',tb=document.getElementById('tb'),ca=document.getElementById('ca');
+var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function rTabs(){tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
 '" onclick="sTab(this.dataset.t)" data-t="'+t.id+'">'+t.l+'</div>'}).join('')}
@@ -1681,7 +1999,8 @@ function dCh(){for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
 function mc(id){return '<canvas id="'+id+'"></canvas>'}
 
 function rCh(){dCh();var tl=D.timeline||[];
-if(at==='tl')rTimeline(tl);
+if(at==='rx')rRec();
+else if(at==='tl')rTimeline(tl);
 else if(at==='zh')rZH();
 else if(at==='ht')rHt();
 else if(at==='pa')rPA(tl);
@@ -1876,6 +2195,29 @@ scales:{x:{title:{display:true,text:'Print Date'}},
 y:{title:{display:true,text:'\u00b0C / %'},position:'left'},
 y1:{title:{display:true,text:'Events'},position:'right',
 grid:{drawOnChartArea:false}}}}})}
+
+function rRec(){
+var recs=D.recommendations||[];
+if(!recs.length){ca.innerHTML='<div class="box"><p>No data available for recommendations yet.</p></div>';return}
+var sevLabel={bad:'Issue',warn:'Warning',info:'Note',good:'Good'};
+var badCount=recs.filter(function(r){return r.severity==='bad'}).length;
+var warnCount=recs.filter(function(r){return r.severity==='warn'}).length;
+var h='<div style="margin-bottom:16px"><h3 style="color:#c9d1d9;font-size:16px;margin-bottom:4px">';
+if(badCount>0)h+='<span style="color:#f85149">'+badCount+' issue'+(badCount>1?'s':'')+'</span> found';
+else if(warnCount>0)h+='<span style="color:#d29922">'+warnCount+' warning'+(warnCount>1?'s':'')+'</span> to review';
+else h+='<span style="color:#3fb950">All looking good</span>';
+h+='</h3><p style="font-size:12px;color:#484f58">Based on heater, thermal lag, PA, banding, and DynZ analysis</p></div>';
+h+=recs.map(function(r){
+return '<div class="rec sev-'+r.severity+'">'+
+'<div class="rec-hd">'+
+'<span class="rec-badge">'+(sevLabel[r.severity]||r.severity)+'</span>'+
+'<span class="rec-cat">'+r.category+'</span>'+
+'</div>'+
+'<div class="rec-title">'+r.title+'</div>'+
+'<div class="rec-detail">'+r.detail+'</div>'+
+'<div class="rec-action">'+r.action+'</div>'+
+'</div>'}).join('');
+ca.innerHTML=h}
 
 rCh();
 </script>
