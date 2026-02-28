@@ -2045,9 +2045,8 @@ def generate_recommendations(data):
                 f'corners. This is separate from PA oscillation (which is stable).'
             ),
             'action': (
-                f'Try lowering default_pa to ~{suggested_pa:.3f}. '
-                f'For precise tuning, print a PA calibration pattern with '
-                f'{material or "this material"} and pick the line with the sharpest corners.'
+                f'Lower default_pa to ~{suggested_pa:.3f} using the Apply button below. '
+                f'Adaptive Flow will use this as the base and dynamically adjust from there.'
             ),
         }
         c = _suggest_change('default_pa', 'reduce',
