@@ -2872,8 +2872,22 @@ border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s}
 .area{padding:16px 24px}
 .box{background:#161b22;border:1px solid #30363d;border-radius:8px;
 padding:16px;margin-bottom:16px}
-.box h3{font-size:14px;margin-bottom:12px;color:#8b949e}
+.box h3{font-size:14px;margin-bottom:4px;color:#8b949e}
+.box-desc{font-size:11px;color:#484f58;margin-bottom:10px;line-height:1.4}
+.box-desc .good{color:#3fb950}.box-desc .warn{color:#d29922}.box-desc .bad{color:#f85149}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.tab-wrap{position:relative;display:inline-flex;align-items:center;gap:4px}
+.tab-tip{display:inline-flex;align-items:center;justify-content:center;
+width:13px;height:13px;border-radius:50%;background:#30363d;color:#484f58;
+font-size:8px;cursor:help;flex-shrink:0}
+.tab-tip:hover::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);
+left:50%;transform:translateX(-50%);background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
+border-radius:6px;padding:8px 12px;font-size:11px;line-height:1.4;white-space:normal;
+width:260px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
+box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.tab-tip:hover::before{content:'';position:absolute;top:calc(100% + 4px);
+left:50%;transform:translateX(-50%);border:4px solid transparent;
+border-bottom-color:#30363d;z-index:11}
 canvas{max-height:350px}
 .w{color:#d29922}.d{color:#f85149}.g{color:#3fb950}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -3079,8 +3093,15 @@ x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="sb">'+x.s+'</div></div>'}).join('')}
 rc();
 
-var allTabs=[{id:'rx',l:'\u2699 Recommendations'},{id:'tl',l:'Timeline'},{id:'zh',l:'Z-Height'},{id:'ht',l:'Heater'},
-{id:'pa',l:'PA'},{id:'dz',l:'DynZ'},{id:'ds',l:'Distribution'},{id:'tr',l:'Trends'}];
+var allTabs=[
+{id:'rx',l:'\u2699 Recommendations',tip:'Actionable suggestions to improve print quality. Start here.'},
+{id:'tl',l:'Timeline',tip:'Real-time temperature, flow rate and speed plotted over the entire print. See how your heater responds to flow demands.'},
+{id:'zh',l:'Z-Height',tip:'Shows which layers had the most thermal stress. Tall bars = layers where banding is most likely.'},
+{id:'ht',l:'Heater',tip:'Is your heater keeping up? Shows power usage at different flow rates. Bars near 100% mean the heater is maxed out.'},
+{id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
+{id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
+{id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
+{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and risk across multiple prints.'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
@@ -3088,7 +3109,8 @@ if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'});
 if(isAgg&&at==='tl')at='rx';
 tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
-'" onclick="sTab(this.dataset.t)" data-t="'+t.id+'">'+t.l+'</div>'}).join('')}
+'" onclick="sTab(this.dataset.t)" data-t="'+t.id+'"><span class="tab-wrap">'+t.l+
+(t.tip?'<span class="tab-tip" data-tip="'+t.tip+'">?</span>':'')+'</span></div>'}).join('')}
 function rTabs(){buildTabs()}
 function sTab(id){at=id;rTabs();rCh()}
 rTabs();
@@ -3113,8 +3135,12 @@ else if(at==='tr')rTr()}
 
 function rTimeline(tl){
 if(!tl.length){ca.innerHTML='<p>No timeline data.</p>';return}
-ca.innerHTML='<div class="box"><h3>Temperature</h3>'+mc('c1')+
-'</div><div class="box"><h3>Flow &amp; Speed</h3>'+mc('c2')+'</div>';
+ca.innerHTML='<div class="box"><h3>Temperature</h3>'+
+'<p class="box-desc">Blue = what the system is asking for. Red = what your hotend actually reads. Yellow = extra \u00b0C boost added for flow demand. '+
+'<span class="good">Good:</span> red tracks blue closely. <span class="warn">Watch:</span> red consistently below blue means heater can\u2019t keep up.</p>'+mc('c1')+
+'</div><div class="box"><h3>Flow &amp; Speed</h3>'+
+'<p class="box-desc">Green = material flow (mm\u00b3/s). Orange = print speed (mm/s). Purple = heater power (PWM). '+
+'High flow + high PWM = heavy thermal load. If PWM is always near 100%, consider slowing down or upgrading your heater.</p>'+mc('c2')+'</div>';
 var lb=tl.map(function(r){return r.t});
 CH.c1=new Chart(document.getElementById('c1'),{type:'line',data:{labels:lb,
 datasets:[
@@ -3152,7 +3178,9 @@ y2:{display:false}}}})}
 function rZH(){
 var zb=D.z_banding;
 if(!zb||!Object.keys(zb).length){ca.innerHTML='<p>No Z-height data.</p>';return}
-ca.innerHTML='<div class="box"><h3>Banding Risk by Z-Height</h3>'+mc('c3')+'</div>';
+ca.innerHTML='<div class="box"><h3>Banding Risk by Z-Height</h3>'+
+'<p class="box-desc">Each bar is a layer range. Taller bars = more thermal/PA stress at that height, increasing banding risk. '+
+'<span class="good">Green</span> = low risk. <span class="warn">Yellow</span> = moderate. <span class="bad">Red</span> = high \u2014 check print surface at those layers.</p>'+mc('c3')+'</div>';
 var ks=Object.keys(zb).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 var risks=ks.map(function(k){return zb[k].samples?zb[k].risk_sum/zb[k].samples:0});
 var cols=risks.map(function(r){return r>=4?'#f85149':r>=2?'#d29922':'#3fb950'});
@@ -3166,7 +3194,9 @@ function rHt(){
 ca.innerHTML='';
 var hr=D.headroom;
 if(hr&&Object.keys(hr).length){
-ca.innerHTML+='<div class="box"><h3>Heater Headroom by Flow Rate</h3>'+mc('c4')+'</div>';
+ca.innerHTML+='<div class="box"><h3>Heater Headroom by Flow Rate</h3>'+
+'<p class="box-desc">Shows heater power at different flow rates. Blue = average, Orange = 95th percentile, Red = peak. '+
+'Bars near 100% mean the heater is running flat out. If P95 or Max hit 100% at your typical flow rates, your heater is the bottleneck.</p>'+mc('c4')+'</div>';
 var ks=Object.keys(hr).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 ks=ks.filter(function(k){return hr[k].count>=3});
 setTimeout(function(){
@@ -3184,7 +3214,8 @@ scales:{x:{title:{display:true,text:'Flow (mm\u00b3/s)'}},
 y:{title:{display:true,text:'PWM %'},max:100}}}})},0)}
 var lg=D.thermal_lag;
 if(lg){var el=document.createElement('div');el.className='box';
-var h='<h3>Thermal Lag</h3><p>Avg: '+lg.avg_lag.toFixed(1)+
+var h='<h3>Thermal Lag</h3><p class="box-desc">How far behind the actual temperature is from the target. '+
+'Small lag (1\u20132\u00b0C) is normal. Sustained lag above 5\u00b0C means under-extrusion risk.</p><p>Avg: '+lg.avg_lag.toFixed(1)+
 '\u00b0C | Max: '+lg.max_lag.toFixed(1)+
 '\u00b0C | Time in lag: '+lg.lag_pct.toFixed(1)+'%</p>';
 if(lg.episodes.length){
@@ -3201,7 +3232,9 @@ if(!hr&&!lg)ca.innerHTML='<p>No heater data.</p>'}
 function rPA(tl){
 ca.innerHTML='';
 if(tl.length){
-ca.innerHTML+='<div class="box"><h3>Pressure Advance over Time</h3>'+mc('c5')+'</div>';
+ca.innerHTML+='<div class="box"><h3>Pressure Advance over Time</h3>'+
+'<p class="box-desc">PA controls how the extruder compensates for pressure in the nozzle. A flat line = stable, consistent extrusion. '+
+'Wobbles mean the system is adjusting to changing conditions. Large jumps may cause surface artifacts.</p>'+mc('c5')+'</div>';
 setTimeout(function(){
 CH.c5=new Chart(document.getElementById('c5'),{type:'line',data:{
 labels:tl.map(function(r){return r.t}),
@@ -3214,7 +3247,8 @@ scales:{x:{title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:15}},
 y:{title:{display:true,text:'PA Value'}}}}})},0)}
 var pa=D.pa_stability;
 if(pa&&pa.samples>=10){var el=document.createElement('div');el.className='box';
-var h='<h3>PA Stability</h3><p>Range: '+pa.pa_min.toFixed(4)+
+var h='<h3>PA Stability</h3><p class="box-desc">How consistent PA stayed during the print. '+
+'A small range and low change count = rock-solid extrusion. Oscillation zones flag periods where PA was hunting.</p><p>Range: '+pa.pa_min.toFixed(4)+
 ' \u2014 '+pa.pa_max.toFixed(4)+' (span '+pa.pa_range.toFixed(4)+
 ') | Stdev: '+pa.pa_stdev.toFixed(5)+' | Changes: '+pa.change_count+'</p>';
 if(pa.oscillation_zones.length){
@@ -3232,7 +3266,9 @@ function rDZ(){
 var dz=D.dynz_zones;
 if(!dz||!Object.keys(dz).length){
 ca.innerHTML='<p>No DynZ data (may be inactive).</p>';return}
-ca.innerHTML='<div class="box"><h3>DynZ Activation by Z-Height</h3>'+mc('c6')+'</div>';
+ca.innerHTML='<div class="box"><h3>DynZ Activation by Z-Height</h3>'+
+'<p class="box-desc">Shows where the system reduced acceleration to protect print quality (e.g. overhangs, curves). '+
+'Yellow = % of time active at each height. Red = how often it toggled on/off. Frequent transitions can cause artifacts.</p>'+mc('c6')+'</div>';
 var ks=Object.keys(dz).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 CH.c6=new Chart(document.getElementById('c6'),{type:'bar',data:{
 labels:ks.map(function(k){return parseFloat(k).toFixed(1)+'mm'}),
@@ -3251,7 +3287,11 @@ function rDist(){
 var sf=D.speed_flow;
 if(!sf){ca.innerHTML='<p>No distribution data.</p>';return}
 ca.innerHTML='<div class="row2"><div class="box"><h3>Time by Speed</h3>'+
-mc('c7')+'</div><div class="box"><h3>Time by Flow Rate</h3>'+mc('c8')+'</div></div>';
+'<p class="box-desc">How your print time was distributed across speeds. '+
+'Most time at low speeds = fine detail. Most time at high speeds = fast but harder on the heater.</p>'+
+mc('c7')+'</div><div class="box"><h3>Time by Flow Rate</h3>'+
+'<p class="box-desc">How your print time was distributed across flow rates. '+
+'High flow = more thermal demand. If most time is at high flow, ensure your heater can handle it.</p>'+mc('c8')+'</div></div>';
 if(sf.speed){
 var sk=Object.keys(sf.speed).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 CH.c7=new Chart(document.getElementById('c7'),{type:'bar',data:{
@@ -3280,8 +3320,12 @@ rows+='<tr><td>'+t.date+'</td><td>'+t.material+
 (t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
 '%</td><td class="'+(t.high_risk>10?'w':'')+'">'+t.high_risk+
 '</td><td>'+t.culprit+'</td></tr>'});
-ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+mc('c9')+
-'</div><div class="box"><h3>Details</h3><table><tr><th>Date</th><th>Material</th>'+
+ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
+'<p class="box-desc">Each point is a completed print. Falling boost and risk = the system is learning your setup. '+
+'Rising values may indicate a clog, worn nozzle, or changed slicer settings.</p>'+mc('c9')+
+'</div><div class="box"><h3>Details</h3>'+
+'<p class="box-desc">Culprit = the most common cause of risk events for that print (e.g. temperature, PA, acceleration).</p>'+
+'<table><tr><th>Date</th><th>Material</th>'+
 '<th>Boost</th><th>Max PWM</th><th>Risk</th><th>Culprit</th></tr>'+rows+'</table></div>';
 CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
 labels:tr.map(function(t){return t.date}),
