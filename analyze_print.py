@@ -2033,13 +2033,15 @@ def generate_recommendations(data):
     if pa_val is None and pa.get('pa_max'):
         pa_val = pa.get('pa_max')
     pa_typical_max = _PA_TYPICAL_MAX.get(material, 0.050)
-    if pa_val and pa_val > pa_typical_max and pa.get('samples', 0) > 50:
+    # Use a 0.001 deadband so borderline values (e.g. 0.0455 displayed as 0.045)
+    # don't trigger a confusing warning that looks like 0.045 > 0.045.
+    if pa_val and pa_val > pa_typical_max + 0.001 and pa.get('samples', 0) > 50:
         suggested_pa = round(pa_typical_max - 0.005, 4)
         rec = {
             'severity': 'warn', 'category': 'Pressure Advance',
-            'title': f'PA value ({pa_val:.3f}) may be too high for {material or "this material"}',
+            'title': f'PA value ({pa_val:.4f}) may be too high for {material or "this material"}',
             'detail': (
-                f'Your Pressure Advance is {pa_val:.3f}, which is above the typical '
+                f'Your Pressure Advance is {pa_val:.4f}, which is above the typical '
                 f'range for {material or "this material"} (≤{pa_typical_max:.3f}). '
                 f'High PA causes over-compensation at corners — the extruder pushes '
                 f'too much filament into direction changes, producing bulging or rough '
