@@ -2,9 +2,9 @@
 
 **Stop calibrating. Start printing.**
 
-Klipper Adaptive Flow eliminates manual tuning of temperature, pressure advance, fan speed, and flow — the things that make 3D printing frustrating. Tell it what hardware you have, and it handles the rest. Every material, every print, automatically.
+Automatic temperature, pressure advance, and fan control for **E3D Revo** hotends on Klipper. Tell it which Revo nozzle and heater you have, and it handles the rest. Every material, every print, automatically.
 
-Think of it as Bambu Lab's auto-calibration system, but for Klipper.
+Think of it as Bambu Lab's auto-calibration, but for your Revo.
 
 ## The Problem
 
@@ -19,10 +19,10 @@ Most people don't do any of this. They use slicer defaults and live with mediocr
 
 ## The Solution
 
-Set two things:
+Tell it which Revo you have:
 ```ini
-variable_use_high_flow_nozzle: True    # True for Revo HF, False for Revo Standard
-variable_sc_heater_wattage: 40         # Your heater: 40, 60, 70, or 80
+variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
+variable_sc_heater_wattage: 40         # Revo heater: 40W (stock) or 60W/70W/80W upgrade
 ```
 
 That's it. Adaptive Flow handles:
@@ -39,8 +39,8 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
-- **No calibration prints.** PA and flow values come from known-good data for E3D Revo hotends, validated across direct-drive CoreXY setups.
-- **Hardware-aware.** A 40W heater and a 60W heater need completely different thermal strategies. The system auto-scales every material profile to your heater wattage — not a generic one-size-fits-all.
+- **No calibration prints.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone means these values are consistent across every Revo hotend.
+- **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
 - **Learns from every print.** The analysis dashboard tracks trends across prints and recommends improvements. The more you print, the better it gets.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything.
 
@@ -59,8 +59,8 @@ The script handles everything: copies files, configures `printer.cfg`, starts se
 
 Edit `~/printer_data/config/auto_flow_user.cfg`:
 ```ini
-variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard
-variable_sc_heater_wattage: 40         # Your heater wattage (40, 60, 70, 80)
+variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
+variable_sc_heater_wattage: 40         # Revo heater wattage (40 = stock, 60/70/80 = upgrade)
 ```
 
 ### 3. Set Your Slicer Start G-code
@@ -97,7 +97,7 @@ Set your slicer temperature to the filament's recommended base temp, slice, and 
 
 ## Heater Auto-Scaling
 
-Material profiles are tuned for a 40W heater (Revo stock). If you have a more powerful heater, the system **automatically scales** all thermal parameters — no per-material overrides needed.
+Material profiles are tuned for the stock 40W Revo heater. If you've upgraded to a higher-wattage cartridge, the system **automatically scales** all thermal parameters — no per-material overrides needed.
 
 | Heater | PETG boost at 10mm³/s | Behaviour |
 |--------|----------------------|-----------|
@@ -229,9 +229,10 @@ The update script:
 
 ## Requirements
 
-- E3D Revo hotend (HF or Standard)
-- Klipper firmware
-- 40W, 60W, 70W, or 80W heater cartridge
+- **E3D Revo hotend** — Revo Six, Revo Micro, or Revo Voron (HF or Standard nozzle)
+- **Klipper firmware** — any recent version
+- **Stock or upgraded heater** — 40W (stock), 60W, 70W, or 80W cartridge
+- **Direct-drive extruder** — PA defaults are tuned for direct-drive (Bowden users may need to override PA values)
 
 ## License
 
