@@ -22,7 +22,7 @@ Most people don't do any of this. They use slicer defaults and live with mediocr
 Tell it which Revo you have:
 ```ini
 variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
-variable_sc_heater_wattage: 40         # Revo heater: 40W (stock) or 60W/70W/80W upgrade
+variable_sc_heater_wattage: 40         # Revo heater: 40W (stock) or 60W (upgrade)
 ```
 
 That's it. Adaptive Flow handles:
@@ -60,7 +60,7 @@ The script handles everything: copies files, configures `printer.cfg`, starts se
 Edit `~/printer_data/config/auto_flow_user.cfg`:
 ```ini
 variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
-variable_sc_heater_wattage: 40         # Revo heater wattage (40 = stock, 60/70/80 = upgrade)
+variable_sc_heater_wattage: 40         # Revo heater wattage (40 = stock, 60 = upgrade)
 ```
 
 ### 3. Set Your Slicer Start G-code
@@ -103,7 +103,6 @@ Material profiles are tuned for the stock 40W Revo heater. If you've upgraded to
 |--------|----------------------|-----------|
 | 40W | 5.0°C | Modest, achievable boosts |
 | 60W | 6.5°C | Larger boosts, faster response |
-| 80W | 8.0°C | Aggressive boosts for speed printing |
 
 Upgrading your heater? Change one number:
 ```ini
@@ -231,7 +230,7 @@ The update script:
 
 - **E3D Revo hotend** — Revo Six, Revo Micro, or Revo Voron (HF or Standard nozzle)
 - **Klipper firmware** — any recent version
-- **Stock or upgraded heater** — 40W (stock), 60W, 70W, or 80W cartridge
+- **Stock or upgraded heater** — 40W (stock) or 60W upgrade cartridge
 - **Direct-drive extruder** — PA defaults are tuned for direct-drive (Bowden users may need to override PA values)
 
 ## License
