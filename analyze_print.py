@@ -1895,13 +1895,13 @@ def generate_recommendations(data):
         if chg:
             rec['config_changes'] = [chg]
         recs.append(rec)
-    elif max_pwm >= 0.98 and lag_pct <= 2:
+    elif max_pwm >= 0.98 and lag_pct <= 5:
         # Hits 100% briefly but keeps up — this is normal PID ramp-up
         recs.append({
             'severity': 'good', 'category': 'Heater',
             'title': 'Heater keeping up well',
-            'detail': f'Max PWM hit {max_pwm*100:.0f}% during ramp-up (normal PID behavior) but only {lag_pct:.1f}% lag time \u2014 the heater is reaching target quickly.',
-            'action': 'No changes needed. Brief 100% PWM during temperature transitions is expected.',
+            'detail': f'Max PWM hit {max_pwm*100:.0f}% during ramp-up (normal PID behavior) but only {lag_pct:.1f}% lag time \u2014 the heater is reaching target quickly. Avg duty was {avg_pwm*100:.0f}%.',
+            'action': 'No changes needed. Brief 100% PWM spikes are normal \u2014 Klipper\u2019s PID briefly goes full power on every temperature transition. What matters is average duty and thermal lag, both of which are healthy.',
         })
     elif max_pwm > 0 and avg_pwm < 0.60:
         recs.append({
@@ -1909,6 +1909,14 @@ def generate_recommendations(data):
             'title': 'Plenty of heater headroom',
             'detail': f'Avg PWM was only {avg_pwm*100:.0f}% \u2014 the heater barely broke a sweat.',
             'action': 'You could increase flow_k by 0.1\u20130.3 to get better flow adaptation, or print faster.',
+        })
+    elif max_pwm > 0 and avg_pwm < 0.85 and lag_pct <= 10:
+        # Heater is working but coping fine — not saturated
+        recs.append({
+            'severity': 'good', 'category': 'Heater',
+            'title': 'Heater is healthy',
+            'detail': f'Avg PWM was {avg_pwm*100:.0f}% with {lag_pct:.0f}% lag time. Max/P95 hitting 100% in the graphs is normal PID ramp-up, not saturation.',
+            'action': 'No changes needed. Your heater is keeping up with flow demand. The "Max PWM 100%" you see in graphs is Klipper\u2019s PID briefly going full-power during temperature transitions \u2014 this is expected and healthy.',
         })
 
     # --- Heater headroom by flow bracket ---
@@ -1930,16 +1938,28 @@ def generate_recommendations(data):
                     saturated_brackets.append(bracket_key)
         if saturated_brackets:
             first = saturated_brackets[0]
-            rec = {
-                'severity': 'warn', 'category': 'Heater',
-                'title': f'Heater saturates above {first} mm\u00b3/s',
-                'detail': f'P95 PWM exceeds 95% in flow brackets: {", ".join(saturated_brackets)}.',
-                'action': f'You\u2019re hitting heater limits at {first}+ mm\u00b3/s. Reduce flow_k to lower temperature demand, or cap speeds in your slicer to stay under this flow rate.',
-            }
-            chg = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
-            if chg:
-                rec['config_changes'] = [chg]
-            recs.append(rec)
+            # If the heater is actually coping (low avg PWM, low lag), this is
+            # just high-flow brackets seeing brief PID ramp-up — not a problem.
+            genuinely_struggling = avg_pwm >= 0.80 and lag_pct > 5
+            if genuinely_struggling:
+                rec = {
+                    'severity': 'warn', 'category': 'Heater',
+                    'title': f'Heater struggling above {first} mm\u00b3/s',
+                    'detail': f'P95 PWM exceeds 95% in flow brackets: {", ".join(saturated_brackets)}, and avg duty is {avg_pwm*100:.0f}% with {lag_pct:.0f}% thermal lag \u2014 the heater genuinely can\u2019t keep up at these flow rates.',
+                    'action': f'Reduce speeds in your slicer to keep flow under {first} mm\u00b3/s, or consider upgrading to a 60W heater.',
+                }
+                chg = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
+                if chg:
+                    rec['config_changes'] = [chg]
+                recs.append(rec)
+            else:
+                # Heater coping fine overall — just informational
+                recs.append({
+                    'severity': 'info', 'category': 'Heater',
+                    'title': f'Heater at capacity above {first} mm\u00b3/s (not a problem)',
+                    'detail': f'P95 PWM is high in brackets: {", ".join(saturated_brackets)}. But avg duty is only {avg_pwm*100:.0f}% and thermal lag is {lag_pct:.0f}% \u2014 the heater is keeping up fine overall. Brief 100% spikes at high flow are normal PID behavior, not saturation.',
+                    'action': f'No action needed \u2014 your print quality is not affected. A 60W heater would give more margin, but the 40W is handling this workload.',
+                })
 
     # --- Thermal lag ---
     lag_pct = lag.get('lag_pct', 0)
@@ -1962,17 +1982,25 @@ def generate_recommendations(data):
         if changes:
             rec['config_changes'] = changes
         recs.append(rec)
-    elif lag_pct > 5:
+    elif lag_pct > 8:
         rec = {
             'severity': 'warn', 'category': 'Thermal',
             'title': f'Moderate thermal lag ({lag_pct:.0f}% of print)',
-            'detail': f'The heater occasionally fell behind target ({len(episodes)} lag episodes, max {max_lag_val:.1f}\u00b0C).',
+            'detail': f'The heater fell behind target for {lag_pct:.0f}% of the print ({len(episodes)} episodes, max {max_lag_val:.1f}\u00b0C). This may affect extrusion consistency.',
             'action': 'Try increasing ramp rate to pre-heat faster.',
         }
         c = _suggest_change('ramp_rate_rise', 'increase', 1.0, minimum=2.0, maximum=8.0)
         if c:
             rec['config_changes'] = [c]
         recs.append(rec)
+    elif lag_pct > 3:
+        # Minor lag — normal for small heaters, not worth alarming the user
+        recs.append({
+            'severity': 'info', 'category': 'Thermal',
+            'title': f'Minor thermal lag ({lag_pct:.0f}% of print)',
+            'detail': f'The heater briefly fell behind target in {len(episodes)} episodes (max {max_lag_val:.1f}\u00b0C). This is typical for smaller heaters and not visible in print quality.',
+            'action': 'No action needed. Brief thermal lag during flow spikes is normal, especially with a 40W heater. A 60W heater would reduce this further.',
+        })
     elif lag.get('total_samples', 0) > 50 and lag_pct < 1:
         recs.append({
             'severity': 'good', 'category': 'Thermal',
@@ -3195,8 +3223,9 @@ ca.innerHTML='';
 var hr=D.headroom;
 if(hr&&Object.keys(hr).length){
 ca.innerHTML+='<div class="box"><h3>Heater Headroom by Flow Rate</h3>'+
-'<p class="box-desc">Shows heater power at different flow rates. Blue = average, Orange = 95th percentile, Red = peak. '+
-'Bars near 100% mean the heater is running flat out. If P95 or Max hit 100% at your typical flow rates, your heater is the bottleneck.</p>'+mc('c4')+'</div>';
+'<p class="box-desc">Shows heater power at different flow rates. Blue = average (most important), Orange = 95th percentile, Red = peak. '+
+'<strong>Max and P95 hitting 100% is normal</strong> \u2014 Klipper\u2019s PID controller briefly goes full power during every temperature change. '+
+'What matters is the <span class="good">blue (average) bar</span>: under 80% = healthy, 80\u201390% = working hard, 90%+ = struggling.</p>'+mc('c4')+'</div>';
 var ks=Object.keys(hr).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 ks=ks.filter(function(k){return hr[k].count>=3});
 setTimeout(function(){
