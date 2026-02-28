@@ -2025,8 +2025,9 @@ def generate_recommendations(data):
     # Detect when PA is above typical range for the material, which causes
     # bulging/rough corners even though oscillation stability is fine.
     _PA_TYPICAL_MAX = {
-        'PLA': 0.045, 'PETG': 0.050, 'ABS': 0.050, 'ASA': 0.050,
-        'TPU': 0.090, 'PA': 0.055, 'PC': 0.055, 'NYLON': 0.055,
+        'PLA': 0.040, 'PETG': 0.045, 'ABS': 0.045, 'ASA': 0.045,
+        'TPU': 0.070, 'PA': 0.045, 'PC': 0.050, 'NYLON': 0.045,
+        'HIPS': 0.050,
     }
     pa_val = pa.get('pa_min')  # when stable, pa_min == pa_max
     if pa_val is None and pa.get('pa_max'):
