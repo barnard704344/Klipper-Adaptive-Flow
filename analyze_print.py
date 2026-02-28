@@ -2021,6 +2021,43 @@ def generate_recommendations(data):
             'action': 'No changes needed. PA tuning is good.',
         })
 
+    # --- PA absolute value check ---
+    # Detect when PA is above typical range for the material, which causes
+    # bulging/rough corners even though oscillation stability is fine.
+    _PA_TYPICAL_MAX = {
+        'PLA': 0.045, 'PETG': 0.050, 'ABS': 0.050, 'ASA': 0.050,
+        'TPU': 0.090, 'PA': 0.055, 'PC': 0.055, 'NYLON': 0.055,
+    }
+    pa_val = pa.get('pa_min')  # when stable, pa_min == pa_max
+    if pa_val is None and pa.get('pa_max'):
+        pa_val = pa.get('pa_max')
+    pa_typical_max = _PA_TYPICAL_MAX.get(material, 0.050)
+    if pa_val and pa_val > pa_typical_max and pa.get('samples', 0) > 50:
+        suggested_pa = round(pa_typical_max - 0.005, 4)
+        rec = {
+            'severity': 'warn', 'category': 'Pressure Advance',
+            'title': f'PA value ({pa_val:.3f}) may be too high for {material or "this material"}',
+            'detail': (
+                f'Your Pressure Advance is {pa_val:.3f}, which is above the typical '
+                f'range for {material or "this material"} (≤{pa_typical_max:.3f}). '
+                f'High PA causes over-compensation at corners — the extruder pushes '
+                f'too much filament into direction changes, producing bulging or rough '
+                f'corners. This is separate from PA oscillation (which is stable).'
+            ),
+            'action': (
+                f'Try lowering default_pa to ~{suggested_pa:.3f}. '
+                f'For precise tuning, print a PA calibration pattern with '
+                f'{material or "this material"} and pick the line with the sharpest corners.'
+            ),
+        }
+        c = _suggest_change('default_pa', 'reduce',
+                            round(pa_val - suggested_pa, 4),
+                            material=material,
+                            minimum=0.020, maximum=pa_val - 0.002)
+        if c:
+            rec['config_changes'] = [c]
+        recs.append(rec)
+
     # --- Banding risk ---
     high_risk = ba.get('high_risk_events', 0)
     culprit = ba.get('likely_culprit', '')
