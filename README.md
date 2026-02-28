@@ -1,312 +1,238 @@
 # Klipper Adaptive Flow
 
-Automatic temperature and pressure advance control for E3D Revo hotends on Klipper. Dynamically boosts nozzle temperature during high-flow sections and adjusts PA in real-time — no manual tuning required.
+**Stop calibrating. Start printing.**
 
-## Features
+Klipper Adaptive Flow eliminates manual tuning of temperature, pressure advance, fan speed, and flow — the things that make 3D printing frustrating. Tell it what hardware you have, and it handles the rest. Every material, every print, automatically.
 
-- **Dynamic temperature** — flow/speed/acceleration-based boost
-- **Dynamic PA** — scales with temperature boost automatically
-- **Smart Cooling** — adjusts part fan based on flow rate and layer time
-- **5-second lookahead** — pre-heats before flow spikes
-- **Dynamic Z-Window (DynZ)** — learns and adapts to convex surfaces
-- **Multi-object temperature management** — prevents thermal runaway between sequential objects
-- **Per-material profiles** — PLA (tuned for HF), PETG, ABS, ASA, TPU, Nylon, PC, HIPS (user-editable)
-- **First layer skip** — consistent squish on layer 1
-- **Heater monitoring** — won't request more than your heater can deliver
-- **Web dashboard** — browser-based analysis at `http://<printer-ip>:7127` (no SSH needed)
+Think of it as Bambu Lab's auto-calibration system, but for Klipper.
 
-## Installation
+## The Problem
 
-**Option 1: Automatic Setup (Recommended)**
-```bash
-cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
-cd Klipper-Adaptive-Flow
-./update.sh
-```
-The setup script will automatically:
-- Copy Python modules (`gcode_interceptor.py`, `extruder_monitor.py`) to Klipper extras
-- Copy configuration files to `~/printer_data/config/`
-- Auto-configure `printer.cfg` with required includes (creates backup first)
-- Create user configuration templates (`auto_flow_user.cfg`, `material_profiles_user.cfg`)
-- Start web dashboard service on port 7127
-- Restart Klipper to apply changes
+Every time you switch materials or try a new filament brand, you're supposed to:
+- Print PA calibration patterns and squint at lines
+- Run flow tests and measure walls with calipers
+- Tune fan speeds per material, per feature, per layer time
+- Figure out what temperature to print at for your specific speed and flow rate
+- Redo everything when you change your nozzle or heater
 
-After installation, open `http://<printer-ip>:7127` in your browser for the analysis dashboard.
+Most people don't do any of this. They use slicer defaults and live with mediocre prints. The few who do calibrate spend hours on it — and it's only valid for that one filament on that one printer at that one speed.
 
-**Option 2: Manual Setup**
-```bash
-cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
-cd Klipper-Adaptive-Flow
-cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
-cp auto_flow_defaults.cfg material_profiles_defaults.cfg ~/printer_data/config/
-cp auto_flow_user.cfg.example ~/printer_data/config/auto_flow_user.cfg
-cp material_profiles_user.cfg.example ~/printer_data/config/material_profiles_user.cfg
-sudo systemctl restart klipper
-```
+## The Solution
 
-Manually add to `printer.cfg`:
+Set two things:
 ```ini
-[include auto_flow_defaults.cfg]
-[include auto_flow_user.cfg]
-[include material_profiles_defaults.cfg]
-[include material_profiles_user.cfg]  # Optional: for custom materials
-[gcode_interceptor]
-[extruder_monitor]
+variable_use_high_flow_nozzle: True    # True for Revo HF, False for Revo Standard
+variable_sc_heater_wattage: 40         # Your heater: 40, 60, 70, or 80
 ```
 
-**Edit your settings:** Open `~/printer_data/config/auto_flow_user.cfg` and uncomment/modify any values you want to customize.
+That's it. Adaptive Flow handles:
 
-## Updating
+| What | How |
+|------|-----|
+| **Temperature** | Dynamically boosts during high-flow moves, pre-heats 5 seconds ahead |
+| **Pressure Advance** | Sets correct PA for your material, adjusts in real-time as temp changes |
+| **Fan speed** | Adapts to flow rate, layer time, and heater capacity |
+| **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
+| **Complex geometry** | Learns where domes and overhangs cause trouble, adapts on future prints |
 
-**Option 1: Smart Update Script (Recommended)**
+Your slicer just sends `MATERIAL=PETG` and the system does the rest.
+
+## What Makes This Different
+
+- **No calibration prints.** PA and flow values come from known-good data for E3D Revo hotends, validated across direct-drive CoreXY setups.
+- **Hardware-aware.** A 40W heater and a 60W heater need completely different thermal strategies. The system auto-scales every material profile to your heater wattage — not a generic one-size-fits-all.
+- **Learns from every print.** The analysis dashboard tracks trends across prints and recommends improvements. The more you print, the better it gets.
+- **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything.
+
+## Quick Start
+
+### 1. Install (2 minutes)
 ```bash
-cd ~/Klipper-Adaptive-Flow
+cd ~ && git clone https://github.com/barnard704344/Klipper-Adaptive-Flow.git
+cd Klipper-Adaptive-Flow
 ./update.sh
 ```
 
-The update script provides comprehensive automatic updates with safety features:
+The script handles everything: copies files, configures `printer.cfg`, starts services, restarts Klipper.
 
-### What It Does Automatically
-- **Updates system files**: Python modules and default configuration files
-- **Preserves your settings**: Never overwrites `auto_flow_user.cfg` or `material_profiles_user.cfg`
-- **Auto-configures printer.cfg**: Adds required includes if missing:
-  - `[include auto_flow_defaults.cfg]`
-  - `[include auto_flow_user.cfg]`
-  - `[include material_profiles_defaults.cfg]`
-  - `[gcode_interceptor]`
-  - `[extruder_monitor]`
-- **Creates backups**: Before modifying printer.cfg, saves to `printer.cfg.backup.YYYYMMDD_HHMMSS` (e.g., `printer.cfg.backup.20260212_143025`)
-- **Restarts Klipper**: Applies changes automatically
-- **Dashboard service**: Installs and starts the web dashboard on port 7127
+### 2. Set Your Hardware
 
-### Migration Support
-If you're upgrading from an older version with legacy config files:
-- **Old configs detected**: Automatically backs up `auto_flow.cfg` → `auto_flow.cfg.backup.YYYYMMDD_HHMMSS`
-- **Interactive migration**: Script pauses and prompts you to review backups and copy custom settings to new `*_user.cfg` files
-- **Safe transition**: Old files are preserved as backups, never deleted
-
-### Service Cleanup
-- **Deprecated service removal**: Automatically removes old `adaptive-flow-hook.service` if present
-
-### First-Time Setup
-If running the script on a new installation:
-- Automatically creates `auto_flow_user.cfg` from template
-- Automatically creates `material_profiles_user.cfg` from template
-- No manual file creation needed
-
-**Option 2: Manual Update**
-```bash
-cd ~/Klipper-Adaptive-Flow
-git pull
-cp gcode_interceptor.py extruder_monitor.py ~/klipper/klippy/extras/
-cp auto_flow_defaults.cfg material_profiles_defaults.cfg ~/printer_data/config/
-sudo systemctl restart klipper
+Edit `~/printer_data/config/auto_flow_user.cfg`:
+```ini
+variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard
+variable_sc_heater_wattage: 40         # Your heater wattage (40, 60, 70, 80)
 ```
-⚠️ Manual updates require you to verify printer.cfg includes. `auto_flow_user.cfg` and `material_profiles_user.cfg` are never overwritten.
 
-## Slicer Setup
+### 3. Set Your Slicer Start G-code
 
-**Start G-code** (OrcaSlicer/PrusaSlicer/SuperSlicer):
+**OrcaSlicer / PrusaSlicer / SuperSlicer:**
 ```gcode
 PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer] MATERIAL={filament_type[0]}
 ```
 
-`{filament_type[0]}` is a built-in slicer variable that automatically passes the material type (PLA, PETG, ABS, etc.) from your filament profile. No manual setup needed — it just works.
+`{filament_type[0]}` is a built-in slicer variable — it automatically passes PLA, PETG, ABS, etc. No manual setup.
 
-**End G-code:**
-```gcode
-PRINT_END
-```
-
-**Important:** Disable Pressure Advance in your slicer — this system handles PA dynamically.
-
-See [PRINT_START.example](PRINT_START.example) for a complete example.
-
-## Printer Macros
-
-Add `AT_START` after heating and `AT_END` at print end:
+### 4. Add Macros to printer.cfg
 
 ```ini
 [gcode_macro PRINT_START]
 gcode:
     # ... your heating, homing, leveling ...
-    AT_START MATERIAL={params.MATERIAL|default("PLA")}   # Enable adaptive flow
+    AT_START MATERIAL={params.MATERIAL|default("PLA")}
 
 [gcode_macro PRINT_END]
 gcode:
-    AT_END                                # Disable adaptive flow
-    TURN_OFF_HEATERS                      # Must come AFTER AT_END
+    AT_END
+    TURN_OFF_HEATERS
     # ... your cooldown, park, etc ...
 ```
 
-The `MATERIAL` parameter is passed from your slicer's start G-code (see above). If omitted, material is auto-detected from extruder temperature.
+See [PRINT_START.example](PRINT_START.example) for a complete example.
 
-> **Important:** Call `AT_END` *before* `TURN_OFF_HEATERS` to ensure the control loop stops first.
+### 5. Print
 
-## Configuration
+Set your slicer temperature to the filament's recommended base temp, slice, and print. The system handles dynamic adjustments during the print.
 
-### Basic Setup (most users)
+**Important:** Disable Pressure Advance in your slicer — this system handles PA dynamically.
 
-Edit `auto_flow_user.cfg`:
+## Heater Auto-Scaling
+
+Material profiles are tuned for a 40W heater (Revo stock). If you have a more powerful heater, the system **automatically scales** all thermal parameters — no per-material overrides needed.
+
+| Heater | PETG boost at 10mm³/s | Behaviour |
+|--------|----------------------|-----------|
+| 40W | 5.0°C | Modest, achievable boosts |
+| 60W | 6.5°C | Larger boosts, faster response |
+| 80W | 8.0°C | Aggressive boosts for speed printing |
+
+Upgrading your heater? Change one number:
 ```ini
-variable_use_high_flow_nozzle: True   # False for standard Revo
+variable_sc_heater_wattage: 60
 ```
+Restart Klipper. Every material automatically gets appropriate scaling.
 
-Other useful overrides (uncomment in `auto_flow_user.cfg`):
-```ini
-# variable_filament_cross_section: 2.405  # Change for 2.85mm filament (6.382)
-# variable_pa_deadband: 0.003             # Min PA change before sending command
-# variable_flow_smoothing: 0.35           # Higher = smoother, lower = faster response
-```
+## Supported Materials
 
-### Material Profiles (optional customization)
+All materials work out of the box with hardware-appropriate defaults:
 
-Edit `material_profiles_user.cfg` to add custom materials or override defaults:
-```ini
-[gcode_macro _AF_PROFILE_PLA]
-variable_flow_k: 1.00           # Temp boost per mm³/s flow
-variable_speed_boost_k: 0.08    # Temp boost per mm/s above 100
-variable_max_boost: 30.0        # Max temp increase cap (°C)
-variable_max_temp: 245          # Absolute max (HF PLA tolerates higher)
-variable_ramp_rise: 5.0         # Heat up rate (°C/s)
-variable_ramp_fall: 2.5         # Cool down rate (°C/s)
-...
-```
+| Material | Default PA | Base Temp | Notes |
+|----------|-----------|-----------|-------|
+| PLA | 0.032 | 210–215°C | Tuned for high-flow variants |
+| PETG | 0.040 | 240–245°C | Conservative for 40W, scales up for 60W+ |
+| ABS | 0.040 | 245–250°C | Requires enclosure |
+| ASA | 0.040 | 250–255°C | Similar to ABS |
+| TPU | 0.060 | 220–225°C | Gentle ramps, slow speeds |
+| Nylon | 0.040 | 250–255°C | Dry filament before printing |
+| PC | 0.045 | 275–280°C | High-temp hotend + enclosure |
+| HIPS | 0.045 | 230–235°C | Support material |
 
-### Recommended Start Temperatures
+Custom materials: copy any profile to `material_profiles_user.cfg` and adjust.
 
-Set these base temperatures in your slicer. The system will automatically boost during high-flow sections.
+## Analysis Dashboard
 
-| Material | Low Flow<br>(<10mm³/s) | Medium Flow<br>(10-15mm³/s) | High Flow<br>(15-20mm³/s) | Notes |
-|----------|----------------------|---------------------------|-------------------------|-------|
-| **PLA** | 205-210°C | 215-220°C | 220-225°C | Tuned for high-flow variants (PLA+, PLA HF) |
-| **PETG** | — | 240°C | — | Start at 240°C for most use cases |
-| **ABS** | 235-240°C | 245-250°C | 250-255°C | Requires enclosure for best results |
-| **ASA** | 240-245°C | 250-255°C | 255-260°C | Similar to ABS, slightly higher temps |
-| **TPU** | 215-220°C | 220-225°C | 225-230°C | Keep speeds low, gentle ramps |
-| **Nylon** | 240-245°C | 250-255°C | 255-260°C | Dry filament thoroughly before printing |
-| **PC** | 265-270°C | 275-280°C | 280-285°C | Requires high-temp hotend and enclosure |
-| **HIPS** | 220-225°C | 230-235°C | 235-240°C | Support material, similar to ABS |
+Open `http://<printer-ip>:7127` in your browser. No SSH, no terminal.
 
-**Flow Rate Guide:**
-- **Low flow** (<10mm³/s): Standard detail prints, slower speeds
-- **Medium flow** (10-15mm³/s): General purpose, balanced speed/quality
-- **High flow** (15-20mm³/s): Speed printing with high-flow filaments
+The dashboard shows:
+- **Live print monitoring** — temperature, flow, PA, fan in real-time
+- **Per-material history** — track how each material performs across prints
+- **Recommendations** — actionable suggestions with one-click Apply buttons
+- **Banding analysis** — identifies what's causing print artifacts
+- **Thermal headroom** — shows if your heater is the bottleneck
 
-> **PLA Tuned for High Flow:** The default PLA profile is optimized for high-flow variants (PLA+, PLA HF). At 18mm³/s with 215°C base → boosts to 233°C. Use 215-220°C base temp in your slicer for high-speed printing.
-
-**[Full configuration reference →](docs/CONFIGURATION.md)**
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `AT_START MATERIAL=X` | Enable adaptive flow (call in PRINT_START) |
-| `AT_END` | Disable adaptive flow (call in PRINT_END) |
-| `AT_STATUS` | Show current state, flow, boost, PA |
-| `AT_DYNZ_STATUS` | Show Dynamic Z-Window learning state |
-| `AT_SC_STATUS` | Show Smart Cooling status |
-| `AT_SET_PA MATERIAL=X PA=Y` | Save calibrated PA |
-| `AT_LIST_PA` | Show all PA values |
-
-**[Full command reference →](docs/COMMANDS.md)**
+The more you print, the smarter the recommendations get.
 
 ## How It Works
 
-1. **Flow boost**: Temperature increases with volumetric flow rate
-2. **Speed boost**: Extra heating for high-speed thin walls (>100mm/s)
-3. **Lookahead**: Predicts flow 5 seconds ahead for pre-heating
-4. **Dynamic PA**: Automatically reduces PA as temperature increases
+During a print, the system continuously:
 
-Example during a print:
+1. **Measures** volumetric flow rate from extruder velocity
+2. **Predicts** upcoming flow changes 5 seconds ahead (lookahead)
+3. **Adjusts** nozzle temperature proportional to flow demand
+4. **Scales** PA as temperature changes (hotter = less viscous = less PA needed)
+5. **Controls** fan speed based on flow, layer time, and heater duty cycle
+6. **Learns** problem zones (DynZ) and adapts on future layers
+
+All adjustments stay within safe limits defined by your hardware.
+
+## What You Don't Need To Do
+
+- ~~Print PA calibration patterns~~
+- ~~Run flow tests with calipers~~
+- ~~Create per-material fan profiles~~
+- ~~Calculate volumetric flow limits~~
+- ~~Tune temperature for different speeds~~
+- ~~Adjust settings when switching nozzles~~
+- ~~Manually override anything for heater upgrades~~
+
+## Advanced (Optional)
+
+Most users never need to touch these. They exist for edge cases and experimentation.
+
+<details>
+<summary>Configuration files</summary>
+
+| File | Purpose |
+|------|---------|
+| `auto_flow_user.cfg` | Your hardware settings (never overwritten by updates) |
+| `material_profiles_user.cfg` | Custom material overrides (never overwritten by updates) |
+| `auto_flow_defaults.cfg` | System defaults (updated by git) |
+| `material_profiles_defaults.cfg` | Material profiles (updated by git) |
+
+</details>
+
+<details>
+<summary>Commands</summary>
+
+| Command | Description |
+|---------|-------------|
+| `AT_START MATERIAL=X` | Enable (call in PRINT_START) |
+| `AT_END` | Disable (call in PRINT_END) |
+| `AT_STATUS` | Show current state |
+| `AT_DYNZ_STATUS` | Show DynZ learning state |
+| `AT_SC_STATUS` | Show Smart Cooling status |
+| `AT_SET_PA MATERIAL=X PA=Y` | Override PA for a material |
+| `AT_LIST_PA` | Show all PA values |
+
+</details>
+
+<details>
+<summary>Features in detail</summary>
+
+- **Dynamic Temperature** — Flow, speed, and acceleration-based boost with soft gating
+- **Dynamic PA** — Scales with temperature boost (hotter = lower viscosity = less PA)
+- **Smart Cooling** — Flow-based + layer-time + heater-adaptive fan control
+- **5-Second Lookahead** — Pre-heats before flow spikes arrive
+- **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers
+- **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
+- **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
+- **First Layer Skip** — No boost on layer 1 for consistent squish
+
+[Full configuration reference →](docs/CONFIGURATION.md) · [DynZ docs →](docs/DYNZ.md) · [Smart Cooling docs →](docs/SMART_COOLING.md)
+
+</details>
+
+<details>
+<summary>Updating</summary>
+
+```bash
+cd ~/Klipper-Adaptive-Flow && ./update.sh
 ```
-Base temp: 230°C, Base PA: 0.060
-High flow detected → Boost +20°C → Temp 250°C, PA 0.048
-```
 
-## Dynamic Z-Window (DynZ)
+The update script:
+- Updates system files, preserves your settings
+- Auto-configures `printer.cfg` if includes are missing
+- Creates backups before any changes
+- Restarts Klipper and dashboard automatically
+- Handles migration from older versions
 
-DynZ is an intelligent learning system that detects and adapts to challenging print geometries like convex surfaces, domes, and spheres.
-
-- **Learning**: Divides Z-height into bins and tracks stress conditions
-- **Detection**: Flags when speed is high + flow is low + heater is working hard
-- **Relief**: Reduces temperature boost (default) or acceleration to ease thermal demand
-- **Memory**: Stress patterns persist, so it "remembers" where domes start
-- **Smart persistence**: Scores only written to disk on significant changes (reduces SD card wear)
-
-Check status during a print:
-```
-AT_DYNZ_STATUS
-```
-
-**[Full DynZ documentation →](docs/DYNZ.md)**
-
-## Smart Cooling
-
-Smart Cooling automatically adjusts the part cooling fan based on flow rate and layer time.
-
-- **Flow-based**: Reduces fan at high flow (fast-moving plastic creates its own airflow)
-- **Layer time**: Boosts fan for short/fast layers (prevents heat buildup)
-- **Lookahead**: Pre-adjusts fan 5 seconds ahead of flow changes
-- **Material-aware**: Each profile has its own min/max fan limits
-
-Check status during a print:
-```
-AT_SC_STATUS
-```
-
-**[Full Smart Cooling documentation →](docs/SMART_COOLING.md)**
-
-## Multi-Object Temperature Management
-
-When printing multiple objects sequentially, the nozzle temperature from the first object may be higher than the target for the next object, potentially triggering Klipper's thermal runaway protection. This feature automatically pauses between objects to allow temperature stabilization.
-
-- **Automatic**: Works with EXCLUDE_OBJECT (modern slicers) and M486 (legacy)
-- **Smart waiting**: Only pauses if temperature difference exceeds tolerance (default ±5°C)
-- **Safe**: Waits until temperature stabilizes (no timeout risk)
-- **Zero config**: Enabled by default, works with OrcaSlicer, PrusaSlicer, SuperSlicer
-
-### Configuration
-
-Edit `auto_flow_user.cfg` to customize:
-
-```ini
-variable_multi_object_temp_wait: True     # Enable/disable feature
-variable_temp_wait_tolerance: 5.0         # Temperature tolerance (°C)
-```
-
-### Slicer Setup
-
-Enable object labeling in your slicer:
-
-**OrcaSlicer/PrusaSlicer**: Print Settings → Output options → Label objects
-**SuperSlicer**: Print Settings → Output options → Exclude objects
-
-This feature works automatically—no G-code changes needed.
+</details>
 
 ## Requirements
 
 - E3D Revo hotend (HF or Standard)
 - Klipper firmware
-- 40W or 60W heater
-
-## File Structure
-
-| File | Purpose |
-|------|---------|
-| `auto_flow_defaults.cfg` | System defaults (updated by git) |
-| `auto_flow_user.cfg` | Your custom settings (never overwritten) |
-| `material_profiles_defaults.cfg` | System material profiles (updated by git) |
-| `material_profiles_user.cfg` | Custom material profiles (never overwritten) |
-| `extruder_monitor.py` | Lookahead + logging (Klipper extra) |
-| `gcode_interceptor.py` | G-code parsing (Klipper extra) |
-| `analyze_print.py` | Banding detection, analysis & web dashboard |
-| `adaptive_flow_dashboard.service` | Systemd service for auto-start dashboard |
-| `update.sh` | Smart updater (auto-configures, migrates, backs up) |
+- 40W, 60W, 70W, or 80W heater cartridge
 
 ## License
 
 MIT
-
-
-
