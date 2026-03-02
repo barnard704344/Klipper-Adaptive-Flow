@@ -34,6 +34,7 @@ That's it. Adaptive Flow handles:
 | **Fan speed** | Adapts to flow rate, layer time, and heater capacity |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
 | **Complex geometry** | Learns where domes and overhangs cause trouble, adapts on future prints |
+| **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, recommends specific settings |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
@@ -41,7 +42,7 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 - **No calibration prints.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone means these values are consistent across every Revo hotend.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
-- **Learns from every print.** The analysis dashboard tracks trends across prints and recommends improvements. The more you print, the better it gets.
+- **Learns from every print.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the better it gets.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything.
 
 ## Quick Start
@@ -135,10 +136,11 @@ The dashboard shows:
 - **Live print monitoring** — temperature, flow, PA, fan in real-time
 - **Per-material history** — track how each material performs across prints
 - **Recommendations** — actionable suggestions with one-click Apply buttons
+- **Slicer diagnostics** — extracts settings from your G-code, cross-references acceleration values with banding data, and recommends specific slicer changes
 - **Banding analysis** — identifies what's causing print artifacts
 - **Thermal headroom** — shows if your heater is the bottleneck
 
-The more you print, the smarter the recommendations get.
+Every chart has tooltips explaining what you're looking at and what "good" looks like. The more you print, the smarter the recommendations get.
 
 ## How It Works
 
@@ -202,11 +204,12 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Smart Cooling** — Flow-based + layer-time + heater-adaptive fan control
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers
+- **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, recommends specific settings
 - **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
 - **First Layer Skip** — No boost on layer 1 for consistent squish
 
-[Full configuration reference →](docs/CONFIGURATION.md) · [DynZ docs →](docs/DYNZ.md) · [Smart Cooling docs →](docs/SMART_COOLING.md)
+[Full configuration reference →](docs/CONFIGURATION.md) · [Analysis dashboard →](docs/ANALYSIS.md) · [DynZ docs →](docs/DYNZ.md) · [Smart Cooling docs →](docs/SMART_COOLING.md)
 
 </details>
 

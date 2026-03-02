@@ -34,25 +34,26 @@ Material buttons appear dynamically based on the materials found in your log dir
 
 ### Summary Cards
 
-Six cards along the top give an at-a-glance health overview:
+Five cards along the top give an at-a-glance health overview. Each card has a **?** tooltip explaining the metric, what "good" looks like, and when to worry:
 
 | Card | What It Shows |
 |------|---------------|
 | **Material** | Filament type and print duration (or "PRINTING" + elapsed time during a live print) |
 | **Temp Boost** | Average and max temperature boost applied by Adaptive Flow |
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
-| **Banding Risk** | Number of high-risk events and the diagnosed culprit |
-| **Thermal Lag** | Percentage of print time where actual temp fell behind target |
-| **PA Stability** | PA range and number of oscillation zones |
+| **DynZ** | Percentage of layers where acceleration was reduced for complex geometry |
+| **Banding** | Number of high-risk events and the diagnosed culprit |
 
 In aggregate mode, cards display weighted averages across all prints of that material, with print count and total duration.
 
 ### Tab Navigation
 
-Below the cards, tabs switch between analysis views:
+Below the cards, tabs switch between analysis views. Each tab has a **?** tooltip describing what the chart shows and how to interpret it:
 
 | Tab | Contents |
 |-----|----------|
+| **⚙ Recommendations** | Actionable tuning suggestions with one-click Apply buttons |
+| **✂ Slicer** | Slicer settings extracted from G-code, acceleration fingerprint chart, and specific setting recommendations |
 | **Timeline** | Temperature and flow/speed/PWM charts over time |
 | **Z-Height** | Banding risk bar chart by Z-layer + problem zone breakdown |
 | **Heater** | PWM vs flow-rate brackets + thermal lag episodes |
@@ -60,6 +61,8 @@ Below the cards, tabs switch between analysis views:
 | **DynZ** | DynZ activation percentage and stress by Z-height |
 | **Distribution** | Speed and flow rate histograms — where your printer spends its time |
 | **Trends** | Print-over-print line charts tracking metrics across sessions |
+
+Every chart includes a description paragraph explaining what you're looking at — colour coding, what "good" looks like, and what to watch for. No prior knowledge required.
 
 ### Session Selector
 
@@ -147,6 +150,37 @@ All charts are built with Chart.js v4 and support:
 - **Legend toggling** — click legend items to show/hide individual data series
 - **Responsive layout** — charts resize to fit any screen (desktop, tablet, mobile)
 
+### Slicer Tab
+
+The Slicer tab extracts settings from your G-code file's footer and cross-references them with observed print data. It works with OrcaSlicer, BambuStudio, PrusaSlicer, and SuperSlicer — any slicer that writes `; key = value` comments.
+
+**Acceleration Fingerprint** — a horizontal bar chart showing each distinct acceleration value the slicer used during the print, what percentage of print time was spent at that value, and which slicer feature maps to it. For example:
+
+```
+8000 (Outer Wall, Inner Wall, Bridge)  ████████████████████████ 72.7%
+10000 (Default, Sparse Infill)         ██████ 17.9%
+12000 (Travel)                         ██ 4.8%
+6000 (Top Surface)                     █ 2.4%
+2000 (Initial Layer)                   █ 2.3%
+```
+
+Fewer distinct values = fewer banding-causing transitions.
+
+**Accel Breakdown** — table with exact sample counts and percentages per acceleration value.
+
+**Issues & Suggestions** — when the diagnosis finds problematic settings, it shows specific before → after recommendations:
+
+| Issue | What It Detects | Example Suggestion |
+|-------|-----------------|-------------------|
+| Bridge accel mismatch | Bridge acceleration far below outer wall | Bridge acceleration 1600 → 8000 |
+| Bridge flow too low | Bridge flow ratio causing under-extrusion | Bridge flow 0.9 → 1.0 |
+| Inner/outer wall mismatch | Different accel for inner vs outer walls | Inner wall acceleration 5000 → 8000 |
+| Too many distinct accels | 5+ different values causing constant transitions | Informational — review settings |
+
+**Settings Tables** — all acceleration, speed, and other quality-related settings extracted from the G-code, organised into Acceleration, Speed, and Other categories.
+
+> **Note:** The Slicer tab is hidden in aggregate mode since each print has its own G-code file. It only appears when viewing an individual print session.
+
 ### Timeline Tab
 
 Two stacked charts:
@@ -200,6 +234,8 @@ The dashboard exposes a JSON API:
 | `/api/data?session=<file>` | GET | Data for a specific completed print |
 | `/api/material-data?material=PLA` | GET | Aggregate analysis for a given material |
 | `/api/apply-config` | POST | Apply a config recommendation (JSON body: `{variable, value}`) |
+
+The `/api/data` response includes `slicer_settings` (dict of all extracted G-code settings), `slicer_diagnosis` (accel fingerprint, issues, suggestions), and `recommendations` (including Slicer-category items when issues are found).
 
 Responses are cached with a 15-second TTL. Applying a config change via `/api/apply-config` invalidates the cache so subsequent reads reflect the updated state.
 
@@ -259,7 +295,7 @@ When enough prints are analyzed, the dashboard diagnoses the most common banding
 | `dynz_accel_switching` | DynZ changing acceleration mid-layer | `dynz_relief_method: 'temp_reduction'` |
 | `pa_oscillation` | PA bouncing rapidly | Lower `pa_boost_k` or increase `pa_deadband` |
 | `temp_instability` | Temperature oscillating | Lower ramp rates, check PID tuning |
-| `slicer_accel_control` | Slicer inserting accel G-code | Disable firmware accel control in slicer |
+| `slicer_accel_control` | Slicer inserting accel G-code | Reduce distinct accel values in slicer, or match inner/outer wall accels. See Slicer tab for specific settings |
 | `no_obvious_culprit` | Low event counts | Check mechanical causes (Z-wobble, filament) |
 
 ### Thermal Lag Detection
@@ -269,6 +305,31 @@ A lag episode is recorded whenever actual nozzle temperature falls more than 3°
 ### Heater Headroom Brackets
 
 Samples are grouped by flow rate (mm³/s) and the average, P95, and max PWM are computed for each bracket. The bracket where P95 PWM crosses 95% marks your heater's effective flow limit. Below that threshold you have headroom to increase `flow_k`; above it, reduce `flow_k` or `max_boost_limit`.
+
+> **Important:** Max PWM hitting 100% in the graphs is **normal PID behavior**, not heater saturation. Klipper's PID briefly goes full power on every temperature transition. The dashboard distinguishes between transient PID ramp-up (harmless) and sustained saturation (problematic) by checking average PWM and thermal lag — not just peak PWM. A 40W heater showing 100% max in the charts but 70% average with low thermal lag is working perfectly.
+
+### Heater Recommendation Intelligence
+
+The dashboard uses a multi-signal approach to avoid false alarms about heater performance:
+
+| Condition | Severity | Meaning |
+|-----------|----------|---------|
+| Avg PWM ≥85%, lag >10% | **bad** | Genuine saturation — heater can't keep up |
+| Avg PWM ≥80%, lag >5% | **warn** | Working hard, limited margin |
+| Max PWM ≥98%, lag ≤5% | **good** | Normal PID ramp-up, heater is fine |
+| Avg PWM <60% | **good** | Plenty of headroom |
+| Avg PWM <85%, lag ≤10% | **good** | Heater is healthy |
+
+Per-bracket saturation (P95 >95% in high-flow brackets) is only flagged as a warning if the heater is also struggling globally (high avg PWM + high lag). Otherwise it's informational — brief 100% spikes at high flow are normal.
+
+Thermal lag thresholds:
+
+| Lag % | Severity | Action |
+|-------|----------|--------|
+| >15% | **bad** | Increase ramp rate or reduce flow_k |
+| >8% | **warn** | Consider increasing ramp rate |
+| 3–8% | **info** | Normal for smaller heaters, not visible in print quality |
+| <1% | **good** | Excellent thermal tracking |
 
 ### PA Oscillation Zones
 
