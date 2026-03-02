@@ -24,6 +24,8 @@ import os
 import sys
 import json
 import csv
+import re
+import glob
 import math
 import time
 import statistics
@@ -39,6 +41,7 @@ from collections import defaultdict
 # =============================================================================
 LOG_DIR = os.path.expanduser('~/printer_data/logs/adaptive_flow')
 CONFIG_DIR = os.path.expanduser('~/printer_data/config')
+GCODES_DIR = os.path.expanduser('~/printer_data/gcodes')
 
 
 # =============================================================================
@@ -325,6 +328,294 @@ def load_csv_rows(csv_file):
     except Exception as exc:
         print(f"Warning: Could not read {csv_file}: {exc}")
         return []
+
+
+# =============================================================================
+# SLICER SETTINGS EXTRACTOR — parse OrcaSlicer/PrusaSlicer G-code footers
+# =============================================================================
+
+# Keys of interest from the slicer footer — grouped by category.
+# These appear in OrcaSlicer gcode as ``; key = value`` lines near EOF.
+_SLICER_ACCEL_KEYS = [
+    'default_acceleration', 'outer_wall_acceleration', 'inner_wall_acceleration',
+    'bridge_acceleration', 'sparse_infill_acceleration',
+    'internal_solid_infill_acceleration', 'top_surface_acceleration',
+    'travel_acceleration', 'initial_layer_acceleration',
+]
+_SLICER_SPEED_KEYS = [
+    'outer_wall_speed', 'inner_wall_speed', 'bridge_speed',
+    'sparse_infill_speed', 'internal_solid_infill_speed',
+    'top_surface_speed', 'travel_speed', 'gap_infill_speed',
+    'initial_layer_speed', 'internal_bridge_speed', 'support_speed',
+]
+_SLICER_OTHER_KEYS = [
+    'bridge_flow', 'wall_loops', 'wall_sequence',
+    'overhang_1_4_speed', 'overhang_2_4_speed',
+    'overhang_3_4_speed', 'overhang_4_4_speed',
+    'small_perimeter_speed', 'filament_max_volumetric_speed',
+]
+_SLICER_ALL_KEYS = set(_SLICER_ACCEL_KEYS + _SLICER_SPEED_KEYS + _SLICER_OTHER_KEYS)
+
+# Regex to parse ``; key = value`` lines in OrcaSlicer footer
+_SLICER_LINE_RE = re.compile(r'^\s*;\s*(\w+)\s*=\s*(.+?)\s*$')
+
+
+def extract_slicer_settings(gcode_path):
+    """Extract slicer settings from the OrcaSlicer/PrusaSlicer gcode footer.
+
+    We only need the last ~2000 lines where OrcaSlicer writes its config
+    block.  Returns a dict of {key: value} for recognized settings, or
+    None if the file can't be read or contains no settings.
+    """
+    if not gcode_path or not os.path.isfile(gcode_path):
+        return None
+
+    settings = {}
+    try:
+        # Read only the tail of the file — the config block is at the end.
+        # We use a deque-based approach to avoid reading 100k+ line files.
+        from collections import deque
+        with open(gcode_path, 'r', errors='replace') as f:
+            tail = deque(f, maxlen=2000)
+        for line in tail:
+            m = _SLICER_LINE_RE.match(line)
+            if m:
+                key, val = m.group(1), m.group(2)
+                if key in _SLICER_ALL_KEYS:
+                    settings[key] = _parse_slicer_value(val)
+    except Exception as exc:
+        print(f"Warning: Could not extract slicer settings from {gcode_path}: {exc}")
+        return None
+
+    return settings if settings else None
+
+
+def _parse_slicer_value(raw):
+    """Convert a raw slicer value string to int, float, or str."""
+    raw = raw.strip().strip('"')
+    # Percentage values like "80%" — keep as string for display
+    if raw.endswith('%'):
+        return raw
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+def _find_gcode_for_summary(summary, gcodes_dir=None):
+    """Find the gcode file on disk that corresponds to a print summary.
+
+    The summary JSON ``filename`` field contains the original gcode name
+    (e.g. ``Voron_Design_Cube_v7(R2)_PETG_25m48s.gcode``).  We try an
+    exact match first, then fall back to fuzzy (everything before the
+    time estimate).
+
+    Returns the absolute gcode path, or None if not found.
+    """
+    if gcodes_dir is None:
+        gcodes_dir = GCODES_DIR
+    filename = (summary or {}).get('filename', '')
+    if not filename:
+        return None
+
+    # 1. Exact match
+    exact = os.path.join(gcodes_dir, filename)
+    if os.path.isfile(exact):
+        return exact
+
+    # 2. Fuzzy match — strip the time estimate suffix and look for any
+    #    file that starts with the same prefix.
+    #    e.g. "Voron_Design_Cube_v7(R2)_PETG_25m48s.gcode"
+    #       → prefix = "Voron_Design_Cube_v7(R2)_PETG_"
+    base = os.path.splitext(filename)[0]  # remove .gcode
+    # OrcaSlicer time suffix pattern: 1h25m, 25m48s, 3h2m, etc.
+    m = re.match(r'^(.+?_)\d+[hm]\d+[ms]?$', base)
+    if m:
+        prefix = m.group(1)
+        try:
+            candidates = [
+                f for f in os.listdir(gcodes_dir)
+                if f.startswith(prefix) and f.endswith('.gcode')
+            ]
+            if candidates:
+                # Pick the most recently modified one
+                candidates.sort(
+                    key=lambda f: os.path.getmtime(os.path.join(gcodes_dir, f)),
+                    reverse=True,
+                )
+                return os.path.join(gcodes_dir, candidates[0])
+        except OSError:
+            pass
+
+    return None
+
+
+def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
+    """Cross-reference slicer acceleration settings with observed banding.
+
+    Given the extracted slicer settings, banding analysis from the CSV,
+    and the raw list of accel values seen during printing, produce a
+    diagnostic dict with:
+    - distinct_accels: unique accel values observed in the CSV
+    - accel_map: mapping of observed accel → probable slicer feature
+    - max_accel_swing: largest single accel change observed
+    - issues: list of specific slicer setting problems found
+    - suggestions: list of {setting, current, suggested, reason} dicts
+
+    Returns None if insufficient data.
+    """
+    if not slicer_settings or not csv_accel_values:
+        return None
+
+    result = {
+        'distinct_accels': [],
+        'accel_map': {},
+        'max_accel_swing': 0,
+        'issues': [],
+        'suggestions': [],
+        'settings_summary': {},
+    }
+
+    # --- Build settings summary for display ---
+    for key in _SLICER_ACCEL_KEYS + _SLICER_SPEED_KEYS + _SLICER_OTHER_KEYS:
+        if key in slicer_settings:
+            result['settings_summary'][key] = slicer_settings[key]
+
+    # --- Distinct acceleration values from CSV ---
+    from collections import Counter
+    accel_counter = Counter(csv_accel_values)
+    distinct = sorted(accel_counter.keys())
+    result['distinct_accels'] = distinct
+
+    # --- Map observed accels to slicer features ---
+    # Build a reverse lookup: slicer accel value → feature name(s)
+    feature_map = {}
+    for key in _SLICER_ACCEL_KEYS:
+        val = slicer_settings.get(key)
+        if val is not None and isinstance(val, (int, float)):
+            ival = int(val)
+            if ival not in feature_map:
+                feature_map[ival] = []
+            nice_name = key.replace('_acceleration', '').replace('_', ' ').title()
+            feature_map[ival].append(nice_name)
+
+    for accel_val in distinct:
+        count = accel_counter[accel_val]
+        if accel_val in feature_map:
+            result['accel_map'][str(accel_val)] = {
+                'features': feature_map[accel_val],
+                'count': count,
+                'pct': round(100 * count / len(csv_accel_values), 1),
+            }
+        else:
+            # Unknown — might be Klipper default or DynZ override
+            result['accel_map'][str(accel_val)] = {
+                'features': ['Unknown / Klipper default'],
+                'count': count,
+                'pct': round(100 * count / len(csv_accel_values), 1),
+            }
+
+    # --- Largest accel swing from banding data ---
+    accel_spikes = (banding_data or {}).get('events', {}).get('accel_spikes', [])
+    if accel_spikes:
+        result['max_accel_swing'] = max(abs(s['delta']) for s in accel_spikes)
+
+    # --- Identify issues and generate specific suggestions ---
+    outer_accel = slicer_settings.get('outer_wall_acceleration')
+    inner_accel = slicer_settings.get('inner_wall_acceleration')
+    bridge_accel = slicer_settings.get('bridge_acceleration')
+    default_accel = slicer_settings.get('default_acceleration')
+    top_accel = slicer_settings.get('top_surface_acceleration')
+    travel_accel = slicer_settings.get('travel_acceleration')
+    bridge_flow_val = slicer_settings.get('bridge_flow')
+
+    # Issue 1: Bridge accel much lower than wall accel → causes big swings
+    #          at recessed features the slicer misidentifies as bridges
+    ref_accel = outer_accel or default_accel or 10000
+    if bridge_accel and ref_accel and bridge_accel < ref_accel * 0.6:
+        swing = ref_accel - bridge_accel
+        result['issues'].append({
+            'type': 'bridge_accel_mismatch',
+            'detail': (
+                f'Bridge acceleration ({bridge_accel}) is {swing} lower than '
+                f'outer wall ({ref_accel}). OrcaSlicer often misidentifies '
+                f'recessed features (nut pockets, logos) as bridges, causing '
+                f'large acceleration swings that show as banding lines.'
+            ),
+        })
+        result['suggestions'].append({
+            'setting': 'bridge_acceleration',
+            'current': bridge_accel,
+            'suggested': int(ref_accel * 0.8),
+            'reason': 'Reduce accel swings at false-bridge features',
+        })
+
+    # Issue 2: Inner vs outer wall accel mismatch → transition lines
+    if outer_accel and inner_accel and abs(outer_accel - inner_accel) > 3000:
+        result['issues'].append({
+            'type': 'wall_accel_mismatch',
+            'detail': (
+                f'Inner wall accel ({inner_accel}) differs from outer wall '
+                f'({outer_accel}) by {abs(inner_accel - outer_accel)}. '
+                f'Each wall transition causes an acceleration change that '
+                f'can show as a faint line.'
+            ),
+        })
+        target = outer_accel  # match outer for consistency
+        result['suggestions'].append({
+            'setting': 'inner_wall_acceleration',
+            'current': inner_accel,
+            'suggested': target,
+            'reason': 'Match outer wall to eliminate wall transition accel swings',
+        })
+
+    # Issue 3: Bridge flow < 1.0 → under-extrusion on false bridges
+    if bridge_flow_val is not None and isinstance(bridge_flow_val, (int, float)):
+        if bridge_flow_val < 0.95:
+            result['issues'].append({
+                'type': 'bridge_flow_low',
+                'detail': (
+                    f'Bridge flow ratio ({bridge_flow_val}) causes '
+                    f'{(1 - bridge_flow_val) * 100:.0f}% under-extrusion on '
+                    f'any feature the slicer classifies as a bridge — including '
+                    f'recessed areas that aren\'t true bridges.'
+                ),
+            })
+            result['suggestions'].append({
+                'setting': 'bridge_flow',
+                'current': bridge_flow_val,
+                'suggested': 1.0,
+                'reason': 'Prevent under-extrusion on false-bridge features',
+            })
+
+    # Issue 4: Too many distinct accel values → frequent switching
+    if len(distinct) >= 5 and result['max_accel_swing'] > 3000:
+        result['issues'].append({
+            'type': 'too_many_accels',
+            'detail': (
+                f'The slicer used {len(distinct)} distinct acceleration values '
+                f'({min(distinct)}–{max(distinct)}). Each transition is a '
+                f'potential banding line. Max swing was ±{result["max_accel_swing"]:.0f}.'
+            ),
+        })
+
+    # Issue 5: Top surface accel very different from normal printing
+    if top_accel and ref_accel and abs(top_accel - ref_accel) > 4000:
+        result['issues'].append({
+            'type': 'top_accel_mismatch',
+            'detail': (
+                f'Top surface accel ({top_accel}) differs from wall accel '
+                f'({ref_accel}) by {abs(top_accel - ref_accel)}. This can '
+                f'cause visible transitions at top surfaces.'
+            ),
+        })
+
+    return result if (result['issues'] or result['settings_summary']) else None
 
 
 # =============================================================================
@@ -2153,6 +2444,49 @@ def generate_recommendations(data):
             'action': 'No changes needed.',
         })
 
+    # --- Slicer-specific recommendations (from gcode analysis) ---
+    slicer_diag = data.get('slicer_diagnosis') or {}
+    slicer_issues = slicer_diag.get('issues', [])
+    slicer_suggestions = slicer_diag.get('suggestions', [])
+
+    if slicer_issues:
+        # Build a combined detail from all issues
+        issue_details = ' '.join(iss['detail'] for iss in slicer_issues)
+        suggestion_lines = []
+        for sg in slicer_suggestions:
+            suggestion_lines.append(
+                f"\u2022 {sg['setting'].replace('_', ' ').title()}: "
+                f"{sg['current']} \u2192 {sg['suggested']} ({sg['reason']})"
+            )
+        action_text = 'In your slicer, change:\n' + '\n'.join(suggestion_lines) if suggestion_lines else (
+            'Review your slicer acceleration settings to reduce the spread of values.'
+        )
+
+        # Severity depends on whether there are actual banding events
+        if high_risk > 20:
+            sev = 'warn'
+        elif high_risk > 5:
+            sev = 'info'
+        else:
+            sev = 'info'
+
+        recs.append({
+            'severity': sev, 'category': 'Slicer',
+            'title': f'{len(slicer_issues)} slicer setting issue{"s" if len(slicer_issues) != 1 else ""} found',
+            'detail': issue_details,
+            'action': action_text,
+        })
+    elif data.get('slicer_settings') and high_risk <= 5:
+        # We have slicer data but no issues — good news
+        distinct = len(slicer_diag.get('distinct_accels', []))
+        if distinct > 0:
+            recs.append({
+                'severity': 'good', 'category': 'Slicer',
+                'title': 'Slicer settings look good',
+                'detail': f'Parsed {len(data["slicer_settings"])} settings from gcode. {distinct} distinct accel values observed — no problematic gaps found.',
+                'action': 'No slicer changes needed.',
+            })
+
     # --- Temp boost ---
     avg_boost = s.get('avg_boost', 0)
     max_boost = s.get('max_boost', 0)
@@ -2847,6 +3181,30 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             })
         data['trends'] = trend_data
 
+    # === Slicer settings extraction & cross-reference with banding ===
+    slicer = None
+    slicer_diag = None
+    if not data.get('is_live'):
+        summary = data.get('summary') or {}
+        gcode_path = _find_gcode_for_summary(summary)
+        if gcode_path:
+            slicer = extract_slicer_settings(gcode_path)
+        if slicer:
+            # Extract raw accel values from already-loaded CSV rows
+            csv_accels = []
+            for row in (csv_rows or []):
+                try:
+                    a = int(row.get('accel', 0))
+                    if a > 0:
+                        csv_accels.append(a)
+                except (ValueError, TypeError):
+                    pass
+            # Run banding analysis for event data
+            banding_csv = analyze_csv_for_banding(csv_path)
+            slicer_diag = analyze_slicer_vs_banding(slicer, banding_csv, csv_accels)
+    data['slicer_settings'] = slicer
+    data['slicer_diagnosis'] = slicer_diag
+
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
     mat = (data.get('summary') or {}).get('material') or material
@@ -3123,6 +3481,7 @@ rc();
 
 var allTabs=[
 {id:'rx',l:'\u2699 Recommendations',tip:'Actionable suggestions to improve print quality. Start here.'},
+{id:'sl',l:'\u2702 Slicer',tip:'Shows slicer settings extracted from your G-code file. Cross-references acceleration values with banding data to identify specific settings causing issues.'},
 {id:'tl',l:'Timeline',tip:'Real-time temperature, flow rate and speed plotted over the entire print. See how your heater responds to flow demands.'},
 {id:'zh',l:'Z-Height',tip:'Shows which layers had the most thermal stress. Tall bars = layers where banding is most likely.'},
 {id:'ht',l:'Heater',tip:'Is your heater keeping up? Shows power usage at different flow rates. Bars near 100% mean the heater is maxed out.'},
@@ -3133,8 +3492,8 @@ var allTabs=[
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
-if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'});
-if(isAgg&&at==='tl')at='rx';
+if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'&&t.id!=='sl'});
+if(isAgg&&(at==='tl'||at==='sl'))at='rx';
 tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
 '" onclick="sTab(this.dataset.t)" data-t="'+t.id+'"><span class="tab-wrap">'+t.l+
@@ -3153,6 +3512,7 @@ function mc(id){return '<canvas id="'+id+'"></canvas>'}
 
 function rCh(){dCh();var tl=D.timeline||[];
 if(at==='rx')rRec();
+else if(at==='sl')rSlicer();
 else if(at==='tl')rTimeline(tl);
 else if(at==='zh')rZH();
 else if(at==='ht')rHt();
@@ -3160,6 +3520,116 @@ else if(at==='pa')rPA(tl);
 else if(at==='dz')rDZ();
 else if(at==='ds')rDist();
 else if(at==='tr')rTr()}
+
+function rSlicer(){
+var ss=D.slicer_settings;
+var sd=D.slicer_diagnosis;
+if(!ss){
+ca.innerHTML='<div class="box"><p>No slicer settings found. The G-code file may have been deleted, or this slicer does not embed settings in the footer.</p>'+
+'<p style="color:#484f58;font-size:12px;margin-top:8px">Supported: OrcaSlicer, BambuStudio, PrusaSlicer, SuperSlicer</p></div>';
+return}
+
+var h='';
+
+/* --- Accel Fingerprint chart + table --- */
+if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
+var am=sd.accel_map;
+var keys=Object.keys(am).sort(function(a,b){return parseInt(a)-parseInt(b)});
+var labels=[];var counts=[];var colors=[];
+var palette=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f0883e','#8b949e','#56d364'];
+keys.forEach(function(k,i){
+var info=am[k];
+labels.push(k+' ('+info.features.join(', ')+')');
+counts.push(info.count);
+colors.push(palette[i%palette.length])});
+
+h+='<div class="box"><h3>Acceleration Fingerprint</h3>'+
+'<p class="box-desc">Each bar is a distinct acceleration value your slicer used during this print. '+
+'The label shows which slicer feature maps to that value. Fewer distinct values = fewer banding-causing transitions.</p>'+mc('cSA')+'</div>';
+
+h+='<div class="box"><h3>Accel Breakdown</h3>'+
+'<p class="box-desc">Detailed view of each acceleration value observed in the CSV, mapped back to your slicer settings.</p>'+
+'<table><tr><th>Accel (mm/s\u00b2)</th><th>Feature</th><th>Samples</th><th>% of Print</th></tr>';
+keys.forEach(function(k){
+var info=am[k];
+h+='<tr><td>'+k+'</td><td>'+info.features.join(', ')+'</td><td>'+info.count+'</td><td>'+info.pct+'%</td></tr>'});
+h+='</table>';
+if(sd.max_accel_swing>0){
+h+='<p style="margin-top:8px;font-size:12px">Max single acceleration swing: <strong>\u00b1'+sd.max_accel_swing+'</strong> mm/s\u00b2</p>'}
+h+='</div>'}
+
+/* --- Issues & Suggestions --- */
+if(sd&&sd.issues&&sd.issues.length){
+h+='<div class="box"><h3>Slicer Issues Found</h3>'+
+'<p class="box-desc">Problems identified by cross-referencing your slicer settings with observed banding events.</p>';
+sd.issues.forEach(function(iss){
+h+='<div class="rec sev-warn"><div class="rec-hd"><span class="rec-badge">Issue</span>'+
+'<span class="rec-cat">'+iss.type.replace(/_/g,' ').replace(/\\b\\w/g,function(c){return c.toUpperCase()})+'</span></div>'+
+'<div class="rec-detail">'+iss.detail+'</div></div>'});
+if(sd.suggestions&&sd.suggestions.length){
+h+='<div style="margin-top:12px"><h4 style="color:#3fb950;margin-bottom:8px">\u2699 Suggested Slicer Changes</h4>';
+h+='<table><tr><th>Setting</th><th>Current</th><th>\u2192</th><th>Suggested</th><th>Reason</th></tr>';
+sd.suggestions.forEach(function(sg){
+h+='<tr><td style="font-weight:600">'+sg.setting.replace(/_/g,' ')+'</td>'+
+'<td style="color:#f85149">'+sg.current+'</td><td>\u2192</td>'+
+'<td style="color:#3fb950">'+sg.suggested+'</td>'+
+'<td style="color:#8b949e;font-size:12px">'+sg.reason+'</td></tr>'});
+h+='</table></div>'}
+h+='</div>'}
+else if(sd){
+h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="rec-badge">Good</span>'+
+'<span class="rec-cat">Slicer</span></div>'+
+'<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
+
+/* --- Full Settings Table --- */
+var accelKeys=['default_acceleration','outer_wall_acceleration','inner_wall_acceleration',
+'bridge_acceleration','sparse_infill_acceleration','internal_solid_infill_acceleration',
+'top_surface_acceleration','travel_acceleration','initial_layer_acceleration'];
+var speedKeys=['outer_wall_speed','inner_wall_speed','bridge_speed','sparse_infill_speed',
+'internal_solid_infill_speed','top_surface_speed','travel_speed','gap_infill_speed',
+'initial_layer_speed','internal_bridge_speed','support_speed'];
+var otherKeys=['bridge_flow','wall_loops','wall_sequence','overhang_1_4_speed',
+'overhang_2_4_speed','overhang_3_4_speed','overhang_4_4_speed',
+'small_perimeter_speed','filament_max_volumetric_speed'];
+
+function settingsTable(title,desc,keys){
+var rows='';var found=0;
+keys.forEach(function(k){
+if(ss[k]!==undefined&&ss[k]!==null){found++;
+rows+='<tr><td>'+k.replace(/_/g,' ')+'</td><td>'+ss[k]+'</td></tr>'}});
+if(!found)return '';
+return '<div class="box"><h3>'+title+'</h3><p class="box-desc">'+desc+'</p>'+
+'<table><tr><th>Setting</th><th>Value</th></tr>'+rows+'</table></div>'}
+
+h+=settingsTable('Acceleration Settings',
+'Per-feature acceleration values from your slicer. Large gaps between features cause banding-inducing transitions.',
+accelKeys);
+h+=settingsTable('Speed Settings',
+'Per-feature print speeds. Combined with line width and layer height, these determine volumetric flow demand.',
+speedKeys);
+h+=settingsTable('Other Settings',
+'Bridge flow, wall sequence, overhang speeds and other quality-related settings.',
+otherKeys);
+
+ca.innerHTML=h;
+
+/* Draw accel chart if container exists */
+if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
+var am=sd.accel_map;
+var keys2=Object.keys(am).sort(function(a,b){return parseInt(a)-parseInt(b)});
+var lbls=[];var cnts=[];var cols=[];
+var pal=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f0883e','#8b949e','#56d364'];
+keys2.forEach(function(k,i){
+var info=am[k];
+lbls.push(k+' ('+info.features.join(', ')+')');
+cnts.push(info.pct);
+cols.push(pal[i%pal.length])});
+CH.cSA=new Chart(document.getElementById('cSA'),{type:'bar',data:{
+labels:lbls,datasets:[{label:'% of Print',data:cnts,backgroundColor:cols}]},
+options:{responsive:true,animation:false,indexAxis:'y',
+plugins:{legend:{display:false}},
+scales:{x:{title:{display:true,text:'% of Print Time'},min:0,max:100},
+y:{ticks:{font:{size:11}}}}}})}}
 
 function rTimeline(tl){
 if(!tl.length){ca.innerHTML='<p>No timeline data.</p>';return}
