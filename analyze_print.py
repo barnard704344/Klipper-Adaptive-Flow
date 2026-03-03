@@ -4271,7 +4271,9 @@ h+='<div class="sl-hdr"><span class="sl-mat"><span class="sl-icon">\u25cf</span>
 if(fname)h+='<span class="sl-file">'+fname+'</span>';
 h+='</div>';
 
-/* --- Issues & Suggestions (prominent, always open) --- */
+/* --- Issues & Suggestions (only shown when Profile Advisor is NOT available) --- */
+var pa=D.slicer_profile_advice;
+if(!pa||!pa.length){
 if(sd&&sd.issues&&sd.issues.length){
 h+='<div class="box"><h3>\u26a0 Issues & Proposed OrcaSlicer Changes</h3>'+
 '<p class="box-desc">Problems identified by cross-referencing your slicer settings with observed banding events.</p>';
@@ -4293,9 +4295,9 @@ else if(sd){
 h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="rec-badge">Good</span>'+
 '<span class="rec-cat">Slicer \u2014 '+mat+'</span></div>'+
 '<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
+} /* end !pa gate */
 
 /* --- Profile Advisor — comprehensive per-setting analysis --- */
-var pa=D.slicer_profile_advice;
 var hi=D.hotend_info;
 if(pa&&pa.length){
 var sevIcon={good:'\u2705',warn:'\u26a0\ufe0f',bad:'\u274c',info:'\u2139\ufe0f'};
