@@ -100,9 +100,18 @@ if [ -f "analyze_print.py" ]; then
     cp analyze_print.py "$KLIPPER_EXTRAS/"
 fi
 
-# Copy system defaults (always safe to update)
-echo "[>>] Updating system defaults..."
-cp auto_flow_defaults.cfg material_profiles_defaults.cfg "$CONFIG_DIR/"
+# Symlink system defaults (always safe to update, git pull auto-applies)
+echo "[>>] Linking system defaults..."
+for f in auto_flow_defaults.cfg material_profiles_defaults.cfg; do
+    if [ -L "$CONFIG_DIR/$f" ]; then
+        # Already a symlink — nothing to do
+        true
+    else
+        # Remove old copy (if any) and create symlink
+        rm -f "$CONFIG_DIR/$f"
+        ln -s "$REPO_DIR/$f" "$CONFIG_DIR/$f"
+    fi
+done
 
 # Clean up deprecated files from previous versions
 for OLD_FILE in "$KLIPPER_EXTRAS/moonraker_hook.py" "$CONFIG_DIR/analysis_config.cfg" "$CONFIG_DIR/moonraker_hook.py"; do
