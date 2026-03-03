@@ -300,6 +300,30 @@ class ExtruderMonitor:
             return 0.0
         return total_e / total_t
 
+    def _high_flow_duration(self, threshold_mm3s=0.0):
+        """Return total seconds of upcoming moves whose volumetric flow
+        exceeds *threshold_mm3s*.  If threshold is 0 the caller gets the
+        full remaining lookahead duration (useful as a sanity check).
+
+        A 40 W heater has ~2-3 s thermal lag, so boosting for spikes
+        shorter than that is counter-productive — the heat arrives after
+        the spike is over, causing overshoot.
+        """
+        now = time.time()
+        max_age = 5.0
+        hi_dur = 0.0
+        with self._lookahead_lock:
+            for e, d, ts in self._lookahead:
+                age = now - ts
+                if age > max_age:
+                    continue
+                dur = max(1e-6, float(d))
+                seg_rate = abs(float(e)) / dur          # mm/s filament
+                seg_flow = seg_rate * FILAMENT_CROSS_SECTION  # mm³/s
+                if seg_flow >= threshold_mm3s:
+                    hi_dur += dur
+        return round(hi_dur, 3)
+
     def cmd_SET_LOOKAHEAD(self, gcmd):
         # Basic and defensive parameter parsing. Klipper gcmd typically provides
         # get_float, but we attempt to be permissive if not present.
@@ -961,7 +985,17 @@ class ExtruderMonitor:
         pred_rate = self._predicted_extrusion_rate()
         status['predicted_extrusion_rate'] = pred_rate
         status['predicted_volumetric_flow'] = pred_rate * FILAMENT_CROSS_SECTION
-        
+
+        # Expose high-flow duration at several thresholds so the macro can
+        # decide whether an upcoming spike is sustained enough to be worth
+        # boosting.  A 40 W heater needs ~2 s to respond meaningfully.
+        status['high_flow_duration'] = self._high_flow_duration()
+        # Duration above 50 % / 75 % of predicted peak — lets the macro
+        # distinguish "one short spike" from "sustained high flow".
+        pf = pred_rate * FILAMENT_CROSS_SECTION
+        status['high_flow_duration_50pct'] = self._high_flow_duration(pf * 0.5) if pf > 0 else 0.0
+        status['high_flow_duration_75pct'] = self._high_flow_duration(pf * 0.75) if pf > 0 else 0.0
+
         return status
 
 

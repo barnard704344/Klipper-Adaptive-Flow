@@ -4011,16 +4011,6 @@ border-radius:4px;letter-spacing:.5px}
 font-weight:600;font-size:14px;padding:6px 16px;border-radius:20px;letter-spacing:.3px}
 .sl-mat .sl-icon{font-size:16px}
 .sl-file{font-size:12px;color:#8b949e;word-break:break-all}
-details.sl-section{background:#161b22;border:1px solid #30363d;border-radius:8px;
-margin-bottom:12px;overflow:hidden}
-details.sl-section summary{cursor:pointer;padding:12px 16px;font-weight:600;
-font-size:14px;color:#c9d1d9;list-style:none;display:flex;align-items:center;gap:8px;
-user-select:none}
-details.sl-section summary::-webkit-details-marker{display:none}
-details.sl-section summary::before{content:'\25b6';font-size:10px;color:#8b949e;
-transition:transform .2s}
-details.sl-section[open] summary::before{transform:rotate(90deg)}
-details.sl-section .sl-body{padding:0 16px 16px 16px}
 .pa-table{width:100%;border-collapse:collapse}
 .pa-table th{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;
 padding:8px 10px;text-align:left;border-bottom:1px solid #30363d}
@@ -4258,7 +4248,6 @@ else if(at==='tr')rTr()}
 
 function rSlicer(){
 var ss=D.slicer_settings;
-var sd=D.slicer_diagnosis;
 if(!ss){
 ca.innerHTML='<div class="box"><p>No slicer settings found. The G-code file may have been deleted, or this slicer does not embed settings in the footer.</p>'+
 '<p style="color:#484f58;font-size:12px;margin-top:8px">Supported: OrcaSlicer, BambuStudio, PrusaSlicer, SuperSlicer</p></div>';
@@ -4267,167 +4256,114 @@ return}
 var h='';
 var mat=(D.summary||{}).material||'Unknown';
 var fname=(D.summary||{}).filename||'';
+var pa=D.slicer_profile_advice||[];
+var hi=D.hotend_info;
+
+/* --- Build lookup from profile advice keyed by setting name --- */
+var advMap={};
+pa.forEach(function(a){advMap[a.setting]=a});
+
+/* --- Material & file header --- */
 h+='<div class="sl-hdr"><span class="sl-mat"><span class="sl-icon">\u25cf</span>'+mat+'</span>';
 if(fname)h+='<span class="sl-file">'+fname+'</span>';
 h+='</div>';
 
-/* --- Issues & Suggestions (only shown when Profile Advisor is NOT available) --- */
-var pa=D.slicer_profile_advice;
-if(!pa||!pa.length){
-if(sd&&sd.issues&&sd.issues.length){
-h+='<div class="box"><h3>\u26a0 Issues & Proposed OrcaSlicer Changes</h3>'+
-'<p class="box-desc">Problems identified by cross-referencing your slicer settings with observed banding events.</p>';
-sd.issues.forEach(function(iss){
-h+='<div class="rec sev-warn"><div class="rec-hd"><span class="rec-badge">Issue</span>'+
-'<span class="rec-cat">'+iss.type.replace(/_/g,' ').replace(/\\b\\w/g,function(c){return c.toUpperCase()})+'</span></div>'+
-'<div class="rec-detail">'+iss.detail+'</div></div>'});
-if(sd.suggestions&&sd.suggestions.length){
-h+='<div style="margin-top:12px"><h4 style="color:#3fb950;margin-bottom:8px">\u2699 Proposed OrcaSlicer Changes for '+mat+'</h4>';
-h+='<table><tr><th>OrcaSlicer Setting</th><th>Current</th><th>\u2192</th><th>Suggested</th><th>Reason</th></tr>';
-sd.suggestions.forEach(function(sg){
-h+='<tr><td style="font-weight:600">'+sg.setting.replace(/_/g,' ')+'</td>'+
-'<td style="color:#f85149">'+sg.current+'</td><td>\u2192</td>'+
-'<td style="color:#3fb950">'+sg.suggested+'</td>'+
-'<td style="color:#8b949e;font-size:12px">'+sg.reason+'</td></tr>'});
-h+='</table></div>'}
-h+='</div>'}
-else if(sd){
-h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="rec-badge">Good</span>'+
-'<span class="rec-cat">Slicer \u2014 '+mat+'</span></div>'+
-'<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
-} /* end !pa gate */
-
-/* --- Profile Advisor — comprehensive per-setting analysis --- */
-var hi=D.hotend_info;
-if(pa&&pa.length){
-var sevIcon={good:'\u2705',warn:'\u26a0\ufe0f',bad:'\u274c',info:'\u2139\ufe0f'};
-var sevClr={good:'#3fb950',warn:'#d29922',bad:'#f85149',info:'#58a6ff'};
-
-/* Hotend header */
+/* --- Hotend info (compact one-liner) --- */
 if(hi){
 var sfLabel=hi.safe_flow||hi.max_safe_flow||'?';
 var pkLabel=hi.peak_flow||'?';
-var matLabel=hi.material||'PLA';
 var ndLabel=hi.nozzle_diameter||'0.4';
-var srcLabel=hi.flow_source||'config';
-h+='<div class="box"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">'+
-'<div style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:10px;padding:10px 16px;font-size:20px;font-weight:700;color:#fff">Revo '+hi.nozzle_type+'</div>'+
-'<div><div style="font-size:15px;font-weight:600;color:#e6edf3">E3D Revo '+hi.nozzle_type+' '+ndLabel+'mm \u2022 '+hi.heater_wattage+'W Heater \u2022 '+matLabel+'</div>'+
-'<div style="font-size:12px;color:#8b949e">Safe flow: <b style="color:#3fb950">'+sfLabel+' mm\u00b3/s</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+' mm\u00b3/s</b> \u2022 <span style="font-style:italic">'+srcLabel+'</span></div>'+
-'</div></div></div>'}
+h+='<div class="box" style="padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+'<span style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:8px;padding:6px 12px;font-weight:700;color:#fff;font-size:14px">Revo '+(hi.nozzle_type||'HF')+'</span>'+
+'<span style="color:#e6edf3;font-size:13px">E3D Revo '+(hi.nozzle_type||'HF')+' '+ndLabel+'mm \u2022 '+(hi.heater_wattage||'?')+'W \u2022 '+mat+'</span>'+
+'<span style="color:#8b949e;font-size:12px">Safe: <b style="color:#3fb950">'+sfLabel+'</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+'</b> mm\u00b3/s</span>'+
+'</div>'}
 
-/* Group by category */
-var cats=['Summary','Acceleration','Speed','Quality'];
-cats.forEach(function(cat){
-var items=pa.filter(function(a){return a.category===cat});
-if(!items.length)return;
-var catTitle=cat;
-var catDesc='';
-if(cat==='Summary')catDesc='Overall assessment of your slicer profile against your hotend capabilities.';
-else if(cat==='Acceleration')catDesc='Per-feature acceleration values. Large gaps between features cause horizontal banding lines.';
-else if(cat==='Speed')catDesc='Print speeds with calculated volumetric flow (speed \u00d7 line width \u00d7 layer height) vs your hotend\u2019s capacity.';
-else if(cat==='Quality')catDesc='Quality-related settings: bridge flow, wall sequence, overhang handling, and flow limits.';
+/* --- Ordered list of all settings to show --- */
+var allKeys=[
+{k:'nozzle_diameter',g:'Geometry'},{k:'layer_height',g:'Geometry'},
+{k:'first_layer_height',g:'Geometry'},
+{k:'outer_wall_line_width',g:'Geometry'},{k:'inner_wall_line_width',g:'Geometry'},
+{k:'sparse_infill_line_width',g:'Geometry'},{k:'top_surface_line_width',g:'Geometry'},
+{k:'initial_layer_line_width',g:'Geometry'},{k:'support_line_width',g:'Geometry'},
+{k:'default_acceleration',g:'Acceleration'},{k:'outer_wall_acceleration',g:'Acceleration'},
+{k:'inner_wall_acceleration',g:'Acceleration'},{k:'bridge_acceleration',g:'Acceleration'},
+{k:'sparse_infill_acceleration',g:'Acceleration'},{k:'internal_solid_infill_acceleration',g:'Acceleration'},
+{k:'top_surface_acceleration',g:'Acceleration'},{k:'travel_acceleration',g:'Acceleration'},
+{k:'initial_layer_acceleration',g:'Acceleration'},
+{k:'outer_wall_speed',g:'Speed'},{k:'inner_wall_speed',g:'Speed'},
+{k:'bridge_speed',g:'Speed'},{k:'sparse_infill_speed',g:'Speed'},
+{k:'internal_solid_infill_speed',g:'Speed'},{k:'top_surface_speed',g:'Speed'},
+{k:'travel_speed',g:'Speed'},{k:'gap_infill_speed',g:'Speed'},
+{k:'initial_layer_speed',g:'Speed'},{k:'internal_bridge_speed',g:'Speed'},
+{k:'support_speed',g:'Speed'},
+{k:'bridge_flow',g:'Quality'},{k:'wall_loops',g:'Quality'},
+{k:'wall_sequence',g:'Quality'},
+{k:'overhang_1_4_speed',g:'Quality'},{k:'overhang_2_4_speed',g:'Quality'},
+{k:'overhang_3_4_speed',g:'Quality'},{k:'overhang_4_4_speed',g:'Quality'},
+{k:'small_perimeter_speed',g:'Quality'},{k:'filament_max_volumetric_speed',g:'Quality'}
+];
 
-h+='<details class="sl-section"'+(cat==='Summary'?' open':'')+
-'><summary>'+catTitle+' ('+items.length+')</summary><div class="sl-body">'+
-'<p class="box-desc">'+catDesc+'</p>';
-h+='<table class="pa-table"><tr><th>Setting</th><th>Value</th>'+(cat==='Speed'?'<th>Flow</th>':'')+'<th>Verdict</th><th>Details</th></tr>';
-items.forEach(function(a){
+/* Also include summary-level advice items (accel_spread, flow_headroom) */
+var summaryItems=pa.filter(function(a){return a.category==='Summary'});
+
+/* --- Count issues --- */
+var changeCount=0;
+allKeys.forEach(function(e){var a=advMap[e.k];if(a&&a.suggestion)changeCount++});
+summaryItems.forEach(function(a){if(a.suggestion)changeCount++});
+
+/* --- Summary banner --- */
+if(changeCount>0){
+h+='<div class="box" style="border-left:3px solid #d29922;padding:10px 16px">'+
+'<span style="color:#d29922;font-weight:700">\u26a0 '+changeCount+' recommended change'+(changeCount>1?'s':'')+'</span>'+
+'<span style="color:#8b949e;font-size:12px;margin-left:8px">Settings marked with a suggested value should be updated in OrcaSlicer.</span></div>'}
+else{
+h+='<div class="box" style="border-left:3px solid #3fb950;padding:10px 16px">'+
+'<span style="color:#3fb950;font-weight:700">\u2705 Slicer profile looks good</span>'+
+'<span style="color:#8b949e;font-size:12px;margin-left:8px">No changes recommended.</span></div>'}
+
+/* --- Summary-level items (accel spread, flow headroom) --- */
+if(summaryItems.length){
+h+='<div class="box"><table class="pa-table"><tr><th>Check</th><th>Value</th><th></th><th>Suggested</th><th>Details</th></tr>';
+summaryItems.forEach(function(a){
+var icon=a.verdict==='good'?'\u2705':a.verdict==='bad'?'\u274c':a.verdict==='warn'?'\u26a0\ufe0f':'\u2139\ufe0f';
+var clr=a.verdict==='good'?'#3fb950':a.verdict==='bad'?'#f85149':a.verdict==='warn'?'#d29922':'#58a6ff';
 var setting=a.setting.replace(/^_/,'').replace(/_/g,' ');
-var clr=sevClr[a.verdict]||'#8b949e';
-var icon=sevIcon[a.verdict]||'';
-var sug=a.suggestion?'<br><span style="color:#3fb950;font-size:11px">\u2192 Suggested: <b>'+a.suggestion+'</b></span>':'';
-var flowCell=(cat==='Speed'&&a.flow_mm3s!==undefined)?'<td style="font-weight:600;color:'+(a.flow_mm3s>((hi&&hi.safe_flow)||25)*0.85?'#f85149':'#c9d1d9')+'">'+a.flow_mm3s+' mm\u00b3/s</td>':'';
-if(cat==='Speed'&&a.flow_mm3s===undefined)flowCell='<td style="color:#484f58">\u2014</td>';
-h+='<tr><td style="font-weight:600;white-space:nowrap">'+setting+'</td><td style="font-weight:600">'+a.current+'</td>'+
-flowCell+
-'<td style="text-align:center"><span style="color:'+clr+'">'+icon+'</span></td>'+
-'<td style="font-size:12px;color:#8b949e;line-height:1.5">'+a.reason+sug+'</td></tr>'});
-h+='</table></div></details>'});
-}
+h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+' '+setting+'</td>'+
+'<td style="font-weight:600">'+a.current+'</td>'+
+'<td style="text-align:center;color:#484f58">'+(a.suggestion?'\u2192':'')+'</td>'+
+'<td style="font-weight:600;color:#3fb950">'+(a.suggestion||'')+'</td>'+
+'<td style="font-size:12px;color:#8b949e">'+a.reason+'</td></tr>'});
+h+='</table></div>'}
 
-/* --- Accel Fingerprint (collapsible) --- */
-if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
-var am=sd.accel_map;
-var keys=Object.keys(am).sort(function(a,b){return parseInt(a)-parseInt(b)});
-var labels=[];var counts=[];var colors=[];
-var palette=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f0883e','#8b949e','#56d364'];
-keys.forEach(function(k,i){
-var info=am[k];
-labels.push(k+' ('+info.features.join(', ')+')');
-counts.push(info.count);
-colors.push(palette[i%palette.length])});
+/* --- Single unified settings table --- */
+h+='<div class="box"><table class="pa-table"><tr><th>Setting</th><th>Current</th><th></th><th>Suggested</th><th>Details</th></tr>';
+var lastGroup='';
+allKeys.forEach(function(e){
+var val=ss[e.k];
+if(val===undefined||val===null)return;
+/* Group header row */
+if(e.g!==lastGroup){
+lastGroup=e.g;
+h+='<tr><td colspan="5" style="padding:10px 10px 4px;font-size:11px;font-weight:700;'+
+'color:#58a6ff;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #21262d">'+e.g+'</td></tr>'}
+var a=advMap[e.k];
+var icon='';var clr='#c9d1d9';var sug='';var detail='';var arrow='';
+if(a){
+icon=a.verdict==='good'?'\u2705 ':a.verdict==='bad'?'\u274c ':a.verdict==='warn'?'\u26a0\ufe0f ':'\u2139\ufe0f ';
+clr=a.verdict==='good'?'#3fb950':a.verdict==='bad'?'#f85149':a.verdict==='warn'?'#d29922':'#58a6ff';
+if(a.suggestion){sug=a.suggestion;arrow='\u2192'}
+detail=a.reason||'';
+if(a.flow_mm3s!==undefined)detail=a.flow_mm3s+' mm\u00b3/s \u2014 '+detail}
+var valClr=(sug?'#f85149':'#c9d1d9');
+h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+e.k.replace(/_/g,' ')+'</td>'+
+'<td style="font-weight:600;color:'+valClr+'">'+val+'</td>'+
+'<td style="text-align:center;color:#484f58">'+arrow+'</td>'+
+'<td style="font-weight:600;color:#3fb950">'+sug+'</td>'+
+'<td style="font-size:12px;color:#8b949e;line-height:1.4">'+detail+'</td></tr>'});
+h+='</table></div>';
 
-h+='<details class="sl-section" open><summary>Acceleration Fingerprint</summary><div class="sl-body">'+
-'<p class="box-desc">Each bar is a distinct acceleration value your slicer used during this print. '+
-'The label shows which slicer feature maps to that value. Fewer distinct values = fewer banding-causing transitions.</p>'+mc('cSA')+
-'<div style="margin-top:12px"><h4>Accel Breakdown</h4>'+
-'<p class="box-desc">Detailed view of each acceleration value observed in the CSV, mapped back to your slicer settings.</p>'+
-'<table><tr><th>Accel (mm/s\u00b2)</th><th>Feature</th><th>Samples</th><th>% of Print</th></tr>';
-keys.forEach(function(k){
-var info=am[k];
-h+='<tr><td>'+k+'</td><td>'+info.features.join(', ')+'</td><td>'+info.count+'</td><td>'+info.pct+'%</td></tr>'});
-h+='</table>';
-if(sd.max_accel_swing>0){
-h+='<p style="margin-top:8px;font-size:12px">Max single acceleration swing: <strong>\u00b1'+sd.max_accel_swing+'</strong> mm/s\u00b2</p>'}
-h+='</div></details>'}
-
-/* --- Full Settings Tables (collapsible) --- */
-var accelKeys=['default_acceleration','outer_wall_acceleration','inner_wall_acceleration',
-'bridge_acceleration','sparse_infill_acceleration','internal_solid_infill_acceleration',
-'top_surface_acceleration','travel_acceleration','initial_layer_acceleration'];
-var speedKeys=['outer_wall_speed','inner_wall_speed','bridge_speed','sparse_infill_speed',
-'internal_solid_infill_speed','top_surface_speed','travel_speed','gap_infill_speed',
-'initial_layer_speed','internal_bridge_speed','support_speed'];
-var otherKeys=['bridge_flow','wall_loops','wall_sequence','overhang_1_4_speed',
-'overhang_2_4_speed','overhang_3_4_speed','overhang_4_4_speed',
-'small_perimeter_speed','filament_max_volumetric_speed'];
-var geoKeys=['nozzle_diameter','layer_height','first_layer_height',
-'outer_wall_line_width','inner_wall_line_width','sparse_infill_line_width',
-'top_surface_line_width','initial_layer_line_width','support_line_width'];
-
-function settingsTable(title,desc,keys){
-var rows='';var found=0;
-keys.forEach(function(k){
-if(ss[k]!==undefined&&ss[k]!==null){found++;
-rows+='<tr><td>'+k.replace(/_/g,' ')+'</td><td>'+ss[k]+'</td></tr>'}});
-if(!found)return '';
-return '<details class="sl-section"><summary>'+title+' ('+found+')</summary><div class="sl-body">'+
-'<p class="box-desc">'+desc+'</p>'+
-'<table><tr><th>Setting</th><th>Value</th></tr>'+rows+'</table></div></details>'}
-
-h+=settingsTable('Acceleration Settings',
-'Per-feature acceleration values from your slicer. Large gaps between features cause banding-inducing transitions.',
-accelKeys);
-h+=settingsTable('Speed Settings',
-'Per-feature print speeds. Combined with line width and layer height, these determine volumetric flow demand.',
-speedKeys);
-h+=settingsTable('Other Settings',
-'Bridge flow, wall sequence, overhang speeds and other quality-related settings.',
-otherKeys);
-h+=settingsTable('Geometry',
-'Nozzle diameter, layer height, and line widths used for volumetric flow calculations.',
-geoKeys);
-
-ca.innerHTML=h;
-
-/* Draw accel chart if container exists */
-if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
-var am=sd.accel_map;
-var keys2=Object.keys(am).sort(function(a,b){return parseInt(a)-parseInt(b)});
-var lbls=[];var cnts=[];var cols=[];
-var pal=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f0883e','#8b949e','#56d364'];
-keys2.forEach(function(k,i){
-var info=am[k];
-lbls.push(k+' ('+info.features.join(', ')+')');
-cnts.push(info.pct);
-cols.push(pal[i%pal.length])});
-CH.cSA=new Chart(document.getElementById('cSA'),{type:'bar',data:{
-labels:lbls,datasets:[{label:'% of Print',data:cnts,backgroundColor:cols}]},
-options:{responsive:true,animation:false,indexAxis:'y',
-plugins:{legend:{display:false}},
-scales:{x:{title:{display:true,text:'% of Print Time'},min:0,max:100},
-y:{ticks:{font:{size:11}}}}}})}}
+ca.innerHTML=h}
 
 function rTimeline(tl){
 if(!tl.length){ca.innerHTML='<p>No timeline data.</p>';return}
