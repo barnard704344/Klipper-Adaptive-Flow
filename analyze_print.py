@@ -679,6 +679,591 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
 
 
 # =============================================================================
+# SLICER PROFILE ADVISOR — comprehensive per-setting recommendations
+# =============================================================================
+
+def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=None):
+    """Produce comprehensive per-setting advice for every parsed slicer value.
+
+    *hotend_info* is a dict with keys from the adaptive flow config:
+        - nozzle_type: 'HF' or 'SF'
+        - max_safe_flow: float (mm\u00b3/s)
+        - heater_wattage: int (40 or 60)
+
+    Returns a list of dicts:
+        {setting, category, current, verdict, suggestion, reason, flow_mm3s}
+    verdict: 'good', 'warn', 'bad', 'info'
+    """
+    if not slicer_settings or not hotend_info:
+        return []
+
+    advice = []
+    nozzle = hotend_info.get('nozzle_type', 'HF')
+    wattage = hotend_info.get('heater_wattage', 40)
+
+    # E3D Revo flow limits (source of truth) — fall back to config value
+    safe_flow = hotend_info.get('safe_flow')
+    peak_flow = hotend_info.get('peak_flow')
+    if safe_flow is None or peak_flow is None:
+        fallback = hotend_info.get('max_safe_flow', 25.0 if nozzle == 'HF' else 15.0)
+        safe_flow = safe_flow or fallback
+        peak_flow = peak_flow or fallback * 1.15
+    max_flow = safe_flow
+    material = hotend_info.get('material', 'PLA')
+    nozzle_dia = hotend_info.get('nozzle_diameter', 0.4)
+    variant = nozzle
+
+    # Geometry values for flow calculation
+    layer_h = slicer_settings.get('layer_height', 0.2)
+    first_layer_h = slicer_settings.get('first_layer_height', layer_h)
+    nozzle_d = slicer_settings.get('nozzle_diameter', 0.4)
+
+    def _line_w(key, fallback=None):
+        v = slicer_settings.get(key)
+        if v is not None:
+            return float(v)
+        return fallback if fallback else nozzle_d + 0.02
+
+    outer_w = _line_w('outer_wall_line_width', nozzle_d + 0.02)
+    inner_w = _line_w('inner_wall_line_width', nozzle_d + 0.05)
+    infill_w = _line_w('sparse_infill_line_width', nozzle_d + 0.05)
+    top_w = _line_w('top_surface_line_width', nozzle_d + 0.05)
+    first_w = _line_w('initial_layer_line_width', nozzle_d + 0.08)
+
+    def _flow(speed, width, height):
+        if speed and width and height:
+            return round(speed * width * height, 1)
+        return 0
+
+    def _flow_verdict(flow_val):
+        if flow_val <= 0:
+            return 'info'
+        if flow_val > peak_flow:
+            return 'bad'
+        if flow_val > safe_flow * 0.85:
+            return 'warn'
+        return 'good'
+
+    def _add(setting, category, current, verdict, suggestion, reason, flow=None):
+        entry = {
+            'setting': setting, 'category': category, 'current': current,
+            'verdict': verdict, 'suggestion': suggestion, 'reason': reason,
+        }
+        if flow is not None:
+            entry['flow_mm3s'] = flow
+        advice.append(entry)
+
+    # =====================================================================
+    # ACCELERATION SETTINGS
+    # =====================================================================
+    # OrcaSlicer can store accel values as percentages (e.g. '50%')
+    # that need resolving against default_acceleration
+    def _coerce_accel(val, ref=None):
+        """Convert a slicer accel value to a numeric value.
+        Handles int, float, and percentage strings like '50%'."""
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return val
+        s = str(val).strip()
+        if s.endswith('%') and ref is not None:
+            try:
+                return ref * float(s[:-1]) / 100.0
+            except (ValueError, TypeError):
+                return None
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    _raw_default = slicer_settings.get('default_acceleration')
+    # default_acceleration is the reference for percentage values
+    _ref_accel = _coerce_accel(_raw_default) or 10000
+
+    default_accel = _coerce_accel(slicer_settings.get('default_acceleration'))
+    outer_accel = _coerce_accel(slicer_settings.get('outer_wall_acceleration'), _ref_accel)
+    inner_accel = _coerce_accel(slicer_settings.get('inner_wall_acceleration'), _ref_accel)
+    bridge_accel = _coerce_accel(slicer_settings.get('bridge_acceleration'), _ref_accel)
+    infill_accel = _coerce_accel(slicer_settings.get('sparse_infill_acceleration'), _ref_accel)
+    solid_accel = _coerce_accel(slicer_settings.get('internal_solid_infill_acceleration'), _ref_accel)
+    top_accel = _coerce_accel(slicer_settings.get('top_surface_acceleration'), _ref_accel)
+    travel_accel = _coerce_accel(slicer_settings.get('travel_acceleration'), _ref_accel)
+    first_accel = _coerce_accel(slicer_settings.get('initial_layer_acceleration'), _ref_accel)
+
+    wall_accel = outer_accel or inner_accel or 5000
+    MAX_ACCEL_GAP = 3000
+
+    if default_accel is not None:
+        gap_to_wall = abs(default_accel - wall_accel) if wall_accel else 0
+        if default_accel > 15000:
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'bad', f'{int(wall_accel)}',
+                 f'Very high default accel. Klipper uses this as the ceiling. '
+                 f'Gap of \u00b1{int(gap_to_wall)} from walls \u2014 '
+                 f'set to {int(wall_accel)} so Klipper doesn\u2019t override your per-feature accels.')
+        elif gap_to_wall >= MAX_ACCEL_GAP and wall_accel:
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'warn', f'{int(wall_accel)}',
+                 f'Gap of \u00b1{int(gap_to_wall)} from walls ({int(wall_accel)}). '
+                 f'Klipper uses this as the ceiling/fallback \u2014 if a feature has no '
+                 f'specific accel, it uses this value, creating banding. '
+                 f'Set to {int(wall_accel)} to match your wall accel.')
+        elif default_accel > 10000:
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'good', None,
+                 f'Default accel for Revo {variant} with {wattage}W heater. '
+                 f'Within \u00b1{int(gap_to_wall)} of walls \u2014 acceptable.')
+        else:
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'info', None,
+                 f'Conservative default. Fine for quality, but your Revo {variant} can handle more if you want speed.')
+
+    if outer_accel is not None:
+        if outer_accel > 10000:
+            _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                 'warn', '4000\u20138000',
+                 'Outer walls define surface quality. Very high accel causes ringing and resonance artifacts.')
+        elif outer_accel >= 3000:
+            _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                 'good', None,
+                 'Good range for quality. Your input shaper handles ringing at this accel.')
+        else:
+            _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                 'info', '4000\u20136000',
+                 'Very conservative. You can safely increase this \u2014 input shaper will handle it.')
+
+    if inner_accel is not None:
+        gap = abs(inner_accel - outer_accel) if outer_accel else 0
+        if outer_accel and gap >= MAX_ACCEL_GAP * 2:
+            _add('inner_wall_acceleration', 'Acceleration', int(inner_accel),
+                 'bad', str(int(outer_accel)),
+                 f'Gap of \u00b1{int(gap)} from outer wall \u2014 '
+                 f'set inner = outer to avoid transition lines between wall passes.')
+        elif outer_accel and gap >= MAX_ACCEL_GAP:
+            _add('inner_wall_acceleration', 'Acceleration', int(inner_accel),
+                 'warn', str(int(outer_accel)),
+                 f'Gap of \u00b1{int(gap)} from outer wall \u2014 '
+                 f'set inner = outer to avoid transition lines between wall passes.')
+        elif outer_accel and inner_accel == outer_accel:
+            _add('inner_wall_acceleration', 'Acceleration', int(inner_accel),
+                 'good', None,
+                 'Matches outer wall \u2014 no accel transition between wall passes. Ideal.')
+        else:
+            _add('inner_wall_acceleration', 'Acceleration', int(inner_accel),
+                 'good', None,
+                 f'Close to outer wall (\u00b1{int(gap)} gap). Acceptable.')
+
+    if bridge_accel is not None:
+        gap = abs(bridge_accel - outer_accel) if outer_accel else (abs(bridge_accel - wall_accel) if wall_accel else 0)
+        ref_accel = outer_accel or wall_accel
+        if ref_accel and gap >= MAX_ACCEL_GAP * 2:
+            _add('bridge_acceleration', 'Acceleration', int(bridge_accel),
+                 'bad', str(int(ref_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(ref_accel)}). '
+                 f'OrcaSlicer misidentifies recessed features as bridges \u2014 '
+                 f'set bridge accel equal to wall accel.')
+        elif ref_accel and gap >= MAX_ACCEL_GAP:
+            _add('bridge_acceleration', 'Acceleration', int(bridge_accel),
+                 'warn', str(int(ref_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(ref_accel)}). '
+                 f'OrcaSlicer misidentifies features as bridges \u2014 '
+                 f'set to {int(ref_accel)} to match wall accel.')
+        else:
+            _add('bridge_acceleration', 'Acceleration', int(bridge_accel),
+                 'good', None,
+                 f'Close to wall accel (\u00b1{int(gap)} gap). Minimal transition artifact risk.')
+
+    if infill_accel is not None:
+        gap = abs(infill_accel - wall_accel) if wall_accel else 0
+        if wall_accel and gap >= MAX_ACCEL_GAP * 2:
+            _add('sparse_infill_acceleration', 'Acceleration', int(infill_accel),
+                 'bad', f'{int(wall_accel)}',
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'This is the #1 cause of horizontal banding \u2014 every layer transition '
+                 f'between wall and infill creates a visible line. '
+                 f'Set to {int(wall_accel)} (same as walls).')
+        elif wall_accel and gap >= MAX_ACCEL_GAP:
+            _add('sparse_infill_acceleration', 'Acceleration', int(infill_accel),
+                 'warn', f'{int(wall_accel)}',
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'Infill-to-wall transitions can cause faint banding. '
+                 f'Set to {int(wall_accel)} for best results.')
+        else:
+            _add('sparse_infill_acceleration', 'Acceleration', int(infill_accel),
+                 'good', None,
+                 f'Close to wall accel (\u00b1{int(gap)} gap). Minimal banding risk.')
+
+    if solid_accel is not None:
+        gap = abs(solid_accel - wall_accel) if wall_accel else 0
+        if wall_accel and gap >= MAX_ACCEL_GAP * 2:
+            _add('internal_solid_infill_acceleration', 'Acceleration', int(solid_accel),
+                 'bad', str(int(wall_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'Solid infill transitions create visible lines where fill meets walls. '
+                 f'Set to {int(wall_accel)}.')
+        elif wall_accel and gap >= MAX_ACCEL_GAP:
+            _add('internal_solid_infill_acceleration', 'Acceleration', int(solid_accel),
+                 'warn', str(int(wall_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'Solid infill transitions can affect top/bottom surface quality. '
+                 f'Set to {int(wall_accel)} for uniform accel.')
+        else:
+            _add('internal_solid_infill_acceleration', 'Acceleration', int(solid_accel),
+                 'good', None,
+                 f'Close to wall accel (\u00b1{int(gap)} gap). Good.')
+
+    if top_accel is not None:
+        gap = abs(top_accel - wall_accel) if wall_accel else 0
+        if wall_accel and gap >= MAX_ACCEL_GAP * 2:
+            _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                 'bad', str(int(wall_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'Top surface meets walls at edges \u2014 matching accel prevents transition lines.')
+        elif wall_accel and gap >= MAX_ACCEL_GAP:
+            _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                 'warn', str(int(wall_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
+                 f'Top surface meets walls at edges \u2014 matching accel prevents transition lines.')
+        elif top_accel < 3000:
+            _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                 'info', '4000\u20136000',
+                 'Very conservative. Can increase for faster prints without quality loss on top surfaces.')
+        else:
+            _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                 'good', None,
+                 f'Close to wall accel (\u00b1{int(gap)} gap). Good for top surface quality.')
+
+    if travel_accel is not None:
+        if travel_accel < 5000:
+            _add('travel_acceleration', 'Acceleration', int(travel_accel),
+                 'info', '10000\u201315000',
+                 'Travel moves don\'t extrude \u2014 higher accel means faster repositioning and less ooze.')
+        elif travel_accel > 20000:
+            _add('travel_acceleration', 'Acceleration', int(travel_accel),
+                 'info', None,
+                 'Very high, but travel-only so no print quality impact. Fine if your frame handles it.')
+        else:
+            _add('travel_acceleration', 'Acceleration', int(travel_accel),
+                 'good', None,
+                 'Good travel accel. Fast repositioning without excessive frame stress.')
+
+    if first_accel is not None:
+        if first_accel > 5000:
+            _add('initial_layer_acceleration', 'Acceleration', int(first_accel),
+                 'warn', '1500\u20133000',
+                 'First layer needs to stick. High accel shakes the nozzle and hurts adhesion.')
+        elif first_accel < 500:
+            _add('initial_layer_acceleration', 'Acceleration', int(first_accel),
+                 'info', '1500\u20132000',
+                 'Very slow first layer. Can safely increase for faster start.')
+        else:
+            _add('initial_layer_acceleration', 'Acceleration', int(first_accel),
+                 'good', None,
+                 'Good first layer accel. Gentle enough for adhesion.')
+
+    # =====================================================================
+    # SPEED SETTINGS — with volumetric flow calculation
+    # =====================================================================
+    def _speed_advice(setting, category, speed, line_w, layer, feature_name,
+                      min_ok=10, max_ok=300, quality_max=None):
+        if speed is None:
+            return
+        flow = _flow(speed, line_w, layer)
+        fv = _flow_verdict(flow)
+        if flow > peak_flow:
+            max_safe_speed = int(safe_flow / (line_w * layer)) if line_w * layer > 0 else speed
+            _add(setting, category, f'{int(speed)} mm/s', 'bad',
+                 f'{max_safe_speed} mm/s',
+                 f'{feature_name}: {flow} mm\u00b3/s exceeds Revo {variant} {nozzle_dia}mm '
+                 f'{material} peak of {peak_flow} mm\u00b3/s (E3D data). '
+                 f'Will cause under-extrusion.', flow)
+        elif flow > safe_flow * 0.85:
+            _add(setting, category, f'{int(speed)} mm/s', 'warn', None,
+                 f'{feature_name}: {flow} mm\u00b3/s is near Revo {variant} {nozzle_dia}mm '
+                 f'{material} safe limit of {safe_flow} mm\u00b3/s (E3D data). '
+                 f'May work but leaves little headroom for the {wattage}W heater.', flow)
+        elif quality_max and speed > quality_max:
+            _add(setting, category, f'{int(speed)} mm/s', 'info',
+                 f'{int(quality_max)} mm/s',
+                 f'{feature_name}: speed is fine for flow ({flow} mm\u00b3/s) but '
+                 f'higher speeds can reduce {feature_name.lower()} quality.', flow)
+        elif speed < min_ok:
+            _add(setting, category, f'{int(speed)} mm/s', 'info', None,
+                 f'{feature_name}: very slow ({flow} mm\u00b3/s). Fine for quality, slow for time.', flow)
+        else:
+            _add(setting, category, f'{int(speed)} mm/s', 'good', None,
+                 f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
+                 f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow)
+
+    _speed_advice('outer_wall_speed', 'Speed',
+                  slicer_settings.get('outer_wall_speed'), outer_w, layer_h,
+                  'Outer wall', quality_max=250)
+    _speed_advice('inner_wall_speed', 'Speed',
+                  slicer_settings.get('inner_wall_speed'), inner_w, layer_h,
+                  'Inner wall', quality_max=300)
+    _speed_advice('bridge_speed', 'Speed',
+                  slicer_settings.get('bridge_speed'), outer_w, layer_h,
+                  'Bridge', max_ok=100)
+    _speed_advice('sparse_infill_speed', 'Speed',
+                  slicer_settings.get('sparse_infill_speed'), infill_w, layer_h,
+                  'Sparse infill')
+    _speed_advice('internal_solid_infill_speed', 'Speed',
+                  slicer_settings.get('internal_solid_infill_speed'), infill_w, layer_h,
+                  'Solid infill')
+    _speed_advice('top_surface_speed', 'Speed',
+                  slicer_settings.get('top_surface_speed'), top_w, layer_h,
+                  'Top surface', quality_max=120)
+    _speed_advice('gap_infill_speed', 'Speed',
+                  slicer_settings.get('gap_infill_speed'), outer_w, layer_h,
+                  'Gap fill')
+    _speed_advice('initial_layer_speed', 'Speed',
+                  slicer_settings.get('initial_layer_speed'), first_w, first_layer_h,
+                  'First layer')
+    _speed_advice('internal_bridge_speed', 'Speed',
+                  slicer_settings.get('internal_bridge_speed'), inner_w, layer_h,
+                  'Internal bridge')
+    _speed_advice('support_speed', 'Speed',
+                  slicer_settings.get('support_speed'), infill_w, layer_h,
+                  'Support')
+
+    travel_speed = slicer_settings.get('travel_speed')
+    if travel_speed is not None:
+        if travel_speed > 500:
+            _add('travel_speed', 'Speed', f'{int(travel_speed)} mm/s', 'info', None,
+                 'Very fast travel. Fine if frame is rigid, but check for resonance on small parts.')
+        elif travel_speed < 150:
+            _add('travel_speed', 'Speed', f'{int(travel_speed)} mm/s', 'info',
+                 '300\u2013500 mm/s',
+                 'Slow travel wastes time and increases ooze at non-extruding moves.')
+        else:
+            _add('travel_speed', 'Speed', f'{int(travel_speed)} mm/s', 'good', None,
+                 'Good travel speed. Fast repositioning without excessive frame stress.')
+
+    # =====================================================================
+    # QUALITY SETTINGS
+    # =====================================================================
+    bridge_flow = slicer_settings.get('bridge_flow')
+    if bridge_flow is not None:
+        if bridge_flow < 0.9:
+            _add('bridge_flow', 'Quality', bridge_flow, 'warn', '1.0',
+                 f'Under-extruding bridges by {(1 - bridge_flow) * 100:.0f}%. '
+                 f'OrcaSlicer misidentifies recessed areas as bridges \u2014 set to 1.0.')
+        elif bridge_flow > 1.1:
+            _add('bridge_flow', 'Quality', bridge_flow, 'info', '1.0',
+                 'Over-extruding on bridges. May cause drooping.')
+        else:
+            _add('bridge_flow', 'Quality', bridge_flow, 'good', None,
+                 'Bridge flow normal. No under/over-extrusion.')
+
+    wall_loops = slicer_settings.get('wall_loops')
+    if wall_loops is not None:
+        wl = int(wall_loops)
+        if wl < 2:
+            _add('wall_loops', 'Quality', wl, 'warn', '2\u20133',
+                 'Single wall = weak part + infill pattern shows through. Use 2+ walls.')
+        elif wl > 5:
+            _add('wall_loops', 'Quality', wl, 'info', '2\u20134',
+                 'Very thick walls. Probably unnecessary for most parts \u2014 eats print time.')
+        else:
+            _add('wall_loops', 'Quality', wl, 'good', None,
+                 f'{wl} walls. Good structural strength without excessive time.')
+
+    wall_seq = slicer_settings.get('wall_sequence')
+    if wall_seq is not None:
+        seq_str = str(wall_seq).lower()
+        if 'outer' in seq_str and 'inner' in seq_str:
+            if seq_str.index('outer') < seq_str.index('inner'):
+                _add('wall_sequence', 'Quality', str(wall_seq), 'info', None,
+                     'Outer wall first = better dimensional accuracy but inner wall can\'t '
+                     'support overhangs. Best for calibration cubes and functional parts.')
+            else:
+                _add('wall_sequence', 'Quality', str(wall_seq), 'good', None,
+                     'Inner wall first = better overhang support. Good default for most prints.')
+        else:
+            _add('wall_sequence', 'Quality', str(wall_seq), 'info', None,
+                 f'Wall sequence: {wall_seq}')
+
+    for i, angle in [(1, '25%'), (2, '50%'), (3, '75%'), (4, '100%')]:
+        key = f'overhang_{i}_4_speed'
+        val = slicer_settings.get(key)
+        if val is not None:
+            val_str = str(val)
+            if '%' in val_str:
+                pct = float(val_str.replace('%', ''))
+                if pct > 80:
+                    _add(key, 'Quality', val_str, 'info', f'{60 - (i * 10)}%',
+                         f'{angle} overhang: speed too high \u2014 material sags before cooling. '
+                         f'Slow down steep overhangs for better bridging.')
+                else:
+                    _add(key, 'Quality', val_str, 'good', None,
+                         f'{angle} overhang: good slowdown for cooling time.')
+            elif float(val) > 0:
+                _add(key, 'Quality', f'{val} mm/s', 'info', None,
+                     f'{angle} overhang at {val} mm/s.')
+
+    small_peri = slicer_settings.get('small_perimeter_speed')
+    if small_peri is not None:
+        val_str = str(small_peri)
+        if '%' in val_str:
+            pct = float(val_str.replace('%', ''))
+            if pct > 80:
+                _add('small_perimeter_speed', 'Quality', val_str, 'info', '50\u201360%',
+                     'Small perimeters need slow speed for dimensional accuracy (screw holes, pins).')
+            else:
+                _add('small_perimeter_speed', 'Quality', val_str, 'good', None,
+                     'Good slowdown for small features.')
+        elif float(small_peri) > 0:
+            if float(small_peri) > 150:
+                _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'info',
+                     '60\u2013100 mm/s',
+                     'Small perimeters at this speed lose dimensional accuracy.')
+            else:
+                _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'good', None,
+                     'Good speed for small features.')
+
+    fil_mvs = slicer_settings.get('filament_max_volumetric_speed')
+    if fil_mvs is not None:
+        fmvs = float(fil_mvs)
+        if fmvs > peak_flow:
+            _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
+                 'bad', f'{safe_flow} mm\u00b3/s',
+                 f'Slicer allows {fmvs} mm\u00b3/s but the Revo {variant} {nozzle_dia}mm '
+                 f'can only do {peak_flow} peak for {material} (E3D data). '
+                 f'Set to {safe_flow} for reliable prints.')
+        elif fmvs > safe_flow:
+            _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
+                 'warn', f'{safe_flow} mm\u00b3/s',
+                 f'Set to {fmvs} \u2014 above the Revo {variant} safe limit '
+                 f'of {safe_flow} mm\u00b3/s for {material} (E3D data). '
+                 f'This lets the slicer exceed what your hotend can handle.')
+        elif fmvs < safe_flow * 0.5:
+            _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
+                 'warn', f'{safe_flow} mm\u00b3/s',
+                 f'Set to {fmvs} \u2014 very conservative for the Revo {variant} '
+                 f'(safe: {safe_flow} for {material}, E3D data). You\u2019re leaving speed on the table.')
+        else:
+            _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
+                 'good', None,
+                 f'Matches Revo {variant} safe limit ({safe_flow} mm\u00b3/s '
+                 f'for {material}, E3D data). Good.')
+
+    # =====================================================================
+    # ACCEL UNIFORMITY SUMMARY
+    # =====================================================================
+    accel_vals = [_coerce_accel(v, _ref_accel) for k, v in slicer_settings.items()
+                  if k in _SLICER_ACCEL_KEYS
+                  and 'travel' not in k and 'initial' not in k]
+    accel_vals = [v for v in accel_vals if v is not None and v > 0]
+    if len(accel_vals) >= 3:
+        spread = max(accel_vals) - min(accel_vals)
+        if spread <= MAX_ACCEL_GAP:
+            _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
+                 'good', None,
+                 f'All print accelerations within \u00b1{int(spread)} of each other. '
+                 f'Minimal banding risk from accel transitions.')
+        else:
+            _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
+                 'bad', f'Within \u00b1{MAX_ACCEL_GAP}',
+                 f'Acceleration spread of \u00b1{int(spread)} across features. '
+                 f'This is the root cause of horizontal banding. Set all print accels '
+                 f'within \u00b1{MAX_ACCEL_GAP} of each other.')
+
+    all_flows = [a.get('flow_mm3s', 0) for a in advice if a.get('flow_mm3s')]
+    if all_flows:
+        peak_actual = max(all_flows)
+        headroom = safe_flow - peak_actual
+        if peak_actual > peak_flow:
+            _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                 'bad', f'Reduce speed or switch to Revo HF' if variant == 'SF' else 'Reduce speed',
+                 f'Peak flow ({peak_actual} mm\u00b3/s) exceeds Revo {variant} {nozzle_dia}mm '
+                 f'{material} peak of {peak_flow} mm\u00b3/s (E3D data). '
+                 f'You will get under-extrusion.')
+        elif headroom < 0:
+            _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                 'warn', None,
+                 f'Peak flow ({peak_actual} mm\u00b3/s) exceeds the Revo {variant} '
+                 f'safe limit of {safe_flow} mm\u00b3/s but within burst peak '
+                 f'({peak_flow}). Short bursts OK, sustained sections may struggle.')
+        elif headroom < 3:
+            _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                 'warn', None,
+                 f'Only {headroom:.1f} mm\u00b3/s headroom below Revo {variant} safe limit '
+                 f'({safe_flow} mm\u00b3/s, E3D data). The adaptive flow system needs room '
+                 f'to boost \u2014 consider slowing infill by 10\u201315%.')
+        else:
+            _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                 'good', None,
+                 f'{headroom:.1f} mm\u00b3/s headroom below Revo {variant} safe limit '
+                 f'({safe_flow} mm\u00b3/s for {material}, E3D data). '
+                 f'Plenty of room for adaptive flow adjustments.')
+
+    return advice
+
+
+# =============================================================================
+# E3D REVO HOTEND REFERENCE DATA
+# =============================================================================
+_E3D_REVO_FLOW = {
+    0.4: {
+        'HF': {
+            'PLA':  {'safe': 24, 'peak': 28},
+            'PETG': {'safe': 18, 'peak': 22},
+            'ABS':  {'safe': 20, 'peak': 24},
+            'ASA':  {'safe': 20, 'peak': 24},
+            'TPU':  {'safe': 8,  'peak': 11},
+        },
+        'SF': {
+            'PLA':  {'safe': 11, 'peak': 14},
+            'PETG': {'safe': 9,  'peak': 12},
+            'ABS':  {'safe': 10, 'peak': 13},
+            'ASA':  {'safe': 10, 'peak': 13},
+            'TPU':  {'safe': 5,  'peak': 7},
+        },
+    },
+    0.6: {
+        'HF': {
+            'PLA':  {'safe': 35, 'peak': 40},
+            'PETG': {'safe': 28, 'peak': 33},
+            'ABS':  {'safe': 30, 'peak': 35},
+            'ASA':  {'safe': 30, 'peak': 35},
+            'TPU':  {'safe': 12, 'peak': 16},
+        },
+        'SF': {
+            'PLA':  {'safe': 18, 'peak': 22},
+            'PETG': {'safe': 14, 'peak': 18},
+            'ABS':  {'safe': 16, 'peak': 20},
+            'ASA':  {'safe': 16, 'peak': 20},
+            'TPU':  {'safe': 8,  'peak': 10},
+        },
+    },
+}
+
+_REVO_HEATER_WATTAGE = {40: 'standard', 60: 'high-power'}
+
+
+def _get_revo_variant():
+    """Get the Revo variant (HF/SF) from adaptive flow config."""
+    val = _get_config_value('use_high_flow_nozzle')
+    if val is not None:
+        return 'HF' if val else 'SF'
+    return 'HF'
+
+
+def _get_revo_flow_limit(nozzle_dia, variant, material):
+    """Look up E3D Revo flow limits for given nozzle/variant/material."""
+    known_sizes = sorted(_E3D_REVO_FLOW.keys())
+    closest = min(known_sizes, key=lambda s: abs(s - nozzle_dia))
+    nozzle_data = _E3D_REVO_FLOW.get(closest, {})
+    variant_data = nozzle_data.get(variant, nozzle_data.get('HF', {}))
+    mat_upper = (material or 'PLA').strip().upper()
+    for mat_key in variant_data:
+        if mat_upper == mat_key or mat_upper.startswith(mat_key):
+            return variant_data[mat_key]
+    return variant_data.get('PLA', {'safe': 15, 'peak': 20})
+
+
+
+# =============================================================================
 # TTL RESULT CACHE — avoid re-analyzing on rapid refreshes
 # =============================================================================
 
@@ -3265,6 +3850,75 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     data['slicer_settings'] = slicer
     data['slicer_diagnosis'] = slicer_diag
 
+    # --- Build hotend info from adaptive flow config ---
+    hotend_info = None
+    try:
+        af_cfg = _parse_config_variables(os.path.join(CONFIG_DIR, 'auto_flow_user.cfg'))
+        af_defaults = _parse_config_variables(os.path.join(CONFIG_DIR, 'auto_flow_defaults.cfg'))
+        core_section = 'gcode_macro _AUTO_TEMP_CORE'
+        def _af_val(key):
+            vk = f'variable_{key}'
+            for cfg in (af_cfg, af_defaults):
+                v = cfg.get(core_section, {}).get(vk)
+                if v is not None:
+                    try:
+                        sv = str(v).split('#')[0].strip()
+                        if sv.lower() in ('true', 'false'):
+                            return sv.lower() == 'true'
+                        return float(sv)
+                    except ValueError:
+                        return v
+            return None
+        is_hf = _af_val('use_high_flow_nozzle')
+        if is_hf is None:
+            is_hf = True
+        nozzle_type = 'HF' if is_hf else 'SF'
+        max_safe = _af_val(f'max_safe_flow_{"hf" if is_hf else "std"}')
+        if max_safe is None:
+            max_safe = 25.0 if is_hf else 15.0
+        wattage = _af_val('sc_heater_wattage')
+        if wattage is None:
+            wattage = 40
+        if isinstance(wattage, str):
+            wattage = wattage.split('#')[0].strip()
+            try:
+                wattage = float(wattage)
+            except ValueError:
+                wattage = 40
+        hotend_info = {
+            'nozzle_type': nozzle_type,
+            'max_safe_flow': float(max_safe),
+            'heater_wattage': int(wattage),
+        }
+        # --- Overlay E3D Revo reference data ---
+        nozzle_dia = 0.4
+        if slicer:
+            nozzle_dia = slicer.get('nozzle_diameter', 0.4)
+            if not isinstance(nozzle_dia, (int, float)):
+                nozzle_dia = 0.4
+        material = 'PLA'
+        if data.get('summary'):
+            material = (data['summary'].get('material') or 'PLA').strip().upper()
+        e3d_limits = _get_revo_flow_limit(nozzle_dia, nozzle_type, material)
+        hotend_info['safe_flow'] = e3d_limits['safe']
+        hotend_info['peak_flow'] = e3d_limits['peak']
+        hotend_info['nozzle_diameter'] = nozzle_dia
+        hotend_info['material'] = material
+        hotend_info['flow_source'] = 'E3D Revo published data'
+    except Exception:
+        pass
+    data['hotend_info'] = hotend_info
+
+    # --- Comprehensive per-setting profile advice ---
+    profile_advice = None
+    if slicer and hotend_info:
+        profile_advice = generate_slicer_profile_advice(
+            slicer, hotend_info,
+            print_summary=data.get('summary'),
+        )
+    data['slicer_profile_advice'] = profile_advice
+
+
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
     mat = (data.get('summary') or {}).get('material') or material
@@ -3367,6 +4021,12 @@ details.sl-section summary::before{content:'\25b6';font-size:10px;color:#8b949e;
 transition:transform .2s}
 details.sl-section[open] summary::before{transform:rotate(90deg)}
 details.sl-section .sl-body{padding:0 16px 16px 16px}
+.pa-table{width:100%;border-collapse:collapse}
+.pa-table th{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;
+padding:8px 10px;text-align:left;border-bottom:1px solid #30363d}
+.pa-table td{padding:8px 10px;border-bottom:1px solid #21262d;vertical-align:top;font-size:13px}
+.pa-table tr:last-child td{border-bottom:none}
+.pa-table td:first-child{text-transform:capitalize}
 .rec .rec-title{font-size:15px;font-weight:600}
 .rec .rec-detail{font-size:13px;color:#8b949e;margin:4px 0 8px}
 .rec .rec-action{font-size:13px;color:#c9d1d9;background:#0d1117;border-radius:6px;
@@ -3634,6 +4294,56 @@ h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="
 '<span class="rec-cat">Slicer \u2014 '+mat+'</span></div>'+
 '<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
 
+/* --- Profile Advisor — comprehensive per-setting analysis --- */
+var pa=D.slicer_profile_advice;
+var hi=D.hotend_info;
+if(pa&&pa.length){
+var sevIcon={good:'\u2705',warn:'\u26a0\ufe0f',bad:'\u274c',info:'\u2139\ufe0f'};
+var sevClr={good:'#3fb950',warn:'#d29922',bad:'#f85149',info:'#58a6ff'};
+
+/* Hotend header */
+if(hi){
+var sfLabel=hi.safe_flow||hi.max_safe_flow||'?';
+var pkLabel=hi.peak_flow||'?';
+var matLabel=hi.material||'PLA';
+var ndLabel=hi.nozzle_diameter||'0.4';
+var srcLabel=hi.flow_source||'config';
+h+='<div class="box"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">'+
+'<div style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:10px;padding:10px 16px;font-size:20px;font-weight:700;color:#fff">Revo '+hi.nozzle_type+'</div>'+
+'<div><div style="font-size:15px;font-weight:600;color:#e6edf3">E3D Revo '+hi.nozzle_type+' '+ndLabel+'mm \u2022 '+hi.heater_wattage+'W Heater \u2022 '+matLabel+'</div>'+
+'<div style="font-size:12px;color:#8b949e">Safe flow: <b style="color:#3fb950">'+sfLabel+' mm\u00b3/s</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+' mm\u00b3/s</b> \u2022 <span style="font-style:italic">'+srcLabel+'</span></div>'+
+'</div></div></div>'}
+
+/* Group by category */
+var cats=['Summary','Acceleration','Speed','Quality'];
+cats.forEach(function(cat){
+var items=pa.filter(function(a){return a.category===cat});
+if(!items.length)return;
+var catTitle=cat;
+var catDesc='';
+if(cat==='Summary')catDesc='Overall assessment of your slicer profile against your hotend capabilities.';
+else if(cat==='Acceleration')catDesc='Per-feature acceleration values. Large gaps between features cause horizontal banding lines.';
+else if(cat==='Speed')catDesc='Print speeds with calculated volumetric flow (speed \u00d7 line width \u00d7 layer height) vs your hotend\u2019s capacity.';
+else if(cat==='Quality')catDesc='Quality-related settings: bridge flow, wall sequence, overhang handling, and flow limits.';
+
+h+='<details class="sl-section"'+(cat==='Summary'?' open':'')+
+'><summary>'+catTitle+' ('+items.length+')</summary><div class="sl-body">'+
+'<p class="box-desc">'+catDesc+'</p>';
+h+='<table class="pa-table"><tr><th>Setting</th><th>Value</th>'+(cat==='Speed'?'<th>Flow</th>':'')+'<th>Verdict</th><th>Details</th></tr>';
+items.forEach(function(a){
+var setting=a.setting.replace(/^_/,'').replace(/_/g,' ');
+var clr=sevClr[a.verdict]||'#8b949e';
+var icon=sevIcon[a.verdict]||'';
+var sug=a.suggestion?'<br><span style="color:#3fb950;font-size:11px">\u2192 Suggested: <b>'+a.suggestion+'</b></span>':'';
+var flowCell=(cat==='Speed'&&a.flow_mm3s!==undefined)?'<td style="font-weight:600;color:'+(a.flow_mm3s>((hi&&hi.safe_flow)||25)*0.85?'#f85149':'#c9d1d9')+'">'+a.flow_mm3s+' mm\u00b3/s</td>':'';
+if(cat==='Speed'&&a.flow_mm3s===undefined)flowCell='<td style="color:#484f58">\u2014</td>';
+h+='<tr><td style="font-weight:600;white-space:nowrap">'+setting+'</td><td style="font-weight:600">'+a.current+'</td>'+
+flowCell+
+'<td style="text-align:center"><span style="color:'+clr+'">'+icon+'</span></td>'+
+'<td style="font-size:12px;color:#8b949e;line-height:1.5">'+a.reason+sug+'</td></tr>'});
+h+='</table></div></details>'});
+}
+
 /* --- Accel Fingerprint (collapsible) --- */
 if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
 var am=sd.accel_map;
@@ -3670,6 +4380,9 @@ var speedKeys=['outer_wall_speed','inner_wall_speed','bridge_speed','sparse_infi
 var otherKeys=['bridge_flow','wall_loops','wall_sequence','overhang_1_4_speed',
 'overhang_2_4_speed','overhang_3_4_speed','overhang_4_4_speed',
 'small_perimeter_speed','filament_max_volumetric_speed'];
+var geoKeys=['nozzle_diameter','layer_height','first_layer_height',
+'outer_wall_line_width','inner_wall_line_width','sparse_infill_line_width',
+'top_surface_line_width','initial_layer_line_width','support_line_width'];
 
 function settingsTable(title,desc,keys){
 var rows='';var found=0;
@@ -3690,6 +4403,9 @@ speedKeys);
 h+=settingsTable('Other Settings',
 'Bridge flow, wall sequence, overhang speeds and other quality-related settings.',
 otherKeys);
+h+=settingsTable('Geometry',
+'Nozzle diameter, layer height, and line widths used for volumetric flow calculations.',
+geoKeys);
 
 ca.innerHTML=h;
 
