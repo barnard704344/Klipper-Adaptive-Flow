@@ -308,6 +308,233 @@ def _suggest_change(variable, direction, amount, material=None,
 
 
 # =============================================================================
+# HARDWARE-AWARE CONFIG PARSING
+# =============================================================================
+
+def _parse_klipper_config(filepath):
+    """Parse a Klipper INI-like config file into {section: {key: value_str}}.
+
+    Handles both ``key: value`` and ``key = value`` separators.
+    Strips inline comments (``# ...``).  Skips comment-only lines.
+    """
+    result = {}
+    current_section = None
+    if not os.path.exists(filepath):
+        return result
+    try:
+        with open(filepath) as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#') or stripped.startswith(';'):
+                    continue
+                if stripped.startswith('[') and ']' in stripped:
+                    current_section = stripped[1:stripped.index(']')].strip()
+                    result.setdefault(current_section, {})
+                elif current_section:
+                    # Try colon separator first, then equals
+                    if ':' in stripped:
+                        key, _, val = stripped.partition(':')
+                    elif '=' in stripped:
+                        key, _, val = stripped.partition('=')
+                    else:
+                        continue
+                    key = key.strip()
+                    val = val.split('#')[0].strip()  # strip inline comments
+                    if key and not key.startswith('#'):
+                        result[current_section][key] = val
+    except (IOError, OSError):
+        pass
+    return result
+
+
+def _parse_all_klipper_configs(config_dir):
+    """Parse printer.cfg and all [include ...] files into a merged dict."""
+    printer_cfg = os.path.join(config_dir, 'printer.cfg')
+    merged = _parse_klipper_config(printer_cfg)
+
+    # Follow [include ...] directives from printer.cfg only (one level)
+    include_files = []
+    try:
+        with open(printer_cfg) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith('[include ') and s.endswith(']'):
+                    fname = s[9:-1].strip().split('#')[0].strip()
+                    if fname:
+                        include_files.append(fname)
+    except (IOError, OSError):
+        pass
+
+    for fname in include_files:
+        fpath = os.path.join(config_dir, fname)
+        if os.path.isdir(fpath):
+            continue
+        inc = _parse_klipper_config(fpath)
+        for section, keys in inc.items():
+            merged.setdefault(section, {}).update(keys)
+
+    return merged
+
+
+def _safe_float(d, key, default=None):
+    """Extract a float from a dict, returning *default* on any failure."""
+    v = d.get(key)
+    if v is None:
+        return default
+    try:
+        return float(str(v).split('#')[0].strip())
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_int(d, key, default=None):
+    """Extract an int from a dict, returning *default* on any failure."""
+    v = d.get(key)
+    if v is None:
+        return default
+    try:
+        return int(float(str(v).split('#')[0].strip()))
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_str(d, key, default=''):
+    """Extract a stripped string from a dict."""
+    v = d.get(key)
+    if v is None:
+        return default
+    return str(v).split('#')[0].strip()
+
+
+def collect_printer_hardware(config_dir=None):
+    """Auto-detect printer hardware from Klipper config files.
+
+    Reads printer.cfg and all [include] files.  Returns a normalized dict
+    of hardware capabilities.  Gracefully returns an empty dict on failure.
+    """
+    if config_dir is None:
+        config_dir = CONFIG_DIR
+    try:
+        cfg = _parse_all_klipper_configs(config_dir)
+    except Exception:
+        return {}
+
+    hw = {}
+
+    # --- [printer] ---
+    printer = cfg.get('printer', {})
+    if printer:
+        hw['kinematics'] = _safe_str(printer, 'kinematics', 'unknown')
+        hw['firmware_max_velocity'] = _safe_int(printer, 'max_velocity')
+        hw['firmware_max_accel'] = _safe_int(printer, 'max_accel')
+        hw['square_corner_velocity'] = _safe_float(printer, 'square_corner_velocity')
+
+    # --- Build volume from stepper position_max ---
+    build = {}
+    for axis, stepper in [('x', 'stepper_x'), ('y', 'stepper_y'), ('z', 'stepper_z')]:
+        sec = cfg.get(stepper, {})
+        pmax = _safe_float(sec, 'position_max')
+        if pmax is not None:
+            build[axis] = pmax
+    if build:
+        hw['build_volume'] = (build.get('x', 0), build.get('y', 0), build.get('z', 0))
+
+    # --- Z stepper count (quad gantry detection) ---
+    z_count = sum(1 for s in cfg if s.startswith('stepper_z'))
+    if z_count:
+        hw['z_steppers'] = z_count
+
+    # --- [extruder] ---
+    ext = cfg.get('extruder', {})
+    if ext:
+        rot_dist = _safe_float(ext, 'rotation_distance')
+        hw['extruder'] = {
+            'rotation_distance': rot_dist,
+            'drive_type': 'direct' if (rot_dist and rot_dist <= 8) else 'bowden' if rot_dist else 'unknown',
+            'nozzle_diameter': _safe_float(ext, 'nozzle_diameter', 0.4),
+            'thermistor': _safe_str(ext, 'sensor_type'),
+            'max_temp': _safe_int(ext, 'max_temp'),
+        }
+
+    # --- [tmc2209 extruder] or [tmc5160 extruder] ---
+    for driver in ('tmc2209', 'tmc5160', 'tmc2130', 'tmc2660'):
+        tmc_sec = cfg.get(f'{driver} extruder', {})
+        if tmc_sec:
+            hw.setdefault('extruder', {})['tmc_driver'] = driver
+            hw['extruder']['run_current'] = _safe_float(tmc_sec, 'run_current')
+            break
+
+    # --- [autotune_tmc extruder] ---
+    autotune = cfg.get('autotune_tmc extruder', {})
+    if autotune:
+        hw.setdefault('extruder', {})['motor'] = _safe_str(autotune, 'motor')
+        hw['extruder']['tuning_goal'] = _safe_str(autotune, 'tuning_goal')
+
+    # --- [fan] (part cooling) ---
+    fan = cfg.get('fan', {})
+    if fan:
+        hw['part_fan'] = {
+            'max_power': _safe_float(fan, 'max_power', 1.0),
+            'hardware_pwm': _safe_str(fan, 'hardware_pwm', 'False').lower() == 'true',
+            'cycle_time': _safe_float(fan, 'cycle_time'),
+        }
+
+    # --- [input_shaper] ---
+    shaper = cfg.get('input_shaper', {})
+    if shaper:
+        hw['input_shaper'] = {}
+        for axis in ('x', 'y'):
+            stype = _safe_str(shaper, f'shaper_type_{axis}') or _safe_str(shaper, 'shaper_type')
+            freq = _safe_float(shaper, f'shaper_freq_{axis}')
+            damp = _safe_float(shaper, f'damping_ratio_{axis}')
+            if stype or freq:
+                entry = {}
+                if stype:
+                    entry['type'] = stype
+                if freq:
+                    entry['freq'] = freq
+                    # Compute recommended max accel: shaper_freq × 100
+                    entry['recommended_max_accel'] = int(freq * 100)
+                if damp:
+                    entry['damping'] = damp
+                hw['input_shaper'][axis] = entry
+
+    # --- XY TMC drivers ---
+    for driver in ('tmc2209', 'tmc5160', 'tmc2130', 'tmc2660'):
+        tmc_x = cfg.get(f'{driver} stepper_x', {})
+        if tmc_x:
+            stealthchop = _safe_str(tmc_x, 'stealthchop_threshold', '0')
+            hw['xy_tmc'] = {
+                'driver': driver,
+                'run_current': _safe_float(tmc_x, 'run_current'),
+                'stealthchop': stealthchop != '0',
+            }
+            break
+
+    # --- Probe type ---
+    for section in cfg:
+        if 'probe_eddy' in section:
+            hw['probe_type'] = 'eddy'
+            break
+        elif section == 'bltouch':
+            hw['probe_type'] = 'bltouch'
+            break
+        elif section == 'probe':
+            hw['probe_type'] = 'probe'
+            break
+
+    # --- MMU detection ---
+    mmu_dir = os.path.join(config_dir, 'mmu')
+    if os.path.isdir(mmu_dir):
+        hw['mmu_present'] = True
+    else:
+        # Also check for MMU sections in config
+        hw['mmu_present'] = any(s.startswith('mmu') for s in cfg)
+
+    return hw
+
+
+# =============================================================================
 # SINGLE-PRINT STATS
 # =============================================================================
 
@@ -682,7 +909,7 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
 # SLICER PROFILE ADVISOR — comprehensive per-setting recommendations
 # =============================================================================
 
-def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=None):
+def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=None, printer_hw=None):
     """Produce comprehensive per-setting advice for every parsed slicer value.
 
     *hotend_info* is a dict with keys from the adaptive flow config:
@@ -690,12 +917,17 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
         - max_safe_flow: float (mm\u00b3/s)
         - heater_wattage: int (40 or 60)
 
+    *printer_hw* is an optional dict from ``collect_printer_hardware()`` with
+    firmware limits, input shaper data, fan caps, etc.
+
     Returns a list of dicts:
         {setting, category, current, verdict, suggestion, reason, flow_mm3s}
     verdict: 'good', 'warn', 'bad', 'info'
     """
     if not slicer_settings or not hotend_info:
         return []
+    if printer_hw is None:
+        printer_hw = {}
 
     advice = []
     nozzle = hotend_info.get('nozzle_type', 'HF')
@@ -960,6 +1192,69 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             _add('initial_layer_acceleration', 'Acceleration', int(first_accel),
                  'good', None,
                  'Good first layer accel. Gentle enough for adhesion.')
+
+    # =====================================================================
+    # HARDWARE VALIDATION — firmware limits & input shaper
+    # =====================================================================
+    fw_max_accel = (printer_hw or {}).get('firmware_max_accel')
+    is_data = (printer_hw or {}).get('input_shaper', {})
+
+    # Check if any slicer accel exceeds firmware max_accel
+    if fw_max_accel:
+        for accel_name, accel_val in [
+            ('default_acceleration', default_accel),
+            ('outer_wall_acceleration', outer_accel),
+            ('inner_wall_acceleration', inner_accel),
+            ('sparse_infill_acceleration', infill_accel),
+            ('travel_acceleration', travel_accel),
+        ]:
+            if accel_val and accel_val > fw_max_accel:
+                _add(accel_name, 'Firmware Limit', int(accel_val),
+                     'bad', str(fw_max_accel),
+                     f'Exceeds firmware max_accel ({fw_max_accel}). '
+                     f'Klipper will silently clamp to {fw_max_accel} — '
+                     f'this setting has no effect above that.')
+
+    # Check if accel exceeds input shaper recommended limit (quality)
+    if is_data:
+        # Use the more restrictive axis (typically Y on corexy)
+        shaper_limits = {}
+        for axis in ('x', 'y'):
+            ax_data = is_data.get(axis, {})
+            rec = ax_data.get('recommended_max_accel')
+            if rec:
+                shaper_limits[axis] = rec
+        if shaper_limits:
+            min_axis = min(shaper_limits, key=shaper_limits.get)
+            min_limit = shaper_limits[min_axis]
+            shaper_type = is_data.get(min_axis, {}).get('type', '?')
+            shaper_freq = is_data.get(min_axis, {}).get('freq', 0)
+
+            # Only warn for print moves (not travel)
+            for accel_name, accel_val in [
+                ('outer_wall_acceleration', outer_accel),
+                ('inner_wall_acceleration', inner_accel),
+            ]:
+                if accel_val and accel_val > min_limit:
+                    _add(accel_name, 'Input Shaper', int(accel_val),
+                         'warn', f'\u2264{min_limit}',
+                         f'Exceeds input shaper quality limit for {shaper_type.upper()} @ '
+                         f'{shaper_freq}Hz on {min_axis.upper()} axis ({min_limit}). '
+                         f'May cause visible ringing on walls.')
+
+    # =====================================================================
+    # FAN CAP WARNING — from hardware detection
+    # =====================================================================
+    fan_hw = (printer_hw or {}).get('part_fan', {})
+    fan_max_power = fan_hw.get('max_power', 1.0)
+    if fan_max_power < 1.0:
+        pct = int(fan_max_power * 100)
+        _add('part_cooling_fan', 'Hardware', f'{pct}% cap',
+             'bad', '1.0 (100%)',
+             f'Part cooling fan max_power is {fan_max_power} in firmware — '
+             f'fan can never exceed {pct}%. This limits cooling capacity '
+             f'and explains why Smart Cooling may not reach target speeds. '
+             f'Set max_power: 1.0 in your [fan] config (adjust voltage if needed).')
 
     # =====================================================================
     # SPEED SETTINGS — with volumetric flow calculation
@@ -3273,6 +3568,99 @@ def generate_recommendations(data):
             'action': f'Keep printing with {mat_label} \u2014 recommendations will get smarter as data accumulates.',
         })
 
+    # --- Hardware-aware recommendations ---
+    printer_hw = data.get('printer_hw') or {}
+
+    # Fan cap warning
+    fan_hw = printer_hw.get('part_fan', {})
+    fan_max = fan_hw.get('max_power', 1.0)
+    if fan_max < 1.0:
+        pct = int(fan_max * 100)
+        recs.append({
+            'severity': 'bad', 'category': 'Hardware',
+            'title': f'Part cooling fan capped at {pct}%',
+            'detail': f'Your [fan] config has max_power: {fan_max}. The fan can never exceed {pct}%, '
+                       f'which limits Smart Cooling and may cause overheating on PLA/PETG overhangs.',
+            'action': f'Set max_power: 1.0 in your [fan] section (typically btt.cfg). '
+                       f'If your fan is too strong at 100%, use the slicer or Smart Cooling to limit it.',
+        })
+
+    # Firmware max_accel vs slicer
+    fw_max_accel = printer_hw.get('firmware_max_accel')
+    slicer = data.get('slicer_settings') or {}
+    if fw_max_accel and slicer:
+        for key in ('default_acceleration', 'outer_wall_acceleration', 'inner_wall_acceleration',
+                    'sparse_infill_acceleration', 'travel_acceleration'):
+            val = slicer.get(key)
+            if val and isinstance(val, (int, float)) and val > fw_max_accel:
+                recs.append({
+                    'severity': 'warn', 'category': 'Hardware',
+                    'title': f'Slicer {key.replace("_", " ")} exceeds firmware limit',
+                    'detail': f'{key} is {int(val)} in slicer but firmware max_accel is {fw_max_accel}. '
+                               f'Klipper silently clamps to {fw_max_accel}.',
+                    'action': f'Either raise max_accel in printer.cfg or lower the slicer setting.',
+                })
+                break  # one warning is enough
+
+    # Input shaper quality limit
+    is_data = printer_hw.get('input_shaper', {})
+    if is_data and slicer:
+        shaper_limits = {}
+        for axis in ('x', 'y'):
+            rec_max = (is_data.get(axis) or {}).get('recommended_max_accel')
+            if rec_max:
+                shaper_limits[axis] = rec_max
+        if shaper_limits:
+            min_axis = min(shaper_limits, key=shaper_limits.get)
+            min_limit = shaper_limits[min_axis]
+            shaper_info = is_data.get(min_axis, {})
+            wall_accel = slicer.get('outer_wall_acceleration') or slicer.get('inner_wall_acceleration')
+            if wall_accel and isinstance(wall_accel, (int, float)) and wall_accel > min_limit:
+                recs.append({
+                    'severity': 'warn', 'category': 'Hardware',
+                    'title': f'Wall accel exceeds input shaper limit ({min_axis.upper()})',
+                    'detail': f'Wall accel {int(wall_accel)} exceeds the quality limit of '
+                               f'{min_limit} for {shaper_info.get("type", "?").upper()} @ '
+                               f'{shaper_info.get("freq", "?")}Hz on {min_axis.upper()} axis. '
+                               f'This may cause visible ringing.',
+                    'action': f'Reduce wall accel to \u2264{min_limit} or re-tune input shaper for a higher frequency.',
+                })
+
+    # Bowden vs direct drive detection
+    ext_hw = printer_hw.get('extruder', {})
+    drive_type = ext_hw.get('drive_type', 'unknown')
+    if drive_type == 'bowden':
+        recs.append({
+            'severity': 'info', 'category': 'Hardware',
+            'title': 'Bowden extruder detected',
+            'detail': f'Rotation distance {ext_hw.get("rotation_distance")} indicates a Bowden setup. '
+                       f'PA values and retraction distances differ significantly from direct drive.',
+            'action': 'Use PA values in the 0.4\u20131.0 range (vs 0.02\u20130.06 for direct drive). '
+                       'Set retraction to 3\u20136mm (vs 0.5\u20131.5mm).',
+        })
+
+    # Quad gantry context for Z banding
+    z_count = printer_hw.get('z_steppers', 0)
+    if z_count >= 4:
+        zb = data.get('z_banding') or {}
+        if zb:
+            recs.append({
+                'severity': 'info', 'category': 'Hardware',
+                'title': f'Quad gantry ({z_count} Z steppers) detected',
+                'detail': 'Quad gantry leveling (QGL) can introduce periodic Z artifacts if not well calibrated. '
+                           'Z banding at regular intervals may be QGL-related rather than slicer/flow.',
+                'action': 'Run QGL before prints. If Z banding persists at regular intervals, check lead screw alignment.',
+            })
+
+    # MMU presence
+    if printer_hw.get('mmu_present'):
+        recs.append({
+            'severity': 'info', 'category': 'Hardware',
+            'title': 'MMU (multi-material) detected',
+            'detail': 'Happy Hare MMU config found. Multi-material prints need tip-shaping and purge settings.',
+            'action': 'Ensure your slicer has tip-shaping/ramming and purge tower configured for multi-material prints.',
+        })
+
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
         recs.append({
@@ -3850,6 +4238,10 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     data['slicer_settings'] = slicer
     data['slicer_diagnosis'] = slicer_diag
 
+    # --- Auto-detect printer hardware from config files ---
+    printer_hw = collect_printer_hardware(CONFIG_DIR)
+    data['printer_hw'] = printer_hw
+
     # --- Build hotend info from adaptive flow config ---
     hotend_info = None
     try:
@@ -3891,8 +4283,12 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             'heater_wattage': int(wattage),
         }
         # --- Overlay E3D Revo reference data ---
+        # Use hardware-detected nozzle diameter as source of truth
         nozzle_dia = 0.4
-        if slicer:
+        hw_nozzle = (printer_hw.get('extruder') or {}).get('nozzle_diameter')
+        if hw_nozzle and isinstance(hw_nozzle, (int, float)):
+            nozzle_dia = hw_nozzle
+        elif slicer:
             nozzle_dia = slicer.get('nozzle_diameter', 0.4)
             if not isinstance(nozzle_dia, (int, float)):
                 nozzle_dia = 0.4
@@ -3915,6 +4311,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         profile_advice = generate_slicer_profile_advice(
             slicer, hotend_info,
             print_summary=data.get('summary'),
+            printer_hw=printer_hw,
         )
     data['slicer_profile_advice'] = profile_advice
 
@@ -4578,7 +4975,31 @@ grid:{drawOnChartArea:false}}}}})}
 
 function rRec(){
 var recs=D.recommendations||[];
-if(!recs.length){ca.innerHTML='<div class="box"><p>No data available for recommendations yet.</p></div>';return}
+var hw=D.printer_hw||{};
+var hwHtml='';
+if(hw.kinematics||hw.extruder||hw.input_shaper||hw.part_fan){
+hwHtml='<div class="box" style="margin-bottom:16px;border:1px solid #30363d;padding:14px;border-radius:8px">'+
+'<h3 style="color:#58a6ff;font-size:15px;margin-bottom:10px">\ud83d\udee0 Detected Printer Hardware</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;font-size:13px">';
+if(hw.kinematics)hwHtml+='<div><span style="color:#8b949e">Kinematics:</span> '+hw.kinematics+'</div>';
+if(hw.build_volume)hwHtml+='<div><span style="color:#8b949e">Build:</span> '+hw.build_volume[0]+'\u00d7'+hw.build_volume[1]+'\u00d7'+hw.build_volume[2]+' mm</div>';
+if(hw.firmware_max_accel)hwHtml+='<div><span style="color:#8b949e">Max Accel:</span> '+hw.firmware_max_accel+'</div>';
+if(hw.firmware_max_velocity)hwHtml+='<div><span style="color:#8b949e">Max Velocity:</span> '+hw.firmware_max_velocity+' mm/s</div>';
+var ext=hw.extruder||{};
+if(ext.drive_type)hwHtml+='<div><span style="color:#8b949e">Extruder:</span> '+ext.drive_type+(ext.motor?' ('+ext.motor+')':'')+'</div>';
+if(ext.nozzle_diameter)hwHtml+='<div><span style="color:#8b949e">Nozzle:</span> '+ext.nozzle_diameter+' mm</div>';
+if(ext.tmc_driver)hwHtml+='<div><span style="color:#8b949e">Extruder TMC:</span> '+ext.tmc_driver+(ext.run_current?' @ '+ext.run_current+'A':'')+'</div>';
+var fan=hw.part_fan||{};
+if(fan.max_power!=null){var fp=Math.round(fan.max_power*100);hwHtml+='<div><span style="color:#8b949e">Fan Cap:</span> <span style="color:'+(fan.max_power<1?"#f85149":"#3fb950")+'">'+fp+'%</span></div>'}
+var is_=hw.input_shaper||{};
+if(is_.x||is_.y){hwHtml+='<div><span style="color:#8b949e">Input Shaper:</span> ';
+var parts=[];if(is_.x)parts.push('X: '+is_.x.type+' @ '+is_.x.freq+'Hz');if(is_.y)parts.push('Y: '+is_.y.type+' @ '+is_.y.freq+'Hz');hwHtml+=parts.join(', ')+'</div>'}
+if(hw.z_steppers)hwHtml+='<div><span style="color:#8b949e">Z Steppers:</span> '+hw.z_steppers+(hw.z_steppers>=4?' (Quad Gantry)':'')+'</div>';
+if(hw.probe_type)hwHtml+='<div><span style="color:#8b949e">Probe:</span> '+hw.probe_type+'</div>';
+if(hw.mmu_present)hwHtml+='<div><span style="color:#8b949e">MMU:</span> \u2713 Detected</div>';
+var tmc=hw.xy_tmc||{};
+if(tmc.driver)hwHtml+='<div><span style="color:#8b949e">XY TMC:</span> '+tmc.driver+(tmc.run_current?' @ '+tmc.run_current+'A':'')+(tmc.stealthchop?' (StealthChop)':' (SpreadCycle)')+'</div>';
+hwHtml+='</div></div>'}
+if(!recs.length){ca.innerHTML=hwHtml+'<div class="box"><p>No data available for recommendations yet.</p></div>';return}
 var sevLabel={bad:'Issue',warn:'Warning',info:'Note',good:'Good'};
 var badCount=recs.filter(function(r){return r.severity==='bad'}).length;
 var warnCount=recs.filter(function(r){return r.severity==='warn'}).length;
@@ -4613,7 +5034,7 @@ html+='</div>'});
 html+='<div style="font-size:11px;color:#484f58;margin-top:6px">' +
 'Saves to your user config. Restart Klipper to activate.</div></div>'}
 html+='</div>';return html}).join('');
-ca.innerHTML=h}
+ca.innerHTML=hwHtml+h}
 
 function showToast(msg,ok){
 var t=document.createElement('div');t.className='cfg-toast '+(ok?'ok':'err');
