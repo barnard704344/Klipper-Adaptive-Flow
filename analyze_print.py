@@ -1025,6 +1025,30 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
     wall_accel = outer_accel or inner_accel or 5000
     MAX_ACCEL_GAP = 3000
 
+    # Input shaper is the REAL constraint — firmware max is just a ceiling
+    _fw_max_vel = (printer_hw or {}).get('firmware_max_velocity') or 500
+    _kinematics = (printer_hw or {}).get('kinematics', 'unknown')
+    _is_fast_printer = _kinematics in ('corexy', 'corexz') or _fw_max_vel >= 300
+    _is_data = (printer_hw or {}).get('input_shaper', {})
+    _shaper_limits = {}
+    for _ax in ('x', 'y'):
+        _ax_data = _is_data.get(_ax, {})
+        _rec = _ax_data.get('recommended_max_accel')
+        if _rec:
+            _shaper_limits[_ax] = _rec
+    _shaper_quality_max = min(_shaper_limits.values()) if _shaper_limits else None
+    _shaper_perf_max = max(_shaper_limits.values()) if _shaper_limits else None
+    _fw_accel = (printer_hw or {}).get('firmware_max_accel')
+
+    # Practical accel limit: input shaper quality limit, NOT firmware ceiling
+    _practical_accel = _shaper_quality_max or _fw_accel or 5000
+
+    # Optimal accel ranges based on hardware
+    _optimal_wall_accel = int(_practical_accel * 0.85) if _shaper_quality_max else 5000
+    _optimal_infill_accel = int(min(_shaper_perf_max or _practical_accel * 1.5,
+                                     _fw_accel or 20000) * 0.7) if _shaper_limits else 8000
+    _optimal_travel_accel = int(min((_fw_accel or 20000), 15000))
+
     if default_accel is not None:
         gap_to_wall = abs(default_accel - wall_accel) if wall_accel else 0
         if default_accel > 15000:
@@ -1045,6 +1069,14 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  'good', None,
                  f'Default accel for Revo {variant} with {wattage}W heater. '
                  f'Within \u00b1{int(gap_to_wall)} of walls \u2014 acceptable.')
+        elif _is_fast_printer and default_accel < _optimal_wall_accel * 0.5:
+            shaper_note = (f'Your input shaper supports up to {_shaper_quality_max} on walls. '
+                          if _shaper_quality_max else '')
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'warn', f'{_optimal_wall_accel}',
+                 f'Very low for a {_kinematics} printer with {_fw_accel or "high"} max_accel. '
+                 f'{shaper_note}'
+                 f'Set to {_optimal_wall_accel} to match your hardware.')
         else:
             _add('default_acceleration', 'Acceleration', int(default_accel),
                  'info', None,
@@ -1055,14 +1087,25 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
                  'warn', '4000\u20138000',
                  'Outer walls define surface quality. Very high accel causes ringing and resonance artifacts.')
+        elif _shaper_quality_max and outer_accel < _shaper_quality_max * 0.40 and _is_fast_printer:
+            _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                 'warn', f'{_optimal_wall_accel}',
+                 f'Under-utilizing your {_kinematics} printer. '
+                 f'Input shaper ({_is_data.get("y", {}).get("type", "?").upper()} @ '
+                 f'{_is_data.get("y", {}).get("freq", "?")}Hz) '
+                 f'supports up to {_shaper_quality_max} for quality prints. '
+                 f'Set to {_optimal_wall_accel} for faster prints with clean walls.')
         elif outer_accel >= 3000:
+            shaper_note = ' Your input shaper handles ringing at this accel.' if _shaper_quality_max else ''
             _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
                  'good', None,
-                 'Good range for quality. Your input shaper handles ringing at this accel.')
+                 f'Good range for quality.{shaper_note}')
         else:
+            shaper_note = ' \u2014 input shaper will handle it' if _shaper_quality_max else ''
             _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
-                 'info', '4000\u20136000',
-                 'Very conservative. You can safely increase this \u2014 input shaper will handle it.')
+                 'info', f'{_optimal_wall_accel}',
+                 f'Conservative for a {_kinematics} printer. '
+                 f'You can push to {_optimal_wall_accel}{shaper_note}.')
 
     if inner_accel is not None:
         gap = abs(inner_accel - outer_accel) if outer_accel else 0
@@ -1166,7 +1209,13 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'Close to wall accel (\u00b1{int(gap)} gap). Good for top surface quality.')
 
     if travel_accel is not None:
-        if travel_accel < 5000:
+        if travel_accel < 5000 and _is_fast_printer:
+            _add('travel_acceleration', 'Acceleration', int(travel_accel),
+                 'warn', f'{_optimal_travel_accel}',
+                 f'Travel moves don\'t extrude \u2014 on a {_kinematics} printer with '
+                 f'{_fw_accel or "high"} max_accel, set travel accel to {_optimal_travel_accel} '
+                 f'for faster repositioning and less ooze.')
+        elif travel_accel < 5000:
             _add('travel_acceleration', 'Acceleration', int(travel_accel),
                  'info', '10000\u201315000',
                  'Travel moves don\'t extrude \u2014 higher accel means faster repositioning and less ooze.')
@@ -1230,17 +1279,21 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             shaper_type = is_data.get(min_axis, {}).get('type', '?')
             shaper_freq = is_data.get(min_axis, {}).get('freq', 0)
 
-            # Only warn for print moves (not travel)
+            # Warn for all print moves (not travel/first layer) that exceed shaper limit
             for accel_name, accel_val in [
                 ('outer_wall_acceleration', outer_accel),
                 ('inner_wall_acceleration', inner_accel),
+                ('top_surface_acceleration', top_accel),
+                ('internal_solid_infill_acceleration', solid_accel),
+                ('sparse_infill_acceleration', infill_accel),
             ]:
                 if accel_val and accel_val > min_limit:
+                    feature = accel_name.replace('_acceleration', '').replace('_', ' ')
                     _add(accel_name, 'Input Shaper', int(accel_val),
                          'warn', f'\u2264{min_limit}',
                          f'Exceeds input shaper quality limit for {shaper_type.upper()} @ '
                          f'{shaper_freq}Hz on {min_axis.upper()} axis ({min_limit}). '
-                         f'May cause visible ringing on walls.')
+                         f'May cause visible ringing on {feature}.')
 
     # =====================================================================
     # FAN CAP WARNING — from hardware detection
@@ -1259,8 +1312,39 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
     # =====================================================================
     # SPEED SETTINGS — with volumetric flow calculation
     # =====================================================================
+    # (Hardware variables _shaper_quality_max, _practical_accel etc. defined above in accel section)
+
+    def _optimal_speed(line_w, layer, quality_factor=0.85):
+        """Compute the optimal speed for a feature based on hotend flow capacity,
+        input shaper accel limits, and firmware velocity limit.
+
+        Input shaper is the real constraint — you can't reach high speeds on
+        short segments if accel is limited by the shaper."""
+        if line_w <= 0 or layer <= 0:
+            return None
+        # Flow-limited speed
+        flow_speed = safe_flow * quality_factor / (line_w * layer)
+        # Firmware velocity ceiling
+        vel_limit = _fw_max_vel * 0.9
+        # Accel-limited practical speed: on a typical 20mm segment,
+        # v_max = sqrt(2 * accel * distance).  Use the shaper quality
+        # limit as the accel constraint.
+        accel_speed = None
+        if _practical_accel:
+            # Typical segment length for the feature (shorter = more constrained)
+            seg_len = 20  # mm — reasonable for wall segments
+            accel_speed = (2 * _practical_accel * seg_len) ** 0.5
+        candidates = [flow_speed, vel_limit]
+        if accel_speed:
+            candidates.append(accel_speed)
+        return int(min(candidates))
+
     def _speed_advice(setting, category, speed, line_w, layer, feature_name,
-                      min_ok=10, max_ok=300, quality_max=None):
+                      min_ok=10, max_ok=300, quality_max=None, purpose=None):
+        """Evaluate speed for a feature.
+        purpose: None = speed-sensitive (suggest increases), or a string like
+        'cooling', 'adhesion', 'precision' meaning speed is intentionally low
+        for non-flow reasons — don't suggest increases."""
         if speed is None:
             return
         flow = _flow(speed, line_w, layer)
@@ -1285,6 +1369,36 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
         elif speed < min_ok:
             _add(setting, category, f'{int(speed)} mm/s', 'info', None,
                  f'{feature_name}: very slow ({flow} mm\u00b3/s). Fine for quality, slow for time.', flow)
+        elif purpose:
+            # Speed is intentionally limited for non-flow reasons — don't suggest increases
+            _add(setting, category, f'{int(speed)} mm/s', 'good', None,
+                 f'{feature_name}: {flow} mm\u00b3/s ({int(flow / safe_flow * 100)}% of '
+                 f'Revo {variant} capacity). Speed is {purpose}-limited \u2014 current value is appropriate.', flow)
+        elif _is_fast_printer and flow < safe_flow * 0.65 and line_w > 0 and layer > 0:
+            # Under-utilizing a fast printer — suggest speed increase
+            # 65% threshold: on a corexy with a high-flow hotend, anything under
+            # ~65% utilization is leaving significant time on the table
+            optimal = _optimal_speed(line_w, layer, quality_factor=0.85)
+            if optimal and speed < optimal * 0.70:
+                # Significantly below optimal — suggest increase
+                # quality_factor already reserves 15% headroom, so suggest
+                # close to optimal.  Input shaper handles ringing.
+                suggest_speed = int(optimal * 0.90)
+                suggest_speed = max(suggest_speed, int(speed * 1.3))  # at least 30% increase
+                suggest_speed = min(suggest_speed, _fw_max_vel)  # cap at firmware limit
+                suggest_flow = _flow(suggest_speed, line_w, layer)
+                _add(setting, category, f'{int(speed)} mm/s', 'warn',
+                     f'{suggest_speed} mm/s',
+                     f'{feature_name}: only {flow} mm\u00b3/s \u2014 '
+                     f'{int(flow / safe_flow * 100)}% of your Revo {variant} capacity '
+                     f'({safe_flow} mm\u00b3/s for {material}). '
+                     f'Your {_kinematics} printer can handle {suggest_speed} mm/s '
+                     f'({suggest_flow} mm\u00b3/s). Increase speed for faster prints '
+                     f'without sacrificing quality.', flow)
+            else:
+                _add(setting, category, f'{int(speed)} mm/s', 'good', None,
+                     f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
+                     f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow)
         else:
             _add(setting, category, f'{int(speed)} mm/s', 'good', None,
                  f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
@@ -1298,7 +1412,7 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                   'Inner wall', quality_max=300)
     _speed_advice('bridge_speed', 'Speed',
                   slicer_settings.get('bridge_speed'), outer_w, layer_h,
-                  'Bridge', max_ok=100)
+                  'Bridge', max_ok=100, purpose='cooling')
     _speed_advice('sparse_infill_speed', 'Speed',
                   slicer_settings.get('sparse_infill_speed'), infill_w, layer_h,
                   'Sparse infill')
@@ -1307,16 +1421,16 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                   'Solid infill')
     _speed_advice('top_surface_speed', 'Speed',
                   slicer_settings.get('top_surface_speed'), top_w, layer_h,
-                  'Top surface', quality_max=120)
+                  'Top surface', quality_max=120, purpose='surface quality')
     _speed_advice('gap_infill_speed', 'Speed',
                   slicer_settings.get('gap_infill_speed'), outer_w, layer_h,
-                  'Gap fill')
+                  'Gap fill', purpose='precision')
     _speed_advice('initial_layer_speed', 'Speed',
                   slicer_settings.get('initial_layer_speed'), first_w, first_layer_h,
-                  'First layer')
+                  'First layer', purpose='adhesion')
     _speed_advice('internal_bridge_speed', 'Speed',
                   slicer_settings.get('internal_bridge_speed'), inner_w, layer_h,
-                  'Internal bridge')
+                  'Internal bridge', purpose='cooling')
     _speed_advice('support_speed', 'Speed',
                   slicer_settings.get('support_speed'), infill_w, layer_h,
                   'Support')
@@ -1451,17 +1565,33 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
     accel_vals = [v for v in accel_vals if v is not None and v > 0]
     if len(accel_vals) >= 3:
         spread = max(accel_vals) - min(accel_vals)
-        if spread <= MAX_ACCEL_GAP:
+        max_accel_val = max(accel_vals)
+        # With input shaper, the real question is whether accels exceed the
+        # shaper quality limit, not whether they differ from each other.
+        if _shaper_quality_max and max_accel_val <= _shaper_quality_max:
+            _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
+                 'good', None,
+                 f'All print accels within input shaper quality limit ({_shaper_quality_max}). '
+                 f'Spread of \u00b1{int(spread)} is fine \u2014 input shaper handles transitions.')
+        elif _shaper_quality_max and max_accel_val > _shaper_quality_max:
+            over = [v for v in accel_vals if v > _shaper_quality_max]
+            _add('_accel_spread', 'Summary', f'{len(over)} over limit',
+                 'warn', f'\u2264{_shaper_quality_max}',
+                 f'{len(over)} feature accel(s) exceed input shaper quality limit '
+                 f'({_shaper_quality_max}, Y axis @ {_is_data.get("y", {}).get("freq", "?")}Hz). '
+                 f'May cause visible ringing on those features. '
+                 f'Reduce to \u2264{_shaper_quality_max} for clean surfaces.')
+        elif spread <= MAX_ACCEL_GAP:
             _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
                  'good', None,
                  f'All print accelerations within \u00b1{int(spread)} of each other. '
                  f'Minimal banding risk from accel transitions.')
         else:
             _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
-                 'bad', f'Within \u00b1{MAX_ACCEL_GAP}',
+                 'info', f'Within \u00b1{MAX_ACCEL_GAP}',
                  f'Acceleration spread of \u00b1{int(spread)} across features. '
-                 f'This is the root cause of horizontal banding. Set all print accels '
-                 f'within \u00b1{MAX_ACCEL_GAP} of each other.')
+                 f'Large spreads can cause visible transitions between features. '
+                 f'Consider narrowing the range if you see banding at feature boundaries.')
 
     all_flows = [a.get('flow_mm3s', 0) for a in advice if a.get('flow_mm3s')]
     if all_flows:
@@ -1491,6 +1621,56 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'{headroom:.1f} mm\u00b3/s headroom below Revo {variant} safe limit '
                  f'({safe_flow} mm\u00b3/s for {material}, E3D data). '
                  f'Plenty of room for adaptive flow adjustments.')
+
+    # =====================================================================
+    # PRINTER UTILIZATION SUMMARY — how much of the hardware is being used
+    # =====================================================================
+    if _is_fast_printer and all_flows:
+        peak_actual = max(all_flows)
+        flow_utilization = peak_actual / safe_flow * 100 if safe_flow > 0 else 0
+
+        # Compute what optimal speeds would achieve
+        optimal_outer = _optimal_speed(outer_w, layer_h, 0.75) or 200
+        optimal_inner = _optimal_speed(inner_w, layer_h, 0.85) or 250
+        optimal_infill = _optimal_speed(infill_w, layer_h, 0.90) or 300
+
+        if flow_utilization < 35:
+            # Build the "optimized profile" summary
+            profile_lines = []
+            if slicer_settings.get('outer_wall_speed') and slicer_settings['outer_wall_speed'] < optimal_outer * 0.7:
+                profile_lines.append(f'outer_wall_speed: {optimal_outer}')
+            if slicer_settings.get('inner_wall_speed') and slicer_settings['inner_wall_speed'] < optimal_inner * 0.7:
+                profile_lines.append(f'inner_wall_speed: {optimal_inner}')
+            if slicer_settings.get('sparse_infill_speed') and slicer_settings['sparse_infill_speed'] < optimal_infill * 0.7:
+                profile_lines.append(f'sparse_infill_speed: {optimal_infill}')
+            if slicer_settings.get('internal_solid_infill_speed') and slicer_settings['internal_solid_infill_speed'] < optimal_infill * 0.7:
+                profile_lines.append(f'internal_solid_infill_speed: {optimal_infill}')
+
+            profile_str = ', '.join(profile_lines) if profile_lines else 'See individual speed suggestions above'
+            _add('_printer_utilization', 'Performance', f'{flow_utilization:.0f}% flow utilization',
+                 'bad', 'See optimized values below',
+                 f'Your {_kinematics.upper()} printer with Revo {variant} ({safe_flow} mm\u00b3/s safe) '
+                 f'is only using {flow_utilization:.0f}% of its flow capacity. '
+                 f'Peak flow was {peak_actual} mm\u00b3/s but the hotend can safely sustain {safe_flow}. '
+                 f'Optimized profile: {profile_str}. '
+                 f'This could cut your print time significantly.')
+        elif flow_utilization < 55:
+            _add('_printer_utilization', 'Performance', f'{flow_utilization:.0f}% flow utilization',
+                 'warn', None,
+                 f'Your {_kinematics.upper()} printer is using {flow_utilization:.0f}% of Revo {variant} '
+                 f'flow capacity ({peak_actual}/{safe_flow} mm\u00b3/s). '
+                 f'There\u2019s room to increase speeds \u2014 see individual suggestions above.')
+        elif flow_utilization < 85:
+            _add('_printer_utilization', 'Performance', f'{flow_utilization:.0f}% flow utilization',
+                 'good', None,
+                 f'Good balance of speed and safety. Using {flow_utilization:.0f}% of Revo {variant} '
+                 f'capacity ({peak_actual}/{safe_flow} mm\u00b3/s) with headroom for adaptive flow.')
+        else:
+            _add('_printer_utilization', 'Performance', f'{flow_utilization:.0f}% flow utilization',
+                 'info', None,
+                 f'Running near Revo {variant} capacity ({flow_utilization:.0f}%: '
+                 f'{peak_actual}/{safe_flow} mm\u00b3/s). '
+                 f'Adaptive flow has limited room to boost. Consider reducing speed slightly.')
 
     return advice
 
@@ -3661,6 +3841,68 @@ def generate_recommendations(data):
             'action': 'Ensure your slicer has tip-shaping/ramming and purge tower configured for multi-material prints.',
         })
 
+    # --- Printer performance utilization ---
+    kinematics = printer_hw.get('kinematics', 'unknown')
+    is_fast_machine = kinematics in ('corexy', 'corexz')
+    hotend_data = data.get('hotend_info') or {}
+    safe_flow_val = hotend_data.get('safe_flow', 0)
+    avg_flow_val = s.get('avg_flow', 0)
+    max_flow_val = s.get('max_flow', 0)
+
+    if is_fast_machine and safe_flow_val > 0 and avg_flow_val > 0:
+        avg_utilization = avg_flow_val / safe_flow_val * 100
+        peak_utilization = max_flow_val / safe_flow_val * 100 if max_flow_val else avg_utilization
+
+        if avg_utilization < 30:
+            # Compute what optimized speeds could look like
+            nozzle_dia_val = hotend_data.get('nozzle_diameter', 0.4)
+            layer_h_val = 0.2  # standard
+            line_w_val = nozzle_dia_val + 0.05
+            optimal_infill = int(safe_flow_val * 0.85 / (line_w_val * layer_h_val)) if line_w_val * layer_h_val > 0 else 200
+            optimal_wall = int(safe_flow_val * 0.65 / (line_w_val * layer_h_val)) if line_w_val * layer_h_val > 0 else 150
+
+            # Estimate potential time savings
+            speed_ratio = safe_flow_val * 0.70 / avg_flow_val if avg_flow_val > 0 else 2.0
+            duration = s.get('duration_min', 0)
+            estimated_new = duration / speed_ratio if speed_ratio > 0 else duration
+            time_saved = duration - estimated_new
+
+            # Compute recommended accel with shaper awareness
+            _shaper_y_accel = is_data.get("y", {}).get("recommended_max_accel", 0)
+            if _shaper_y_accel:
+                _rec_accel = int(min(_shaper_y_accel, fw_max_accel or 20000) * 0.85)
+                _accel_note = ' (based on your input shaper)'
+            else:
+                _rec_accel = int((fw_max_accel or 5000) * 0.85)
+                _accel_note = ''
+
+            recs.append({
+                'severity': 'bad', 'category': 'Performance',
+                'title': f'Printer at {avg_utilization:.0f}% capacity \u2014 printing far too slow',
+                'detail': f'Your {kinematics.upper()} printer with Revo '
+                           f'{hotend_data.get("nozzle_type", "HF")} averaged only '
+                           f'{avg_flow_val:.1f} mm\u00b3/s (safe limit: {safe_flow_val}). '
+                           f'Firmware supports {fw_max_accel or "high"} max accel and '
+                           f'{printer_hw.get("firmware_max_velocity", 500)} mm/s max velocity, '
+                           f'but the slicer profile is barely using any of it.'
+                           + (f' Estimated time savings with optimized speeds: ~{time_saved:.0f} min '
+                              f'({duration:.0f} \u2192 ~{estimated_new:.0f} min).' if time_saved > 2 else ''),
+                'action': f'In your slicer, update speeds: outer wall \u2192 {optimal_wall} mm/s, '
+                           f'inner wall \u2192 {int(optimal_wall * 1.5)} mm/s, '
+                           f'infill \u2192 {optimal_infill} mm/s. '
+                           f'Set all print accelerations to {_rec_accel}{_accel_note}. '
+                           f'Travel accel \u2192 {min(fw_max_accel or 15000, 15000)}. '
+                           f'See the Slicer Profile tab for per-setting details.',
+            })
+        elif avg_utilization < 50:
+            recs.append({
+                'severity': 'warn', 'category': 'Performance',
+                'title': f'Printer at {avg_utilization:.0f}% capacity \u2014 room to go faster',
+                'detail': f'Your {kinematics.upper()} printer averaged {avg_flow_val:.1f}/{safe_flow_val} mm\u00b3/s. '
+                           f'There\u2019s significant headroom to increase speeds while maintaining quality.',
+                'action': 'Check the Slicer Profile tab for per-setting speed suggestions optimized for your hardware.',
+            })
+
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
         recs.append({
@@ -4676,6 +4918,53 @@ h+='<div class="box" style="padding:10px 16px;display:flex;align-items:center;ga
 '<span style="color:#8b949e;font-size:12px">Safe: <b style="color:#3fb950">'+sfLabel+'</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+'</b> mm\u00b3/s</span>'+
 '</div>'}
 
+/* --- Printer Hardware panel --- */
+var phw=D.printer_hw;
+if(phw&&Object.keys(phw).length>0){
+var ext=phw.extruder||{};
+var fan=phw.part_fan||{};
+var is_hw=phw.input_shaper||{};
+var isx=is_hw.x||{};
+var isy=is_hw.y||{};
+var fanPct=fan.max_power!==undefined?Math.round(fan.max_power*100):100;
+var fanClr=fanPct<100?'#f85149':'#3fb950';
+h+='<div class="box" style="padding:12px 16px">';
+h+='<div style="font-weight:700;font-size:13px;color:#58a6ff;margin-bottom:8px">\ud83d\udd27 Detected Printer Hardware</div>';
+/* Compute practical limits from input shaper (the real constraint) */
+var shaperMinAccel=Math.min(isx.recommended_max_accel||99999,isy.recommended_max_accel||99999);
+var shaperMaxAccel=Math.max(isx.recommended_max_accel||0,isy.recommended_max_accel||0);
+var hasShaper=shaperMinAccel<99999;
+var practicalAccel=hasShaper?shaperMinAccel:phw.firmware_max_accel;
+h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:12px">';
+if(phw.kinematics)h+='<div><span style="color:#8b949e">Kinematics:</span> <b>'+phw.kinematics.toUpperCase()+'</b></div>';
+if(phw.build_volume)h+='<div><span style="color:#8b949e">Build:</span> <b>'+phw.build_volume.join('\u00d7')+'mm</b></div>';
+if(hasShaper){
+h+='<div><span style="color:#8b949e">Quality Max Accel:</span> <b style="color:#3fb950">'+shaperMinAccel+'</b> <span style="color:#484f58">(Y limit)</span></div>';
+h+='<div><span style="color:#8b949e">Input Shaper:</span> <b>X: '+(isx.type||'?').toUpperCase()+'@'+(isx.freq||'?')+'Hz ('+isx.recommended_max_accel+') / Y: '+(isy.type||'?').toUpperCase()+'@'+(isy.freq||'?')+'Hz ('+isy.recommended_max_accel+')</b></div>';
+}
+if(phw.firmware_max_accel)h+='<div><span style="color:#8b949e">Firmware Ceiling:</span> <span style="color:#484f58">'+phw.firmware_max_accel+' accel / '+(phw.firmware_max_velocity||'?')+' mm/s</span></div>';
+if(ext.drive_type)h+='<div><span style="color:#8b949e">Extruder:</span> <b>'+ext.drive_type+'</b> (rot_dist: '+ext.rotation_distance+')</div>';
+if(ext.nozzle_diameter)h+='<div><span style="color:#8b949e">Nozzle:</span> <b>'+ext.nozzle_diameter+'mm</b></div>';
+if(ext.motor)h+='<div><span style="color:#8b949e">Motor:</span> <b>'+ext.motor+'</b></div>';
+h+='<div><span style="color:#8b949e">Part Fan:</span> <b style="color:'+fanClr+'">'+fanPct+'%</b> max_power</div>';
+if(phw.z_steppers>=4)h+='<div><span style="color:#8b949e">Z:</span> <b>Quad Gantry</b> ('+phw.z_steppers+' steppers)</div>';
+if(phw.probe_type)h+='<div><span style="color:#8b949e">Probe:</span> <b>'+phw.probe_type+'</b></div>';
+if(phw.mmu_present)h+='<div><span style="color:#d29922">MMU Present</span></div>';
+h+='</div></div>'}
+
+/* --- Performance/Utilization summary items --- */
+var perfItems=pa.filter(function(a){return a.category==='Performance'});
+if(perfItems.length){
+h+='<div class="box">';
+perfItems.forEach(function(a){
+var clrMap={'bad':'#f85149','warn':'#d29922','good':'#3fb950','info':'#58a6ff'};
+var bgMap={'bad':'rgba(248,81,73,0.1)','warn':'rgba(210,153,34,0.1)','good':'rgba(63,185,80,0.1)','info':'rgba(88,166,255,0.1)'};
+var iconMap={'bad':'\u26a1','warn':'\u26a0\ufe0f','good':'\u2705','info':'\u2139\ufe0f'};
+h+='<div style="padding:12px 16px;border-left:3px solid '+clrMap[a.verdict]+';background:'+bgMap[a.verdict]+';border-radius:4px;margin-bottom:4px">'+
+'<div style="font-weight:700;color:'+clrMap[a.verdict]+';font-size:14px">'+iconMap[a.verdict]+' '+a.current+'</div>'+
+'<div style="color:#c9d1d9;font-size:13px;margin:4px 0">'+a.reason+'</div></div>'});
+h+='</div>'}
+
 /* --- Ordered list of all settings to show --- */
 var allKeys=[
 {k:'nozzle_diameter',g:'Geometry'},{k:'layer_height',g:'Geometry'},
@@ -4982,17 +5271,19 @@ hwHtml='<div class="box" style="margin-bottom:16px;border:1px solid #30363d;padd
 '<h3 style="color:#58a6ff;font-size:15px;margin-bottom:10px">\ud83d\udee0 Detected Printer Hardware</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;font-size:13px">';
 if(hw.kinematics)hwHtml+='<div><span style="color:#8b949e">Kinematics:</span> '+hw.kinematics+'</div>';
 if(hw.build_volume)hwHtml+='<div><span style="color:#8b949e">Build:</span> '+hw.build_volume[0]+'\u00d7'+hw.build_volume[1]+'\u00d7'+hw.build_volume[2]+' mm</div>';
-if(hw.firmware_max_accel)hwHtml+='<div><span style="color:#8b949e">Max Accel:</span> '+hw.firmware_max_accel+'</div>';
-if(hw.firmware_max_velocity)hwHtml+='<div><span style="color:#8b949e">Max Velocity:</span> '+hw.firmware_max_velocity+' mm/s</div>';
+var is_=hw.input_shaper||{};
+var rMinAcc=Math.min((is_.x||{}).recommended_max_accel||99999,(is_.y||{}).recommended_max_accel||99999);
+var rHasShaper=rMinAcc<99999;
+if(rHasShaper)hwHtml+='<div><span style="color:#8b949e">Quality Max Accel:</span> <b style="color:#3fb950">'+rMinAcc+'</b> <span style="color:#484f58">(Y limit)</span></div>';
+if(hw.firmware_max_accel)hwHtml+='<div><span style="color:#8b949e">Firmware Ceiling:</span> <span style="color:#484f58">'+hw.firmware_max_accel+' accel / '+(hw.firmware_max_velocity||'?')+' mm/s</span></div>';
 var ext=hw.extruder||{};
 if(ext.drive_type)hwHtml+='<div><span style="color:#8b949e">Extruder:</span> '+ext.drive_type+(ext.motor?' ('+ext.motor+')':'')+'</div>';
 if(ext.nozzle_diameter)hwHtml+='<div><span style="color:#8b949e">Nozzle:</span> '+ext.nozzle_diameter+' mm</div>';
 if(ext.tmc_driver)hwHtml+='<div><span style="color:#8b949e">Extruder TMC:</span> '+ext.tmc_driver+(ext.run_current?' @ '+ext.run_current+'A':'')+'</div>';
 var fan=hw.part_fan||{};
 if(fan.max_power!=null){var fp=Math.round(fan.max_power*100);hwHtml+='<div><span style="color:#8b949e">Fan Cap:</span> <span style="color:'+(fan.max_power<1?"#f85149":"#3fb950")+'">'+fp+'%</span></div>'}
-var is_=hw.input_shaper||{};
 if(is_.x||is_.y){hwHtml+='<div><span style="color:#8b949e">Input Shaper:</span> ';
-var parts=[];if(is_.x)parts.push('X: '+is_.x.type+' @ '+is_.x.freq+'Hz');if(is_.y)parts.push('Y: '+is_.y.type+' @ '+is_.y.freq+'Hz');hwHtml+=parts.join(', ')+'</div>'}
+var parts=[];if(is_.x)parts.push('X: '+(is_.x.type||'?').toUpperCase()+' @ '+is_.x.freq+'Hz ('+is_.x.recommended_max_accel+')');if(is_.y)parts.push('Y: '+(is_.y.type||'?').toUpperCase()+' @ '+is_.y.freq+'Hz ('+is_.y.recommended_max_accel+')');hwHtml+=parts.join(', ')+'</div>'}
 if(hw.z_steppers)hwHtml+='<div><span style="color:#8b949e">Z Steppers:</span> '+hw.z_steppers+(hw.z_steppers>=4?' (Quad Gantry)':'')+'</div>';
 if(hw.probe_type)hwHtml+='<div><span style="color:#8b949e">Probe:</span> '+hw.probe_type+'</div>';
 if(hw.mmu_present)hwHtml+='<div><span style="color:#8b949e">MMU:</span> \u2713 Detected</div>';
@@ -5065,11 +5356,17 @@ console.error('Dashboard error',e)}
 
 def _sanitize_floats(obj):
     """Recursively replace NaN/Infinity floats with None so json.dumps
-    (with allow_nan=False) won't choke."""
+    (with allow_nan=False) won't choke.  Also strip surrogate characters
+    from strings to prevent UnicodeEncodeError when encoding to UTF-8."""
     if isinstance(obj, float):
         if math.isnan(obj) or math.isinf(obj):
             return None
         return obj
+    if isinstance(obj, str):
+        # Remove surrogate characters (U+D800–U+DFFF) that can't be
+        # encoded to UTF-8 — they sneak in from files opened without
+        # explicit encoding error handling.
+        return obj.encode('utf-8', errors='replace').decode('utf-8')
     if isinstance(obj, dict):
         return {k: _sanitize_floats(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -5135,7 +5432,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 # Don't cache live prints (data changes every second)
                 if not data.get('is_live'):
                     _cache_set(cache_key, data)
-            payload = json.dumps(data, default=str).encode('utf-8')
+            payload = json.dumps(data, default=str).encode('utf-8', errors='replace')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(payload)))
@@ -5160,7 +5457,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                         traceback.print_exc()
                         data = {'error': str(exc)}
                     _cache_set(cache_key, data)
-            payload = json.dumps(data, default=str).encode('utf-8')
+            payload = json.dumps(data, default=str).encode('utf-8', errors='replace')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(payload)))
@@ -5185,7 +5482,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                         'z_banding': {}, 'thermal_lag': None,
                         'headroom': None, 'pa_stability': None,
                         'dynz_zones': {}, 'speed_flow': None}
-            html = generate_dashboard_html(data).encode('utf-8')
+            html = generate_dashboard_html(data).encode('utf-8', errors='replace')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(html)))
