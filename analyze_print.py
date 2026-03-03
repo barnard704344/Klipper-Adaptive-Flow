@@ -492,17 +492,52 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
     distinct = sorted(accel_counter.keys())
     result['distinct_accels'] = distinct
 
+    # --- Helpers: coerce slicer values to numbers ---
+    def _to_num(v):
+        """Coerce a value to float if possible, else return None."""
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    def _to_num_or_pct(v, ref=None):
+        """Coerce value to float; resolve '50%' style strings against *ref*."""
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip().endswith('%'):
+            try:
+                pct = float(v.strip().rstrip('%')) / 100.0
+                return pct * ref if ref else None
+            except (ValueError, TypeError):
+                return None
+        return _to_num(v)
+
     # --- Map observed accels to slicer features ---
     # Build a reverse lookup: slicer accel value → feature name(s)
+    # Resolve percentage values (e.g. '100%', '50%') against the reference accel.
+    _ref_accel_for_map = _to_num(slicer_settings.get('default_acceleration')) or 10000
     feature_map = {}
     for key in _SLICER_ACCEL_KEYS:
         val = slicer_settings.get(key)
-        if val is not None and isinstance(val, (int, float)):
+        if val is None:
+            continue
+        # Resolve percentage strings like '100%' or '50%'
+        if isinstance(val, str) and val.strip().endswith('%'):
+            try:
+                resolved = float(val.strip().rstrip('%')) / 100.0 * _ref_accel_for_map
+                ival = int(resolved)
+            except (ValueError, TypeError):
+                continue
+        elif isinstance(val, (int, float)):
             ival = int(val)
-            if ival not in feature_map:
-                feature_map[ival] = []
-            nice_name = key.replace('_acceleration', '').replace('_', ' ').title()
-            feature_map[ival].append(nice_name)
+        else:
+            continue
+        if ival not in feature_map:
+            feature_map[ival] = []
+        nice_name = key.replace('_acceleration', '').replace('_', ' ').title()
+        feature_map[ival].append(nice_name)
 
     for accel_val in distinct:
         count = accel_counter[accel_val]
@@ -526,27 +561,6 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
         result['max_accel_swing'] = max(abs(s['delta']) for s in accel_spikes)
 
     # --- Identify issues and generate specific suggestions ---
-    def _to_num(v):
-        """Coerce a value to float if possible, else return None."""
-        if v is None:
-            return None
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return None
-
-    def _to_num_or_pct(v, ref=None):
-        """Coerce value to float; resolve '50%' style strings against *ref*."""
-        if v is None:
-            return None
-        if isinstance(v, str) and v.strip().endswith('%'):
-            try:
-                pct = float(v.strip().rstrip('%')) / 100.0
-                return pct * ref if ref else None
-            except (ValueError, TypeError):
-                return None
-        return _to_num(v)
-
     outer_accel = _to_num(slicer_settings.get('outer_wall_acceleration'))
     inner_accel = _to_num(slicer_settings.get('inner_wall_acceleration'))
     default_accel = _to_num(slicer_settings.get('default_acceleration'))
@@ -3338,6 +3352,21 @@ border-radius:4px;letter-spacing:.5px}
 .sev-info .rec-badge{background:rgba(88,166,255,.15);color:#58a6ff}
 .sev-good .rec-badge{background:rgba(63,185,80,.15);color:#3fb950}
 .rec .rec-cat{font-size:11px;color:#8b949e}
+.sl-hdr{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.sl-mat{display:inline-flex;align-items:center;gap:6px;background:#238636;color:#fff;
+font-weight:600;font-size:14px;padding:6px 16px;border-radius:20px;letter-spacing:.3px}
+.sl-mat .sl-icon{font-size:16px}
+.sl-file{font-size:12px;color:#8b949e;word-break:break-all}
+details.sl-section{background:#161b22;border:1px solid #30363d;border-radius:8px;
+margin-bottom:12px;overflow:hidden}
+details.sl-section summary{cursor:pointer;padding:12px 16px;font-weight:600;
+font-size:14px;color:#c9d1d9;list-style:none;display:flex;align-items:center;gap:8px;
+user-select:none}
+details.sl-section summary::-webkit-details-marker{display:none}
+details.sl-section summary::before{content:'\25b6';font-size:10px;color:#8b949e;
+transition:transform .2s}
+details.sl-section[open] summary::before{transform:rotate(90deg)}
+details.sl-section .sl-body{padding:0 16px 16px 16px}
 .rec .rec-title{font-size:15px;font-weight:600}
 .rec .rec-detail{font-size:13px;color:#8b949e;margin:4px 0 8px}
 .rec .rec-action{font-size:13px;color:#c9d1d9;background:#0d1117;border-radius:6px;
@@ -3576,8 +3605,36 @@ ca.innerHTML='<div class="box"><p>No slicer settings found. The G-code file may 
 return}
 
 var h='';
+var mat=(D.summary||{}).material||'Unknown';
+var fname=(D.summary||{}).filename||'';
+h+='<div class="sl-hdr"><span class="sl-mat"><span class="sl-icon">\u25cf</span>'+mat+'</span>';
+if(fname)h+='<span class="sl-file">'+fname+'</span>';
+h+='</div>';
 
-/* --- Accel Fingerprint chart + table --- */
+/* --- Issues & Suggestions (prominent, always open) --- */
+if(sd&&sd.issues&&sd.issues.length){
+h+='<div class="box"><h3>\u26a0 Issues & Proposed OrcaSlicer Changes</h3>'+
+'<p class="box-desc">Problems identified by cross-referencing your slicer settings with observed banding events.</p>';
+sd.issues.forEach(function(iss){
+h+='<div class="rec sev-warn"><div class="rec-hd"><span class="rec-badge">Issue</span>'+
+'<span class="rec-cat">'+iss.type.replace(/_/g,' ').replace(/\\b\\w/g,function(c){return c.toUpperCase()})+'</span></div>'+
+'<div class="rec-detail">'+iss.detail+'</div></div>'});
+if(sd.suggestions&&sd.suggestions.length){
+h+='<div style="margin-top:12px"><h4 style="color:#3fb950;margin-bottom:8px">\u2699 Proposed OrcaSlicer Changes for '+mat+'</h4>';
+h+='<table><tr><th>OrcaSlicer Setting</th><th>Current</th><th>\u2192</th><th>Suggested</th><th>Reason</th></tr>';
+sd.suggestions.forEach(function(sg){
+h+='<tr><td style="font-weight:600">'+sg.setting.replace(/_/g,' ')+'</td>'+
+'<td style="color:#f85149">'+sg.current+'</td><td>\u2192</td>'+
+'<td style="color:#3fb950">'+sg.suggested+'</td>'+
+'<td style="color:#8b949e;font-size:12px">'+sg.reason+'</td></tr>'});
+h+='</table></div>'}
+h+='</div>'}
+else if(sd){
+h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="rec-badge">Good</span>'+
+'<span class="rec-cat">Slicer \u2014 '+mat+'</span></div>'+
+'<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
+
+/* --- Accel Fingerprint (collapsible) --- */
 if(sd&&sd.accel_map&&Object.keys(sd.accel_map).length){
 var am=sd.accel_map;
 var keys=Object.keys(am).sort(function(a,b){return parseInt(a)-parseInt(b)});
@@ -3589,11 +3646,10 @@ labels.push(k+' ('+info.features.join(', ')+')');
 counts.push(info.count);
 colors.push(palette[i%palette.length])});
 
-h+='<div class="box"><h3>Acceleration Fingerprint</h3>'+
+h+='<details class="sl-section" open><summary>Acceleration Fingerprint</summary><div class="sl-body">'+
 '<p class="box-desc">Each bar is a distinct acceleration value your slicer used during this print. '+
-'The label shows which slicer feature maps to that value. Fewer distinct values = fewer banding-causing transitions.</p>'+mc('cSA')+'</div>';
-
-h+='<div class="box"><h3>Accel Breakdown</h3>'+
+'The label shows which slicer feature maps to that value. Fewer distinct values = fewer banding-causing transitions.</p>'+mc('cSA')+
+'<div style="margin-top:12px"><h4>Accel Breakdown</h4>'+
 '<p class="box-desc">Detailed view of each acceleration value observed in the CSV, mapped back to your slicer settings.</p>'+
 '<table><tr><th>Accel (mm/s\u00b2)</th><th>Feature</th><th>Samples</th><th>% of Print</th></tr>';
 keys.forEach(function(k){
@@ -3602,32 +3658,9 @@ h+='<tr><td>'+k+'</td><td>'+info.features.join(', ')+'</td><td>'+info.count+'</t
 h+='</table>';
 if(sd.max_accel_swing>0){
 h+='<p style="margin-top:8px;font-size:12px">Max single acceleration swing: <strong>\u00b1'+sd.max_accel_swing+'</strong> mm/s\u00b2</p>'}
-h+='</div>'}
+h+='</div></details>'}
 
-/* --- Issues & Suggestions --- */
-if(sd&&sd.issues&&sd.issues.length){
-h+='<div class="box"><h3>Slicer Issues Found</h3>'+
-'<p class="box-desc">Problems identified by cross-referencing your slicer settings with observed banding events.</p>';
-sd.issues.forEach(function(iss){
-h+='<div class="rec sev-warn"><div class="rec-hd"><span class="rec-badge">Issue</span>'+
-'<span class="rec-cat">'+iss.type.replace(/_/g,' ').replace(/\\b\\w/g,function(c){return c.toUpperCase()})+'</span></div>'+
-'<div class="rec-detail">'+iss.detail+'</div></div>'});
-if(sd.suggestions&&sd.suggestions.length){
-h+='<div style="margin-top:12px"><h4 style="color:#3fb950;margin-bottom:8px">\u2699 Suggested Slicer Changes</h4>';
-h+='<table><tr><th>Setting</th><th>Current</th><th>\u2192</th><th>Suggested</th><th>Reason</th></tr>';
-sd.suggestions.forEach(function(sg){
-h+='<tr><td style="font-weight:600">'+sg.setting.replace(/_/g,' ')+'</td>'+
-'<td style="color:#f85149">'+sg.current+'</td><td>\u2192</td>'+
-'<td style="color:#3fb950">'+sg.suggested+'</td>'+
-'<td style="color:#8b949e;font-size:12px">'+sg.reason+'</td></tr>'});
-h+='</table></div>'}
-h+='</div>'}
-else if(sd){
-h+='<div class="box"><div class="rec sev-good"><div class="rec-hd"><span class="rec-badge">Good</span>'+
-'<span class="rec-cat">Slicer</span></div>'+
-'<div class="rec-detail">No problematic slicer settings found. Acceleration values are well-balanced.</div></div></div>'}
-
-/* --- Full Settings Table --- */
+/* --- Full Settings Tables (collapsible) --- */
 var accelKeys=['default_acceleration','outer_wall_acceleration','inner_wall_acceleration',
 'bridge_acceleration','sparse_infill_acceleration','internal_solid_infill_acceleration',
 'top_surface_acceleration','travel_acceleration','initial_layer_acceleration'];
@@ -3644,8 +3677,9 @@ keys.forEach(function(k){
 if(ss[k]!==undefined&&ss[k]!==null){found++;
 rows+='<tr><td>'+k.replace(/_/g,' ')+'</td><td>'+ss[k]+'</td></tr>'}});
 if(!found)return '';
-return '<div class="box"><h3>'+title+'</h3><p class="box-desc">'+desc+'</p>'+
-'<table><tr><th>Setting</th><th>Value</th></tr>'+rows+'</table></div>'}
+return '<details class="sl-section"><summary>'+title+' ('+found+')</summary><div class="sl-body">'+
+'<p class="box-desc">'+desc+'</p>'+
+'<table><tr><th>Setting</th><th>Value</th></tr>'+rows+'</table></div></details>'}
 
 h+=settingsTable('Acceleration Settings',
 'Per-feature acceleration values from your slicer. Large gaps between features cause banding-inducing transitions.',
