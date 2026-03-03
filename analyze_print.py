@@ -535,13 +535,27 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
         except (ValueError, TypeError):
             return None
 
+    def _to_num_or_pct(v, ref=None):
+        """Coerce value to float; resolve '50%' style strings against *ref*."""
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip().endswith('%'):
+            try:
+                pct = float(v.strip().rstrip('%')) / 100.0
+                return pct * ref if ref else None
+            except (ValueError, TypeError):
+                return None
+        return _to_num(v)
+
     outer_accel = _to_num(slicer_settings.get('outer_wall_acceleration'))
     inner_accel = _to_num(slicer_settings.get('inner_wall_acceleration'))
-    bridge_accel = _to_num(slicer_settings.get('bridge_acceleration'))
     default_accel = _to_num(slicer_settings.get('default_acceleration'))
     top_accel = _to_num(slicer_settings.get('top_surface_acceleration'))
     travel_accel = _to_num(slicer_settings.get('travel_acceleration'))
     bridge_flow_val = _to_num(slicer_settings.get('bridge_flow'))
+    # bridge_accel may be a percentage like '50%' — resolve against a reference
+    _ref_for_bridge = outer_accel or default_accel or 10000
+    bridge_accel = _to_num_or_pct(slicer_settings.get('bridge_acceleration'), _ref_for_bridge)
 
     # Issue 1: Bridge accel much lower than wall accel → causes big swings
     #          at recessed features the slicer misidentifies as bridges
@@ -612,6 +626,29 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
                 f'potential banding line. Max swing was ±{result["max_accel_swing"]:.0f}.'
             ),
         })
+        # Suggest consolidating accel values
+        target_wall = outer_accel or default_accel
+        if target_wall and inner_accel and inner_accel != target_wall:
+            result['suggestions'].append({
+                'setting': 'inner_wall_acceleration',
+                'current': int(inner_accel),
+                'suggested': int(target_wall),
+                'reason': 'Match outer wall to reduce accel transitions',
+            })
+        if target_wall and travel_accel and travel_accel > target_wall * 2:
+            result['suggestions'].append({
+                'setting': 'travel_acceleration',
+                'current': int(travel_accel),
+                'suggested': int(target_wall * 1.5),
+                'reason': 'Reduce travel accel gap to minimize transition artifacts',
+            })
+        if target_wall and top_accel and top_accel != target_wall:
+            result['suggestions'].append({
+                'setting': 'top_surface_acceleration',
+                'current': int(top_accel),
+                'suggested': int(target_wall),
+                'reason': 'Match wall accel to avoid top-surface transition lines',
+            })
 
     # Issue 5: Top surface accel very different from normal printing
     if top_accel and ref_accel and abs(top_accel - ref_accel) > 4000:
