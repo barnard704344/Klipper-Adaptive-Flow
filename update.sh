@@ -105,11 +105,22 @@ echo "[>>] Linking system defaults..."
 for f in auto_flow_defaults.cfg material_profiles_defaults.cfg; do
     if [ -L "$CONFIG_DIR/$f" ]; then
         # Already a symlink — nothing to do
-        true
-    else
-        # Remove old copy (if any) and create symlink
+        echo "[OK] $f already symlinked"
+    elif [ -f "$CONFIG_DIR/$f" ]; then
+        # Existing plain file — check if user modified it
+        if ! diff -q "$REPO_DIR/$f" "$CONFIG_DIR/$f" >/dev/null 2>&1; then
+            BACKUP="${CONFIG_DIR}/${f}.backup.$(date +%Y%m%d_%H%M%S)"
+            echo "[!] $f has local modifications — backing up to $(basename "$BACKUP")"
+            cp "$CONFIG_DIR/$f" "$BACKUP"
+            echo "    If you customized settings, move them to the matching _user.cfg file"
+        fi
         rm -f "$CONFIG_DIR/$f"
         ln -s "$REPO_DIR/$f" "$CONFIG_DIR/$f"
+        echo "[OK] $f → symlinked to git repo"
+    else
+        # No file at all — create symlink
+        ln -s "$REPO_DIR/$f" "$CONFIG_DIR/$f"
+        echo "[OK] $f → symlinked to git repo"
     fi
 done
 
