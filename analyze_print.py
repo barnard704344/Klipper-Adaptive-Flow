@@ -526,13 +526,22 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
         result['max_accel_swing'] = max(abs(s['delta']) for s in accel_spikes)
 
     # --- Identify issues and generate specific suggestions ---
-    outer_accel = slicer_settings.get('outer_wall_acceleration')
-    inner_accel = slicer_settings.get('inner_wall_acceleration')
-    bridge_accel = slicer_settings.get('bridge_acceleration')
-    default_accel = slicer_settings.get('default_acceleration')
-    top_accel = slicer_settings.get('top_surface_acceleration')
-    travel_accel = slicer_settings.get('travel_acceleration')
-    bridge_flow_val = slicer_settings.get('bridge_flow')
+    def _to_num(v):
+        """Coerce a value to float if possible, else return None."""
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    outer_accel = _to_num(slicer_settings.get('outer_wall_acceleration'))
+    inner_accel = _to_num(slicer_settings.get('inner_wall_acceleration'))
+    bridge_accel = _to_num(slicer_settings.get('bridge_acceleration'))
+    default_accel = _to_num(slicer_settings.get('default_acceleration'))
+    top_accel = _to_num(slicer_settings.get('top_surface_acceleration'))
+    travel_accel = _to_num(slicer_settings.get('travel_acceleration'))
+    bridge_flow_val = _to_num(slicer_settings.get('bridge_flow'))
 
     # Issue 1: Bridge accel much lower than wall accel → causes big swings
     #          at recessed features the slicer misidentifies as bridges
