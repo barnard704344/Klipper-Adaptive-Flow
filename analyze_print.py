@@ -6278,9 +6278,12 @@ def _moonraker_query(endpoint, timeout=5):
 # Results saved as *_vibration.json alongside the existing print logs.
 
 _ADXL_SAMPLE_CSV = '/tmp/adxl345-autosample.csv'
-_ADXL_SAMPLE_INTERVAL = 120   # seconds between samples (2 minutes)
-_ADXL_SAMPLE_DURATION = 2.0   # seconds of ADXL recording per sample
+_ADXL_SAMPLE_INTERVAL = 300   # seconds between samples (5 minutes — reduced from 2min to ease MCU load)
+_ADXL_SAMPLE_DURATION = 0.5   # seconds of ADXL recording per sample (reduced from 2.0s to prevent timer-too-close)
+_ADXL_SPEED_THRESHOLD = 80    # mm/s — defer sampling when toolhead is moving faster than this
+_ADXL_MAX_BACKOFF = 1800      # max backoff interval in seconds (30 min)
 _adxl_sampler_active = False   # True while a print is being sampled
+_adxl_sampler_enabled = True   # Set to False via --no-adxl to disable entirely
 
 
 def _parse_adxl_csv(csv_path):
@@ -6370,10 +6373,30 @@ def _parse_adxl_csv(csv_path):
     }
 
 
+def _is_toolhead_busy():
+    """Check if the toolhead is actively moving at high speed.
+    
+    Returns True if the printer is in a high-speed move — in that case we
+    should defer ADXL sampling to avoid overwhelming the MCU.
+    """
+    data = _moonraker_query(
+        '/printer/objects/query?gcode_move&toolhead', timeout=3
+    )
+    if not data:
+        return True  # assume busy if we can't query
+    status = data.get('result', {}).get('status', {})
+    gm = status.get('gcode_move', {})
+    speed = gm.get('speed', 0)
+    # speed is in mm/s in gcode_move
+    return speed > _ADXL_SPEED_THRESHOLD
+
+
 def _take_adxl_sample():
     """Take a single ADXL burst sample. Returns vibration metrics dict or None.
     
     Sequence: start MEASURE → wait → stop MEASURE → wait for CSV → parse.
+    The burst duration is kept very short (0.5s default) to minimise MCU
+    interrupt load during active printing and avoid timer-too-close errors.
     """
     # Clean up any old CSV
     if os.path.exists(_ADXL_SAMPLE_CSV):
@@ -6392,8 +6415,8 @@ def _take_adxl_sample():
     # Stop recording — Klipper writes CSV via daemon process
     _moonraker_gcode('ACCELEROMETER_MEASURE NAME=autosample', timeout=15)
 
-    # Wait for CSV to appear and have data
-    for _ in range(30):  # up to 3 seconds
+    # Wait for CSV to appear and have data (up to 2 seconds)
+    for _ in range(20):
         time.sleep(0.1)
         if os.path.exists(_ADXL_SAMPLE_CSV):
             try:
@@ -6446,8 +6469,10 @@ def _adxl_print_sampler_loop(log_dir):
     
     Strategy:
     - Poll print_stats every 10 seconds
-    - On print start: wait 30s for first layer to begin, then sample every _ADXL_SAMPLE_INTERVAL
-    - Each sample: 2s ADXL burst + printer state snapshot
+    - On print start: wait 60s for first layer to stabilise, then sample every _ADXL_SAMPLE_INTERVAL
+    - Each sample: short ADXL burst (0.5s) + printer state snapshot
+    - Defers sampling when toolhead is in a fast move to avoid MCU overload
+    - Uses exponential backoff on consecutive failures (max 30 min)
     - On print end: save all samples to *_vibration.json
     """
     import logging
@@ -6459,8 +6484,11 @@ def _adxl_print_sampler_loop(log_dir):
     print_filename = ''
     sample_timer = 0
     initial_delay_done = False
+    consecutive_failures = 0     # for exponential backoff
+    current_interval = _ADXL_SAMPLE_INTERVAL  # may grow on failures
 
-    logger.info("ADXL print sampler started — monitoring for prints")
+    logger.info("ADXL print sampler started — monitoring for prints "
+                f"(interval={_ADXL_SAMPLE_INTERVAL}s, burst={_ADXL_SAMPLE_DURATION}s)")
 
     while True:
         try:
@@ -6479,6 +6507,8 @@ def _adxl_print_sampler_loop(log_dir):
                 samples = []
                 sample_timer = 0
                 initial_delay_done = False
+                consecutive_failures = 0
+                current_interval = _ADXL_SAMPLE_INTERVAL
                 _adxl_sampler_active = True
                 logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
 
@@ -6490,13 +6520,19 @@ def _adxl_print_sampler_loop(log_dir):
                 if not initial_delay_done:
                     if sample_timer >= 60:
                         initial_delay_done = True
-                        sample_timer = _ADXL_SAMPLE_INTERVAL  # trigger immediate sample
+                        sample_timer = current_interval  # trigger immediate sample
                     else:
                         last_state = state
                         continue
 
                 # Time for a sample?
-                if sample_timer >= _ADXL_SAMPLE_INTERVAL:
+                if sample_timer >= current_interval:
+                    # Defer if toolhead is doing a fast move — try again next loop
+                    if _is_toolhead_busy():
+                        logger.debug("  Deferring ADXL sample — toolhead moving fast")
+                        last_state = state
+                        continue
+
                     sample_timer = 0
 
                     printer_state = _get_printer_state()
@@ -6521,8 +6557,22 @@ def _adxl_print_sampler_loop(log_dir):
                             f"Y_rms={vibration['y']['rms']}, "
                             f"mag_rms={vibration['magnitude']['rms']}"
                         )
+                        # Reset backoff on success
+                        if consecutive_failures > 0:
+                            consecutive_failures = 0
+                            current_interval = _ADXL_SAMPLE_INTERVAL
+                            logger.info(f"  Backoff reset — interval back to {current_interval}s")
                     else:
-                        logger.warning("  ADXL sample failed — sensor may be busy")
+                        consecutive_failures += 1
+                        # Exponential backoff: double the interval each failure, cap at _ADXL_MAX_BACKOFF
+                        current_interval = min(
+                            _ADXL_SAMPLE_INTERVAL * (2 ** consecutive_failures),
+                            _ADXL_MAX_BACKOFF
+                        )
+                        logger.warning(
+                            f"  ADXL sample failed (#{consecutive_failures}) — "
+                            f"next attempt in {current_interval}s"
+                        )
 
             # ---------- Print just ended ----------
             if state != 'printing' and last_state == 'printing' and samples:
@@ -6792,20 +6842,23 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         pass  # suppress default request logging
 
 
-def serve_dashboard(port, log_dir, material=None):
+def serve_dashboard(port, log_dir, material=None, enable_adxl=True):
     """Start the dashboard web server."""
     DashboardHandler.log_dir = log_dir
     DashboardHandler.material = material
 
-    # Start background ADXL print sampler thread
-    import threading as _threading
-    sampler_thread = _threading.Thread(
-        target=_adxl_print_sampler_loop,
-        args=(log_dir,),
-        daemon=True,
-        name='ADXLPrintSampler'
-    )
-    sampler_thread.start()
+    # Start background ADXL print sampler thread (unless disabled)
+    if enable_adxl and _adxl_sampler_enabled:
+        import threading as _threading
+        sampler_thread = _threading.Thread(
+            target=_adxl_print_sampler_loop,
+            args=(log_dir,),
+            daemon=True,
+            name='ADXLPrintSampler'
+        )
+        sampler_thread.start()
+    else:
+        print("  ADXL auto-sampler: disabled")
 
     server = http.server.ThreadingHTTPServer(('0.0.0.0', port), DashboardHandler)
 
@@ -6926,6 +6979,9 @@ Examples:
     parser.add_argument(
         '--log-dir', '-d', default=LOG_DIR,
         help=f'Log directory (default: {LOG_DIR})')
+    parser.add_argument(
+        '--no-adxl', action='store_true',
+        help='Disable ADXL auto-sampling during prints (prevents timer-too-close errors on slower boards)')
     args = parser.parse_args()
 
     log_dir = os.path.expanduser(args.log_dir)
@@ -6938,7 +6994,8 @@ Examples:
             print(f"Log directory not found: {log_dir}")
             print("Run a print first to generate logs.")
             return 1
-        serve_dashboard(args.port, log_dir, material=args.material)
+        serve_dashboard(args.port, log_dir, material=args.material,
+                        enable_adxl=not args.no_adxl)
         return 0
 
     # ------------------------------------------------------------------
