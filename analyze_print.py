@@ -3174,7 +3174,7 @@ def print_distribution(dist):
 # =============================================================================
 
 def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
-                                printer_hw=None, rows=None):
+                                printer_hw=None, slicer_settings=None, rows=None):
     """Analyze actual print data to determine if the printer could be pushed faster.
 
     Examines per-sample boost, PWM, flow, and speed data to find where the
@@ -3191,6 +3191,7 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
     s = summary or {}
     hw = printer_hw or {}
     hi = hotend_info or {}
+    ss = slicer_settings or {}
 
     safe_flow = hi.get('safe_flow', 11)
     peak_flow = hi.get('peak_flow', 14)
@@ -3428,46 +3429,119 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
     # Clamp to reasonable range
     speed_increase_pct = max(0, min(speed_increase_pct, 100))
 
-    # ── Build concrete suggestions ──
+    # ── Build concrete suggestions with numerical values ──
+    sls = slicer_settings or {}
+    nozzle_d = hi.get('nozzle_diameter', 0.4)
+    layer_h = sls.get('layer_height', 0.2)
+    if not isinstance(layer_h, (int, float)):
+        try: layer_h = float(layer_h)
+        except (ValueError, TypeError): layer_h = 0.2
+
+    # Read current flow_k
+    _current_flow_k = _get_config_value('flow_k', material)
+
     suggestions = []
     if speed_increase_pct >= 10:
         new_avg_flow = round(avg_flow * (1 + speed_increase_pct / 100), 1)
+        mult = 1 + speed_increase_pct / 100
+
+        # Per-feature speed suggestions
+        _speed_keys = [
+            ('outer_wall_speed', 'Outer wall'),
+            ('inner_wall_speed', 'Inner wall'),
+            ('sparse_infill_speed', 'Infill'),
+            ('internal_solid_infill_speed', 'Solid infill'),
+            ('top_surface_speed', 'Top surface'),
+        ]
+        speed_lines = []
+        for sk, label in _speed_keys:
+            cur = sls.get(sk)
+            if cur is not None:
+                try:
+                    cur_v = float(cur)
+                except (ValueError, TypeError):
+                    continue
+                new_v = int(cur_v * mult)
+                # Cap at flow limit
+                lw = nozzle_d + 0.05
+                max_v = int(safe_flow * 0.85 / (lw * layer_h)) if lw * layer_h > 0 else new_v
+                new_v = min(new_v, max_v)
+                if new_v > cur_v:
+                    speed_lines.append(f'{label}: {int(cur_v)} → {new_v} mm/s')
+
+        detail_text = (f'Increase speeds by ~{speed_increase_pct}% — avg flow rises from '
+                       f'{avg_flow:.1f} to ~{new_avg_flow} mm³/s '
+                       f'(safe limit: {safe_flow} mm³/s).')
+        if speed_lines:
+            detail_text += '\n' + '  •  '.join([''] + speed_lines)
+
         suggestions.append({
             'what': 'Increase print speeds',
-            'detail': f'You can increase speeds by ~{speed_increase_pct}% across the board. '
-                      f'This would raise avg flow from {avg_flow:.1f} to ~{new_avg_flow} mm³/s '
-                      f'(still within Revo {nozzle_type} safe limit of {safe_flow} mm³/s).',
+            'detail': detail_text,
             'impact': 'faster prints',
         })
 
     if accel_headroom and accel_headroom['pct_used'] < 70:
+        sug_accel = int(accel_headroom['shaper_limit'] * 0.85)
+        cur_wall_accel = sls.get('outer_wall_acceleration')
+        accel_detail = (f'Actual accels averaged {accel_headroom["avg_used"]} mm/s² '
+                        f'(max {accel_headroom["max_used"]}). '
+                        f'Shaper supports {accel_headroom["shaper_limit"]}.')
+        if cur_wall_accel is not None:
+            try:
+                cwa = int(float(cur_wall_accel))
+                accel_detail += f'\nWall accel: {cwa} → {sug_accel} mm/s²'
+            except (ValueError, TypeError):
+                pass
+        else:
+            accel_detail += f'\nSuggested wall accel: {sug_accel} mm/s²'
+        cur_infill_accel = sls.get('sparse_infill_acceleration')
+        if cur_infill_accel is not None:
+            try:
+                cia = int(float(cur_infill_accel))
+                sug_infill = int(accel_headroom['shaper_limit'] * 0.95)
+                accel_detail += f', Infill accel: {cia} → {sug_infill} mm/s²'
+            except (ValueError, TypeError):
+                pass
+
         suggestions.append({
             'what': 'Increase accelerations',
-            'detail': f'Actual accels averaged {accel_headroom["avg_used"]} mm/s² '
-                      f'(max {accel_headroom["max_used"]}). Your input shaper supports '
-                      f'{accel_headroom["shaper_limit"]}. Higher slicer accels will let '
-                      f'the printer reach target speeds on short segments.',
+            'detail': accel_detail,
             'impact': 'less time accelerating/decelerating',
         })
 
     if boost_headroom > 10 and not thermal_at_limit:
+        flow_k_detail = (f'Boost used only {max_boost:.1f}°C of ~{max_boost_available}°C range '
+                         f'({avg_pwm*100:.0f}% heater duty).')
+        if _current_flow_k is not None:
+            sug_fk = round(_current_flow_k + 0.15, 2)
+            sug_fk = min(sug_fk, 2.5)  # cap
+            flow_k_detail += f'\nflow_k: {_current_flow_k} → {sug_fk}'
+        else:
+            flow_k_detail += '\nIncrease flow_k by 0.1–0.2 in your material profile.'
+
         suggestions.append({
             'what': 'Increase flow_k for more aggressive boost',
-            'detail': f'The temperature boost system only used {max_boost:.1f}°C of '
-                      f'~{max_boost_available}°C range, and heater duty was {avg_pwm*100:.0f}%. '
-                      f'Increasing flow_k would let the system pre-heat more aggressively for '
-                      f'flow transitions, improving extrusion consistency at higher speeds.',
+            'detail': flow_k_detail,
             'impact': 'better flow adaptation',
             'config_var': 'flow_k',
             'direction': 'increase',
         })
 
     if fan_at_limit and material in ('PLA', 'PETG'):
+        # Estimate max safe speed limited by cooling
+        # Rough model: at fan 100%, cooling limit ≈ current max speed
+        fan_detail = f'Fan was at {max_fan:.0f}% — already at maximum capacity.'
+        if max_speed > 0:
+            fan_detail += (f' At current speeds (max {max_speed:.0f} mm/s), '
+                          f'cooling is fully utilized. Increasing speeds beyond '
+                          f'~{int(max_speed * 1.1)} mm/s may cause cooling issues '
+                          f'(stringing, poor overhangs).')
+        fan_detail += ' Consider a higher-CFM fan or duct upgrade before increasing speeds.'
+
         suggestions.append({
-            'what': 'Fan at maximum — may limit cooling at higher speeds',
-            'detail': f'Part fan was at {max_fan:.0f}% during this print. '
-                      f'If you increase speeds, cooling may become the bottleneck. '
-                      f'Consider a higher-CFM fan or duct upgrade.',
+            'what': 'Fan at maximum — cooling may limit speed gains',
+            'detail': fan_detail,
             'impact': 'cooling constraint',
         })
 
@@ -5118,6 +5192,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             summary=data.get('summary'),
             hotend_info=hotend_info,
             printer_hw=printer_hw,
+            slicer_settings=slicer,
             rows=csv_rows,
         )
     data['boost_optimization'] = boost_opt
@@ -5659,9 +5734,18 @@ h+='<div style="margin-bottom:8px">';
 h+='<div style="font-weight:600;font-size:12px;color:#3fb950;margin-bottom:6px">SUGGESTIONS</div>';
 bo.suggestions.forEach(function(sg){
 var impactClr=sg.impact==='cooling constraint'?'#d29922':'#3fb950';
+/* Split detail on newlines: first line is summary, rest are per-setting values */
+var detParts=(sg.detail||'').split('\\n');
+var detHtml='<div style="color:#8b949e;font-size:11px;margin-top:2px">'+detParts[0]+'</div>';
+if(detParts.length>1){
+detHtml+='<div style="margin-top:4px;padding:4px 8px;background:rgba(139,148,158,0.08);border-radius:3px;font-family:monospace;font-size:11px;color:#c9d1d9;line-height:1.6">';
+for(var di=1;di<detParts.length;di++){
+var ln=detParts[di].replace(/→/g,'<span style="color:#3fb950;font-weight:600"> → </span>');
+detHtml+=ln+(di<detParts.length-1?'<br>':'');}
+detHtml+='</div>';}
 h+='<div style="padding:8px 10px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
 '<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+sg.impact+'</span></div>'+
-'<div style="color:#8b949e;font-size:11px;margin-top:2px">'+sg.detail+'</div></div>'});
+detHtml+'</div>'});
 h+='</div>'}
 
 /* Per-bracket table */
