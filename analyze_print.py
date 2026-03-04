@@ -4026,14 +4026,8 @@ def generate_recommendations(data):
                            f'Travel accel \u2192 {min(fw_max_accel or 15000, 15000)}. '
                            f'See the Slicer Profile tab for per-setting details.',
             })
-        elif avg_utilization < 50:
-            recs.append({
-                'severity': 'warn', 'category': 'Performance',
-                'title': f'Printer at {avg_utilization:.0f}% capacity \u2014 room to go faster',
-                'detail': f'Your {kinematics.upper()} printer averaged {avg_flow_val:.1f}/{safe_flow_val} mm\u00b3/s. '
-                           f'There\u2019s significant headroom to increase speeds while maintaining quality.',
-                'action': 'Check the Slicer Profile tab for per-setting speed suggestions optimized for your hardware.',
-            })
+        # 35-50% utilization: slicer profile tab already has per-setting
+        # suggestions, so no need for a separate generic warning here.
 
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
