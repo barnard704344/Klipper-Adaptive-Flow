@@ -5749,7 +5749,7 @@ var applyBtn='';
 if(sg.config_var&&sg.suggested_value!=null){
 var bId='boost_apply_'+sg.config_var;
 applyBtn='<div style="margin-top:6px"><button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:3px 12px" '+
-'onclick="applyChange(\''+bId+'\',\''+sg.config_var+'\','+sg.suggested_value+',\''+(sg.material||'')+'\')"'+
+'onclick="applyChange(\\''+bId+'\\',\\''+sg.config_var+'\\','+sg.suggested_value+',\\''+(sg.material||'')+'\\')"'+
 '>Apply '+sg.config_var+' = '+sg.suggested_value+'</button></div>';}
 h+='<div style="padding:8px 10px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
 '<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+sg.impact+'</span></div>'+
