@@ -1030,22 +1030,34 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
     _kinematics = (printer_hw or {}).get('kinematics', 'unknown')
     _is_fast_printer = _kinematics in ('corexy', 'corexz') or _fw_max_vel >= 300
     _is_data = (printer_hw or {}).get('input_shaper', {})
-    _shaper_limits = {}
+    _shaper_limits = {}  # {axis: limit}
+    _shaper_info = {}     # {axis: {limit, type, freq}}
     for _ax in ('x', 'y'):
         _ax_data = _is_data.get(_ax, {})
         _rec = _ax_data.get('recommended_max_accel')
         if _rec:
             _shaper_limits[_ax] = _rec
-    _shaper_quality_max = min(_shaper_limits.values()) if _shaper_limits else None
-    _shaper_perf_max = max(_shaper_limits.values()) if _shaper_limits else None
+            _shaper_info[_ax] = {
+                'limit': _rec,
+                'type': _ax_data.get('type', '?'),
+                'freq': _ax_data.get('freq', 0),
+            }
+    # Per-axis limits for axis-aware recommendations
+    _shaper_x = _shaper_limits.get('x')  # None if no X shaper data
+    _shaper_y = _shaper_limits.get('y')  # None if no Y shaper data
+    _shaper_quality_max = min(_shaper_limits.values()) if _shaper_limits else None  # most restrictive
+    _shaper_perf_max = max(_shaper_limits.values()) if _shaper_limits else None    # least restrictive
     _fw_accel = (printer_hw or {}).get('firmware_max_accel')
 
     # Practical accel limit: input shaper quality limit, NOT firmware ceiling
+    # Use min (most restrictive) for wall features (arbitrary geometry)
+    # Use max (least restrictive) for infill (can be axis-aligned)
     _practical_accel = _shaper_quality_max or _fw_accel or 5000
+    _practical_accel_infill = _shaper_perf_max or _fw_accel or 5000
 
     # Optimal accel ranges based on hardware
     _optimal_wall_accel = int(_practical_accel * 0.85) if _shaper_quality_max else 5000
-    _optimal_infill_accel = int(min(_shaper_perf_max or _practical_accel * 1.5,
+    _optimal_infill_accel = int(min(_practical_accel_infill,
                                      _fw_accel or 20000) * 0.7) if _shaper_limits else 8000
     _optimal_travel_accel = int(min((_fw_accel or 20000), 15000))
 
@@ -1077,6 +1089,12 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'Very low for a {_kinematics} printer with {_fw_accel or "high"} max_accel. '
                  f'{shaper_note}'
                  f'Set to {_optimal_wall_accel} to match your hardware.')
+        elif _shaper_quality_max and default_accel > _shaper_quality_max:
+            _add('default_acceleration', 'Acceleration', int(default_accel),
+                 'warn', f'{int(_shaper_quality_max)}',
+                 f'Exceeds input shaper quality limit ({_shaper_quality_max}). '
+                 f'Klipper uses this as the ceiling/fallback — set to '
+                 f'{int(_shaper_quality_max)} to stay within shaper limit.')
         else:
             _add('default_acceleration', 'Acceleration', int(default_accel),
                  'info', None,
@@ -1102,10 +1120,16 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'Good range for quality.{shaper_note}')
         else:
             shaper_note = ' \u2014 input shaper will handle it' if _shaper_quality_max else ''
-            _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
-                 'info', f'{_optimal_wall_accel}',
-                 f'Conservative for a {_kinematics} printer. '
-                 f'You can push to {_optimal_wall_accel}{shaper_note}.')
+            if _optimal_wall_accel and outer_accel >= _optimal_wall_accel:
+                # Already at or above optimal — don't suggest lowering with "push to" wording
+                _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                     'good', None,
+                     f'At optimal range for a {_kinematics} printer{shaper_note}.')
+            else:
+                _add('outer_wall_acceleration', 'Acceleration', int(outer_accel),
+                     'info', f'{_optimal_wall_accel}',
+                     f'Conservative for a {_kinematics} printer. '
+                     f'You can push to {_optimal_wall_accel}{shaper_note}.')
 
     if inner_accel is not None:
         gap = abs(inner_accel - outer_accel) if outer_accel else 0
@@ -1143,6 +1167,11 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'Gap of \u00b1{int(gap)} from walls ({int(ref_accel)}). '
                  f'OrcaSlicer misidentifies features as bridges \u2014 '
                  f'set to {int(ref_accel)} to match wall accel.')
+        elif ref_accel and gap >= MAX_ACCEL_GAP * 0.8:
+            _add('bridge_acceleration', 'Acceleration', int(bridge_accel),
+                 'info', str(int(ref_accel)),
+                 f'Gap of \u00b1{int(gap)} from walls ({int(ref_accel)}) is borderline. '
+                 f'Consider reducing to {int(ref_accel)} if you see transition artifacts at bridges.')
         else:
             _add('bridge_acceleration', 'Acceleration', int(bridge_accel),
                  'good', None,
@@ -1200,9 +1229,21 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'Gap of \u00b1{int(gap)} from walls ({int(wall_accel)}). '
                  f'Top surface meets walls at edges \u2014 matching accel prevents transition lines.')
         elif top_accel < 3000:
-            _add('top_surface_acceleration', 'Acceleration', int(top_accel),
-                 'info', '4000\u20136000',
-                 'Very conservative. Can increase for faster prints without quality loss on top surfaces.')
+            if _shaper_quality_max and 4000 > _shaper_quality_max:
+                # Don't suggest values above the input shaper quality limit
+                if top_accel < _shaper_quality_max:
+                    _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                         'info', f'{int(_shaper_quality_max)}',
+                         f'Can increase up to {int(_shaper_quality_max)} (input shaper quality limit) '
+                         f'for faster prints without quality loss on top surfaces.')
+                else:
+                    _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                         'good', None,
+                         f'At input shaper quality limit ({_shaper_quality_max}). Good for top surface quality.')
+            else:
+                _add('top_surface_acceleration', 'Acceleration', int(top_accel),
+                     'info', '4000\u20136000',
+                     'Very conservative. Can increase for faster prints without quality loss on top surfaces.')
         else:
             _add('top_surface_acceleration', 'Acceleration', int(top_accel),
                  'good', None,
@@ -1265,34 +1306,93 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                      f'this setting has no effect above that.')
 
     # Check if accel exceeds input shaper recommended limit (quality)
-    if is_data:
-        # Use the more restrictive axis (typically Y on corexy)
-        shaper_limits = {}
-        for axis in ('x', 'y'):
-            ax_data = is_data.get(axis, {})
-            rec = ax_data.get('recommended_max_accel')
-            if rec:
-                shaper_limits[axis] = rec
-        if shaper_limits:
-            min_axis = min(shaper_limits, key=shaper_limits.get)
-            min_limit = shaper_limits[min_axis]
-            shaper_type = is_data.get(min_axis, {}).get('type', '?')
-            shaper_freq = is_data.get(min_axis, {}).get('freq', 0)
+    # Axis-aware: on CoreXY, X and Y can have very different limits.
+    # Wall features use arbitrary geometry → check against BOTH axes (min).
+    # Infill features can be axis-aligned → check against EACH axis separately.
+    if is_data and _shaper_info:
+        _both_axes = len(_shaper_info) == 2
 
-            # Warn for all print moves (not travel/first layer) that exceed shaper limit
-            for accel_name, accel_val in [
-                ('outer_wall_acceleration', outer_accel),
-                ('inner_wall_acceleration', inner_accel),
-                ('top_surface_acceleration', top_accel),
-                ('internal_solid_infill_acceleration', solid_accel),
-                ('sparse_infill_acceleration', infill_accel),
-            ]:
-                if accel_val and accel_val > min_limit:
-                    feature = accel_name.replace('_acceleration', '').replace('_', ' ')
+        # Classify features by motion pattern
+        _wall_features = [
+            ('outer_wall_acceleration', outer_accel),
+            ('inner_wall_acceleration', inner_accel),
+            ('bridge_acceleration', bridge_accel),
+            ('top_surface_acceleration', top_accel),
+        ]
+        _infill_features = [
+            ('internal_solid_infill_acceleration', solid_accel),
+            ('sparse_infill_acceleration', infill_accel),
+        ]
+
+        # Wall features: move in arbitrary directions, limited by MOST restrictive axis
+        for accel_name, accel_val in _wall_features:
+            if accel_val and _shaper_quality_max and accel_val > _shaper_quality_max:
+                feature = accel_name.replace('_acceleration', '').replace('_', ' ')
+                if _both_axes and _shaper_perf_max and accel_val <= _shaper_perf_max:
+                    # Exceeds one axis but not the other
+                    slow_ax = min(_shaper_info, key=lambda a: _shaper_info[a]['limit'])
+                    fast_ax = max(_shaper_info, key=lambda a: _shaper_info[a]['limit'])
+                    slow_info = _shaper_info[slow_ax]
+                    fast_info = _shaper_info[fast_ax]
                     _add(accel_name, 'Input Shaper', int(accel_val),
-                         'warn', f'\u2264{min_limit}',
-                         f'Exceeds input shaper quality limit for {shaper_type.upper()} @ '
-                         f'{shaper_freq}Hz on {min_axis.upper()} axis ({min_limit}). '
+                         'warn', f'\u2264{int(slow_info["limit"])}',
+                         f'Exceeds {slow_ax.upper()} axis shaper limit '
+                         f'({slow_info["type"].upper()} @ {slow_info["freq"]}Hz = '
+                         f'{int(slow_info["limit"])}) but within {fast_ax.upper()} axis '
+                         f'({fast_info["type"].upper()} @ {fast_info["freq"]}Hz = '
+                         f'{int(fast_info["limit"])}). '
+                         f'Walls have mixed-axis moves — {feature} may show ringing '
+                         f'on {slow_ax.upper()}-dominant segments.')
+                else:
+                    # Exceeds all axes
+                    parts = []
+                    for ax in sorted(_shaper_info):
+                        si = _shaper_info[ax]
+                        parts.append(f'{ax.upper()}: {si["type"].upper()} @ {si["freq"]}Hz = {int(si["limit"])}')
+                    _add(accel_name, 'Input Shaper', int(accel_val),
+                         'bad', f'\u2264{int(_shaper_quality_max)}',
+                         f'Exceeds input shaper quality limit on ALL axes '
+                         f'({", ".join(parts)}). '
+                         f'Will cause visible ringing on {feature}.')
+
+        # Infill features: can be axis-aligned, check per-axis
+        for accel_name, accel_val in _infill_features:
+            if accel_val and _shaper_quality_max and accel_val > _shaper_quality_max:
+                feature = accel_name.replace('_acceleration', '').replace('_', ' ')
+                if _both_axes and _shaper_perf_max and accel_val <= _shaper_perf_max:
+                    # Within the faster axis — infill can be aligned to it
+                    slow_ax = min(_shaper_info, key=lambda a: _shaper_info[a]['limit'])
+                    fast_ax = max(_shaper_info, key=lambda a: _shaper_info[a]['limit'])
+                    slow_info = _shaper_info[slow_ax]
+                    fast_info = _shaper_info[fast_ax]
+                    _add(accel_name, 'Input Shaper', int(accel_val),
+                         'info', f'\u2264{int(fast_info["limit"])}',
+                         f'Exceeds {slow_ax.upper()} axis limit '
+                         f'({int(slow_info["limit"])}) but within {fast_ax.upper()} axis '
+                         f'({int(fast_info["limit"])}). '
+                         f'Infill patterns with {slow_ax.upper()}-dominant segments '
+                         f'may show ringing. Rectilinear infill alternates axes, '
+                         f'so some passes are fine.')
+                elif _shaper_perf_max and accel_val > _shaper_perf_max:
+                    # Exceeds all axes
+                    parts = []
+                    for ax in sorted(_shaper_info):
+                        si = _shaper_info[ax]
+                        parts.append(f'{ax.upper()}: {int(si["limit"])}')
+                    _add(accel_name, 'Input Shaper', int(accel_val),
+                         'warn', f'\u2264{int(_shaper_perf_max)}',
+                         f'Exceeds input shaper quality limit on ALL axes '
+                         f'({", ".join(parts)}). '
+                         f'May cause visible ringing on {feature}.')
+                else:
+                    # Single-axis data or same limit
+                    ax = list(_shaper_info.keys())[0]
+                    si = _shaper_info[ax]
+                    _add(accel_name, 'Input Shaper', int(accel_val),
+                         'warn', f'\u2264{int(si["limit"])}',
+                         f'Exceeds input shaper quality limit '
+                         f'({si["type"].upper()} @ {si["freq"]}Hz on '
+                         f'{ax.upper()} axis = {int(si["limit"])}). '
                          f'May cause visible ringing on {feature}.')
 
     # =====================================================================
@@ -1571,16 +1671,48 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
         if _shaper_quality_max and max_accel_val <= _shaper_quality_max:
             _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
                  'good', None,
-                 f'All print accels within input shaper quality limit ({_shaper_quality_max}). '
+                 f'All print accels within input shaper quality limit '
+                 f'({_shaper_quality_max}). '
                  f'Spread of \u00b1{int(spread)} is fine \u2014 input shaper handles transitions.')
         elif _shaper_quality_max and max_accel_val > _shaper_quality_max:
-            over = [v for v in accel_vals if v > _shaper_quality_max]
-            _add('_accel_spread', 'Summary', f'{len(over)} over limit',
-                 'warn', f'\u2264{_shaper_quality_max}',
-                 f'{len(over)} feature accel(s) exceed input shaper quality limit '
-                 f'({_shaper_quality_max}, Y axis @ {_is_data.get("y", {}).get("freq", "?")}Hz). '
-                 f'May cause visible ringing on those features. '
-                 f'Reduce to \u2264{_shaper_quality_max} for clean surfaces.')
+            over_min = [v for v in accel_vals if v > _shaper_quality_max]
+            # Axis-aware: distinguish between exceeding one vs both axes
+            if _shaper_perf_max and _shaper_perf_max > _shaper_quality_max:
+                over_both = [v for v in accel_vals if v > _shaper_perf_max]
+                over_one = [v for v in over_min if v <= _shaper_perf_max]
+                axis_parts = []
+                for ax in sorted(_shaper_info):
+                    si = _shaper_info[ax]
+                    axis_parts.append(f'{ax.upper()}: {si["type"].upper()} @ '
+                                      f'{si["freq"]}Hz = {int(si["limit"])}')
+                axis_str = ', '.join(axis_parts)
+                if over_both:
+                    _add('_accel_spread', 'Summary',
+                         f'{len(over_min)} over limit',
+                         'warn', f'\u2264{int(_shaper_quality_max)}',
+                         f'{len(over_both)} feature accel(s) exceed ALL shaper limits '
+                         f'({axis_str}). '
+                         f'{len(over_one)} more exceed the {min(_shaper_info, key=lambda a: _shaper_info[a]["limit"]).upper()} '
+                         f'axis only. Reduce to \u2264{int(_shaper_quality_max)} for '
+                         f'clean surfaces on all axes.')
+                else:
+                    slow_ax = min(_shaper_info, key=lambda a: _shaper_info[a]['limit'])
+                    _add('_accel_spread', 'Summary',
+                         f'{len(over_one)} over {slow_ax.upper()} limit',
+                         'warn', f'\u2264{int(_shaper_quality_max)}',
+                         f'{len(over_one)} feature accel(s) exceed {slow_ax.upper()} axis '
+                         f'shaper limit ({int(_shaper_quality_max)}) but all are within '
+                         f'{max(_shaper_info, key=lambda a: _shaper_info[a]["limit"]).upper()} '
+                         f'axis ({int(_shaper_perf_max)}). '
+                         f'Axis-aligned infill passes are fine; wall/diagonal moves '
+                         f'may show ringing. ({axis_str})')
+            else:
+                _add('_accel_spread', 'Summary', f'{len(over_min)} over limit',
+                     'warn', f'\u2264{int(_shaper_quality_max)}',
+                     f'{len(over_min)} feature accel(s) exceed input shaper quality limit '
+                     f'({int(_shaper_quality_max)}). '
+                     f'May cause visible ringing on those features. '
+                     f'Reduce to \u2264{int(_shaper_quality_max)} for clean surfaces.')
         elif spread <= MAX_ACCEL_GAP:
             _add('_accel_spread', 'Summary', f'\u00b1{int(spread)}',
                  'good', None,
