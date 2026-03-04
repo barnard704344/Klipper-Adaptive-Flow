@@ -5201,6 +5201,26 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         )
     data['boost_optimization'] = boost_opt
 
+    # --- Vibration data from ADXL auto-sampler ---
+    vibration_data = None
+    try:
+        # Look for vibration JSON matching this print
+        if data.get('selected_file'):
+            base = data['selected_file'].replace('_summary.json', '').replace('.csv', '')
+            vib_candidates = glob.glob(os.path.join(os.path.expanduser(log_dir), '*_vibration.json'))
+            for vc in sorted(vib_candidates, reverse=True):
+                if base in os.path.basename(vc):
+                    with open(vc, 'r') as f:
+                        vibration_data = json.load(f)
+                    break
+            # Fall back to most recent vibration file
+            if vibration_data is None and vib_candidates:
+                with open(sorted(vib_candidates, reverse=True)[0], 'r') as f:
+                    vibration_data = json.load(f)
+    except Exception:
+        pass
+    data['vibration'] = vibration_data
+
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
     mat = (data.get('summary') or {}).get('material') or material
@@ -5496,7 +5516,8 @@ var allTabs=[
 {id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
 {id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
 {id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and risk across multiple prints.'},
-{id:'ax',l:'ADXL Live',tip:'Live accelerometer data from the toolhead ADXL345 sensor. See real-time vibration levels.'}];
+{id:'ax',l:'ADXL Live',tip:'Live accelerometer data from the toolhead ADXL345 sensor. See real-time vibration levels.'},
+{id:'vb',l:'Vibration',tip:'ADXL vibration analysis from auto-sampling during prints. Shows per-feature vibration, dominant frequencies, and quality recommendations.'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
@@ -5530,7 +5551,8 @@ else if(at==='pa')rPA(tl);
 else if(at==='dz')rDZ();
 else if(at==='ds')rDist();
 else if(at==='tr')rTr()
-else if(at==='ax')rAdxl()}
+else if(at==='ax')rAdxl()
+else if(at==='vb')rVib()}
 
 function rSlicer(){
 var ss=D.slicer_settings;
@@ -6155,6 +6177,103 @@ _adxlChart.update('none')}
 }).catch(function(e){console.error('ADXL fetch error',e)})},3000)
 }).catch(function(e){document.getElementById('adxl_status').textContent='Error: '+e;document.getElementById('adxl_start').disabled=false})}
 
+/* ── Vibration Analysis Panel ── */
+function rVib(){
+var vb=D.vibration;
+if(!vb||!vb.summary){
+ca.innerHTML='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>'+
+'<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
+'<p style="color:#8b949e;margin-top:12px">Samples are taken every 2 minutes throughout the print. Each sample captures 2 seconds of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
+'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p></div>';
+return}
+var sm=vb.summary;
+var ns=vb.n_samples||0;
+var h='<div class="box"><div class="box-hd">📊 Print Vibration Summary</div>';
+h+='<p class="box-desc">'+ns+' ADXL samples collected during print'+(vb.filename?' of <b>'+vb.filename+'</b>':'')+'. Each sample = '+vb.sample_duration_s+'s burst at ~3200Hz.</p>';
+h+='<div style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap">';
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">X RMS</div><div class="score-val" style="color:#58a6ff">'+sm.x_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.x_rms_max+'</div></div>';
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">Y RMS</div><div class="score-val" style="color:#3fb950">'+sm.y_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.y_rms_max+'</div></div>';
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">Mag RMS</div><div class="score-val" style="color:#f0883e">'+sm.mag_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.mag_rms_max+'</div></div>';
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">Mag Peak</div><div class="score-val" style="color:#da3633">'+sm.mag_peak_max+'</div></div>';
+if(sm.dominant_freq_x_hz>0||sm.dominant_freq_y_hz>0){
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">Dom. Freq X</div><div class="score-val" style="color:#58a6ff;font-size:18px">'+sm.dominant_freq_x_hz+' Hz</div></div>';
+h+='<div class="score-box" style="min-width:120px"><div class="score-label">Dom. Freq Y</div><div class="score-val" style="color:#3fb950;font-size:18px">'+sm.dominant_freq_y_hz+' Hz</div></div>';
+}
+h+='</div></div>';
+/* Per-accel/feature breakdown */
+var ba=vb.by_accel;
+if(ba&&Object.keys(ba).length>0){
+var am=(D.slicer_diagnosis||{}).accel_map||{};
+h+='<div class="box"><div class="box-hd">🔧 Vibration by Feature / Acceleration</div>';
+h+='<p class="box-desc">How vibration varies across different print features (identified by acceleration value). Higher RMS = more vibration = lower quality.</p>';
+h+='<table class="tbl"><thead><tr><th>Accel (mm/s²)</th><th>Feature</th><th>Samples</th><th>X RMS</th><th>Y RMS</th><th>Mag RMS</th><th>Avg Speed</th><th>Z Range</th></tr></thead><tbody>';
+var keys=Object.keys(ba).sort(function(a,b){return Number(a)-Number(b)});
+for(var i=0;i<keys.length;i++){
+var k=keys[i],d2=ba[k];
+var feat=am[k]?am[k].features.join(', '):'—';
+var xc=d2.x_rms_avg>500?'color:#da3633':d2.x_rms_avg>200?'color:#d29922':'';
+var yc=d2.y_rms_avg>500?'color:#da3633':d2.y_rms_avg>200?'color:#d29922':'';
+h+='<tr><td>'+k+'</td><td>'+feat+'</td><td>'+d2.n_samples+'</td>';
+h+='<td style="'+xc+'">'+d2.x_rms_avg+'</td><td style="'+yc+'">'+d2.y_rms_avg+'</td>';
+h+='<td>'+d2.mag_rms_avg+'</td><td>'+d2.speed_avg+' mm/s</td>';
+h+='<td>'+d2.z_range[0]+' - '+d2.z_range[1]+' mm</td></tr>';
+}
+h+='</tbody></table></div>';
+}
+/* Vibration over time chart */
+var samps=vb.samples||[];
+if(samps.length>=2){
+h+='<div class="box"><div class="box-hd">📈 Vibration Over Print Progress</div>';
+h+='<p class="box-desc">How vibration changed throughout the print. Spikes may indicate speed changes, feature transitions, or mechanical issues.</p>';
+h+='<div style="height:350px">'+mc('vib_time_chart')+'</div></div>';
+}
+/* Recommendations */
+h+='<div class="box"><div class="box-hd">💡 Vibration Insights</div>';
+var recs=[];
+if(sm.x_rms_avg>500||sm.y_rms_avg>500)recs.push('<b>High overall vibration</b> — X or Y RMS above 500 mm/s². Consider reducing print speed or tightening belts.');
+if(sm.x_rms_avg>0&&sm.y_rms_avg>0&&Math.abs(sm.x_rms_avg-sm.y_rms_avg)/Math.max(sm.x_rms_avg,sm.y_rms_avg)>0.4)recs.push('<b>Axis imbalance</b> — X and Y vibration differ by >40%. Check belt tension balance, or one axis may have a mechanical issue.');
+if(sm.dominant_freq_x_hz>0&&sm.dominant_freq_y_hz>0){
+var is_x=D.slicer_settings&&D.slicer_settings.input_shaper_freq_x?parseFloat(D.slicer_settings.input_shaper_freq_x):0;
+var is_y=D.slicer_settings&&D.slicer_settings.input_shaper_freq_y?parseFloat(D.slicer_settings.input_shaper_freq_y):0;
+if(is_x>0&&Math.abs(sm.dominant_freq_x_hz-is_x)/is_x>0.2)recs.push('<b>X shaper frequency mismatch</b> — dominant vibration at '+sm.dominant_freq_x_hz+'Hz but input shaper set to '+is_x+'Hz. Consider re-running resonance test.');
+if(is_y>0&&Math.abs(sm.dominant_freq_y_hz-is_y)/is_y>0.2)recs.push('<b>Y shaper frequency mismatch</b> — dominant vibration at '+sm.dominant_freq_y_hz+'Hz but input shaper set to '+is_y+'Hz. Consider re-running resonance test.');
+}
+if(ba){
+var maxVibAccel='',maxVibVal=0;
+for(var k in ba){if(ba[k].mag_rms_avg>maxVibVal){maxVibVal=ba[k].mag_rms_avg;maxVibAccel=k}}
+var minVibAccel='',minVibVal=999999;
+for(var k in ba){if(ba[k].mag_rms_avg<minVibVal){minVibVal=ba[k].mag_rms_avg;minVibAccel=k}}
+if(maxVibVal>minVibVal*2&&maxVibAccel!==minVibAccel){
+var mfeat=am[maxVibAccel]?am[maxVibAccel].features.join('/'):'accel='+maxVibAccel;
+recs.push('<b>'+mfeat+' is the noisiest feature</b> — '+maxVibVal+' RMS vs '+minVibVal+' for quietest. Reducing speed/accel for this feature would have the biggest quality impact.');
+}
+}
+if(recs.length===0)recs.push('Vibration levels look healthy. No obvious issues detected.');
+for(var i=0;i<recs.length;i++)h+='<p style="margin:6px 0;padding:8px;background:#161b22;border-radius:6px;border-left:3px solid '+(i<3?'#d29922':'#3fb950')+'">'+recs[i]+'</p>';
+h+='</div>';
+ca.innerHTML=h;
+/* Render time chart */
+if(samps.length>=2&&typeof Chart!=='undefined'){
+var ctx=document.getElementById('vib_time_chart');
+if(ctx){
+var labels=[],xd=[],yd=[],md=[];
+for(var i=0;i<samps.length;i++){
+var pr=samps[i].printer||{};
+labels.push((pr.progress_pct||0).toFixed(0)+'%');
+xd.push(samps[i].vibration.x.rms);
+yd.push(samps[i].vibration.y.rms);
+md.push(samps[i].vibration.magnitude.rms);
+}
+CH['vib_time']=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
+{label:'X RMS',data:xd,borderColor:'#58a6ff',borderWidth:2,pointRadius:4,tension:0.3},
+{label:'Y RMS',data:yd,borderColor:'#3fb950',borderWidth:2,pointRadius:4,tension:0.3},
+{label:'Mag RMS',data:md,borderColor:'#f0883e',borderWidth:2,pointRadius:4,tension:0.3,borderDash:[4,2]}
+]},options:{responsive:true,maintainAspectRatio:false,
+scales:{x:{title:{display:true,text:'Print Progress'}},y:{title:{display:true,text:'Vibration RMS (mm/s²)'},beginAtZero:true}},
+plugins:{legend:{position:'top',labels:{boxWidth:12,font:{size:11}}}}}})
+}}
+}
+
 rCh();
 }catch(e){
 document.getElementById('_err').style.display='block';
@@ -6221,6 +6340,409 @@ def _moonraker_gcode(script, timeout=8):
         return r.returncode == 0
     except Exception:
         return False
+
+def _moonraker_query(endpoint, timeout=5):
+    """Query a Moonraker API endpoint. Returns parsed JSON dict or None."""
+    try:
+        r = subprocess.run(
+            ['curl', '-s', '-m', str(timeout),
+             'http://127.0.0.1:7125' + endpoint],
+            capture_output=True, timeout=timeout + 2
+        )
+        if r.returncode == 0 and r.stdout:
+            return json.loads(r.stdout.decode())
+    except Exception:
+        pass
+    return None
+
+
+# --------------- Background ADXL Print Sampler --------------------------------
+# Automatically samples ADXL345 vibration at strategic points during prints.
+# Each sample: 2-second burst → parse CSV → record vibration metrics + printer state.
+# Results saved as *_vibration.json alongside the existing print logs.
+
+_ADXL_SAMPLE_CSV = '/tmp/adxl345-autosample.csv'
+_ADXL_SAMPLE_INTERVAL = 120   # seconds between samples (2 minutes)
+_ADXL_SAMPLE_DURATION = 2.0   # seconds of ADXL recording per sample
+_adxl_sampler_active = False   # True while a print is being sampled
+
+
+def _parse_adxl_csv(csv_path):
+    """Parse an ADXL345 CSV file into vibration metrics.
+    
+    Returns dict with per-axis stats: mean, peak, RMS, dominant frequency estimate.
+    CSV format: #time,accel_x,accel_y,accel_z
+    """
+    samples = []
+    try:
+        with open(csv_path, 'r') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                parts = line.strip().split(',')
+                if len(parts) >= 4:
+                    try:
+                        t = float(parts[0])
+                        x = float(parts[1])
+                        y = float(parts[2])
+                        z = float(parts[3])
+                        samples.append((t, x, y, z))
+                    except (ValueError, IndexError):
+                        pass
+    except Exception:
+        return None
+
+    n = len(samples)
+    if n < 10:
+        return None
+
+    xs = [s[1] for s in samples]
+    ys = [s[2] for s in samples]
+    zs = [s[3] for s in samples]
+
+    def _axis_stats(vals):
+        n = len(vals)
+        mean = sum(vals) / n
+        # Remove DC offset for vibration analysis
+        ac = [v - mean for v in vals]
+        rms = (sum(v * v for v in ac) / n) ** 0.5
+        peak = max(abs(v) for v in ac)
+        return {
+            'mean': round(mean, 1),
+            'rms': round(rms, 1),
+            'peak': round(peak, 1),
+        }
+
+    # Compute magnitude for each sample
+    mags = [(s[1]**2 + s[2]**2 + s[3]**2)**0.5 for s in samples]
+    mag_mean = sum(mags) / n
+    mag_ac = [m - mag_mean for m in mags]
+    mag_rms = (sum(v * v for v in mag_ac) / n) ** 0.5
+    mag_peak = max(abs(v) for v in mag_ac)
+
+    # Estimate sample rate
+    dt = samples[-1][0] - samples[0][0]
+    sample_rate = (n - 1) / dt if dt > 0 else 3200
+
+    # Simple dominant frequency estimate using zero-crossing rate
+    # (lightweight alternative to FFT for resource-constrained Pi)
+    def _zero_cross_freq(ac_vals, fs):
+        crossings = 0
+        for i in range(1, len(ac_vals)):
+            if ac_vals[i - 1] * ac_vals[i] < 0:
+                crossings += 1
+        # Zero-crossing rate ≈ 2 * frequency
+        return round(crossings / (2 * len(ac_vals) / fs), 1) if len(ac_vals) > 1 else 0
+
+    x_ac = [v - sum(xs) / n for v in xs]
+    y_ac = [v - sum(ys) / n for v in ys]
+
+    return {
+        'n_samples': n,
+        'duration_s': round(dt, 2),
+        'sample_rate_hz': round(sample_rate, 0),
+        'x': _axis_stats(xs),
+        'y': _axis_stats(ys),
+        'z': _axis_stats(zs),
+        'magnitude': {
+            'mean': round(mag_mean, 1),
+            'rms': round(mag_rms, 1),
+            'peak': round(mag_peak, 1),
+        },
+        'dominant_freq_x_hz': _zero_cross_freq(x_ac, sample_rate),
+        'dominant_freq_y_hz': _zero_cross_freq(y_ac, sample_rate),
+    }
+
+
+def _take_adxl_sample():
+    """Take a single ADXL burst sample. Returns vibration metrics dict or None.
+    
+    Sequence: start MEASURE → wait → stop MEASURE → wait for CSV → parse.
+    """
+    # Clean up any old CSV
+    if os.path.exists(_ADXL_SAMPLE_CSV):
+        try:
+            os.remove(_ADXL_SAMPLE_CSV)
+        except OSError:
+            pass
+
+    # Start recording
+    if not _moonraker_gcode('ACCELEROMETER_MEASURE', timeout=10):
+        return None
+
+    # Let it record for the sample duration
+    time.sleep(_ADXL_SAMPLE_DURATION)
+
+    # Stop recording — Klipper writes CSV via daemon process
+    _moonraker_gcode('ACCELEROMETER_MEASURE NAME=autosample', timeout=15)
+
+    # Wait for CSV to appear and have data
+    for _ in range(30):  # up to 3 seconds
+        time.sleep(0.1)
+        if os.path.exists(_ADXL_SAMPLE_CSV):
+            try:
+                if os.path.getsize(_ADXL_SAMPLE_CSV) > 100:
+                    break
+            except OSError:
+                pass
+
+    if not os.path.exists(_ADXL_SAMPLE_CSV):
+        return None
+
+    return _parse_adxl_csv(_ADXL_SAMPLE_CSV)
+
+
+def _get_printer_state():
+    """Query current printer state from Moonraker for annotation."""
+    data = _moonraker_query(
+        '/printer/objects/query?print_stats&toolhead&gcode_move&display_status'
+    )
+    if not data:
+        return {}
+
+    status = data.get('result', {}).get('status', {})
+    ps = status.get('print_stats', {})
+    th = status.get('toolhead', {})
+    gm = status.get('gcode_move', {})
+    ds = status.get('display_status', {})
+
+    # Current speed = gcode_move speed (mm/s), position for Z
+    speed = gm.get('speed', 0)  # in mm/s
+    pos = gm.get('gcode_position', [0, 0, 0, 0])
+    accel = th.get('max_accel', 0)
+    sq_corner = th.get('square_corner_velocity', 0)
+
+    return {
+        'progress_pct': round((ds.get('progress', 0)) * 100, 1),
+        'print_duration_s': round(ps.get('print_duration', 0), 1),
+        'filename': ps.get('filename', ''),
+        'speed_mm_s': round(speed, 1) if speed else 0,
+        'z_height': round(pos[2], 2) if len(pos) > 2 else 0,
+        'accel': int(accel),
+        'sq_corner_vel': round(sq_corner, 1),
+        'layer': ps.get('info', {}).get('current_layer'),
+        'total_layers': ps.get('info', {}).get('total_layer'),
+    }
+
+
+def _adxl_print_sampler_loop(log_dir):
+    """Background thread: monitor print state and take ADXL samples during prints.
+    
+    Strategy:
+    - Poll print_stats every 10 seconds
+    - On print start: wait 30s for first layer to begin, then sample every _ADXL_SAMPLE_INTERVAL
+    - Each sample: 2s ADXL burst + printer state snapshot
+    - On print end: save all samples to *_vibration.json
+    """
+    import logging
+    logger = logging.getLogger('ADXLSampler')
+    global _adxl_sampler_active
+
+    last_state = 'standby'
+    samples = []
+    print_filename = ''
+    sample_timer = 0
+    initial_delay_done = False
+
+    logger.info("ADXL print sampler started — monitoring for prints")
+
+    while True:
+        try:
+            time.sleep(10)
+
+            # Check print state
+            data = _moonraker_query('/printer/objects/query?print_stats')
+            if not data:
+                continue
+            ps = data.get('result', {}).get('status', {}).get('print_stats', {})
+            state = ps.get('state', 'standby')
+
+            # ---------- Print just started ----------
+            if state == 'printing' and last_state != 'printing':
+                print_filename = ps.get('filename', '')
+                samples = []
+                sample_timer = 0
+                initial_delay_done = False
+                _adxl_sampler_active = True
+                logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
+
+            # ---------- Currently printing ----------
+            if state == 'printing' and _adxl_sampler_active:
+                sample_timer += 10  # we sleep 10s per loop
+
+                # Wait 60s after print starts before first sample (skip first-layer rattling)
+                if not initial_delay_done:
+                    if sample_timer >= 60:
+                        initial_delay_done = True
+                        sample_timer = _ADXL_SAMPLE_INTERVAL  # trigger immediate sample
+                    else:
+                        last_state = state
+                        continue
+
+                # Time for a sample?
+                if sample_timer >= _ADXL_SAMPLE_INTERVAL:
+                    sample_timer = 0
+
+                    # Skip if live ADXL monitor is active (don't conflict)
+                    if _adxl_recording:
+                        logger.debug("Skipping auto-sample — live monitor active")
+                        last_state = state
+                        continue
+
+                    printer_state = _get_printer_state()
+                    logger.info(
+                        f"Taking ADXL sample #{len(samples)+1} at "
+                        f"{printer_state.get('progress_pct', 0):.0f}% "
+                        f"(z={printer_state.get('z_height', 0)}, "
+                        f"accel={printer_state.get('accel', 0)})"
+                    )
+
+                    vibration = _take_adxl_sample()
+                    if vibration:
+                        sample_entry = {
+                            'sample_num': len(samples) + 1,
+                            'timestamp': time.time(),
+                            'printer': printer_state,
+                            'vibration': vibration,
+                        }
+                        samples.append(sample_entry)
+                        logger.info(
+                            f"  Sample OK: X_rms={vibration['x']['rms']}, "
+                            f"Y_rms={vibration['y']['rms']}, "
+                            f"mag_rms={vibration['magnitude']['rms']}"
+                        )
+                    else:
+                        logger.warning("  ADXL sample failed — sensor may be busy")
+
+            # ---------- Print just ended ----------
+            if state != 'printing' and last_state == 'printing' and samples:
+                _adxl_sampler_active = False
+                logger.info(
+                    f"Print ended — {len(samples)} ADXL samples collected"
+                )
+
+                # Save vibration data
+                try:
+                    vib_data = _build_vibration_summary(samples, print_filename)
+                    # Find matching log file to place vibration file alongside it
+                    vib_path = _save_vibration_data(vib_data, log_dir, print_filename)
+                    if vib_path:
+                        logger.info(f"Vibration data saved: {vib_path}")
+                except Exception as exc:
+                    logger.error(f"Failed to save vibration data: {exc}")
+
+                samples = []
+                print_filename = ''
+
+            last_state = state
+
+        except Exception as exc:
+            logger.error(f"ADXL sampler error: {exc}")
+            time.sleep(30)  # back off on errors
+
+
+def _build_vibration_summary(samples, filename):
+    """Aggregate per-sample vibration data into a print-level summary."""
+    if not samples:
+        return {}
+
+    # Group samples by accel value (proxy for feature type)
+    by_accel = {}
+    all_x_rms = []
+    all_y_rms = []
+    all_mag_rms = []
+    all_mag_peak = []
+
+    for s in samples:
+        vib = s['vibration']
+        pr = s['printer']
+        accel = pr.get('accel', 0)
+
+        all_x_rms.append(vib['x']['rms'])
+        all_y_rms.append(vib['y']['rms'])
+        all_mag_rms.append(vib['magnitude']['rms'])
+        all_mag_peak.append(vib['magnitude']['peak'])
+
+        key = str(accel)
+        if key not in by_accel:
+            by_accel[key] = {'x_rms': [], 'y_rms': [], 'mag_rms': [], 'speeds': [], 'z_heights': []}
+        by_accel[key]['x_rms'].append(vib['x']['rms'])
+        by_accel[key]['y_rms'].append(vib['y']['rms'])
+        by_accel[key]['mag_rms'].append(vib['magnitude']['rms'])
+        by_accel[key]['speeds'].append(pr.get('speed_mm_s', 0))
+        by_accel[key]['z_heights'].append(pr.get('z_height', 0))
+
+    # Build per-accel summary
+    accel_summary = {}
+    for accel_val, data in by_accel.items():
+        n = len(data['x_rms'])
+        accel_summary[accel_val] = {
+            'n_samples': n,
+            'x_rms_avg': round(sum(data['x_rms']) / n, 1),
+            'y_rms_avg': round(sum(data['y_rms']) / n, 1),
+            'mag_rms_avg': round(sum(data['mag_rms']) / n, 1),
+            'speed_avg': round(sum(data['speeds']) / n, 1),
+            'z_range': [round(min(data['z_heights']), 1), round(max(data['z_heights']), 1)],
+        }
+
+    # Dominant frequency analysis across all samples
+    freq_x = [s['vibration'].get('dominant_freq_x_hz', 0) for s in samples if s['vibration'].get('dominant_freq_x_hz')]
+    freq_y = [s['vibration'].get('dominant_freq_y_hz', 0) for s in samples if s['vibration'].get('dominant_freq_y_hz')]
+
+    n_all = len(all_x_rms)
+    return {
+        'filename': filename,
+        'n_samples': len(samples),
+        'sample_interval_s': _ADXL_SAMPLE_INTERVAL,
+        'sample_duration_s': _ADXL_SAMPLE_DURATION,
+        'samples': samples,
+        'summary': {
+            'x_rms_avg': round(sum(all_x_rms) / n_all, 1) if n_all else 0,
+            'x_rms_max': round(max(all_x_rms), 1) if all_x_rms else 0,
+            'y_rms_avg': round(sum(all_y_rms) / n_all, 1) if n_all else 0,
+            'y_rms_max': round(max(all_y_rms), 1) if all_y_rms else 0,
+            'mag_rms_avg': round(sum(all_mag_rms) / n_all, 1) if n_all else 0,
+            'mag_rms_max': round(max(all_mag_rms), 1) if all_mag_rms else 0,
+            'mag_peak_max': round(max(all_mag_peak), 1) if all_mag_peak else 0,
+            'dominant_freq_x_hz': round(sum(freq_x) / len(freq_x), 1) if freq_x else 0,
+            'dominant_freq_y_hz': round(sum(freq_y) / len(freq_y), 1) if freq_y else 0,
+        },
+        'by_accel': accel_summary,
+    }
+
+
+def _save_vibration_data(vib_data, log_dir, print_filename):
+    """Save vibration data JSON alongside existing print logs."""
+    log_dir = os.path.expanduser(log_dir)
+    if not os.path.isdir(log_dir):
+        return None
+
+    # Find the most recent summary JSON that matches this print filename
+    safe_name = ''.join(c for c in print_filename if c.isalnum() or c in '._-')[:50]
+    candidates = sorted(glob.glob(os.path.join(log_dir, '*_summary.json')), reverse=True)
+
+    target_dir = log_dir
+    base_name = None
+
+    for cand in candidates:
+        if safe_name and safe_name in os.path.basename(cand):
+            base_name = os.path.basename(cand).replace('_summary.json', '')
+            break
+
+    if not base_name and candidates:
+        # Fall back to most recent
+        base_name = os.path.basename(candidates[0]).replace('_summary.json', '')
+
+    if not base_name:
+        # No existing logs — create standalone file
+        from datetime import datetime
+        base_name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + safe_name
+
+    vib_path = os.path.join(target_dir, base_name + '_vibration.json')
+    with open(vib_path, 'w') as f:
+        json.dump(vib_data, f, indent=2, default=str)
+
+    return vib_path
 
 
 class DashboardHandler(http.server.BaseHTTPRequestHandler):
@@ -6488,6 +7010,16 @@ def serve_dashboard(port, log_dir, material=None):
     """Start the dashboard web server."""
     DashboardHandler.log_dir = log_dir
     DashboardHandler.material = material
+
+    # Start background ADXL print sampler thread
+    import threading as _threading
+    sampler_thread = _threading.Thread(
+        target=_adxl_print_sampler_loop,
+        args=(log_dir,),
+        daemon=True,
+        name='ADXLPrintSampler'
+    )
+    sampler_thread.start()
 
     server = http.server.ThreadingHTTPServer(('0.0.0.0', port), DashboardHandler)
 
