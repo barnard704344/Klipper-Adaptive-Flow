@@ -4533,12 +4533,100 @@ def generate_recommendations(data):
                 'action': 'No speed changes needed — the printer is close to optimal.',
             })
 
+    # --- Vibration-based recommendations ---
+    vib = data.get('vibration')
+    if vib and vib.get('summary'):
+        vs = vib['summary']
+        vib_score = vs.get('quality_score')
+        mag_avg = vs.get('mag_rms_avg', 0)
+
+        # Overall vibration quality score
+        if vib_score is not None:
+            if vib_score < 40:
+                recs.append({
+                    'severity': 'bad', 'category': 'Vibration',
+                    'title': f'Vibration quality score: {vib_score}/100',
+                    'detail': f'Overall vibration quality is poor (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
+                               f'This likely causes visible surface artifacts and reduced print quality.',
+                    'action': 'Check belt tension, tighten eccentric nuts, and verify all frame bolts. '
+                              'See the Vibration tab for per-feature breakdown and specific accel reductions.',
+                })
+            elif vib_score < 65:
+                recs.append({
+                    'severity': 'warn', 'category': 'Vibration',
+                    'title': f'Vibration quality score: {vib_score}/100',
+                    'detail': f'Moderate vibration detected (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
+                               f'May cause minor surface artifacts on smooth surfaces.',
+                    'action': 'Check the Vibration tab — features with high vibration can be improved '
+                              'by reducing their acceleration. Specific values are suggested per-feature.',
+                })
+            elif vib_score >= 80:
+                recs.append({
+                    'severity': 'good', 'category': 'Vibration',
+                    'title': f'Vibration quality score: {vib_score}/100',
+                    'detail': f'Low vibration across all features (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
+                               f'The printer is mechanically well-tuned.',
+                    'action': 'No changes needed. Vibration levels are healthy.',
+                })
+
+        # Per-feature accel reduction recommendations
+        by_accel = vib.get('by_accel', {})
+        reduce_features = []
+        for accel_str, feat_data in by_accel.items():
+            rec_data = feat_data.get('recommendation', {})
+            if rec_data.get('action') == 'reduce':
+                reduce_features.append({
+                    'accel': accel_str,
+                    'suggested': rec_data['suggested_accel'],
+                    'reason': rec_data['reason'],
+                    'gcode': rec_data['gcode'],
+                })
+
+        if reduce_features:
+            gcode_lines = [f"{rf['gcode']}  ; was {rf['accel']}" for rf in reduce_features[:5]]
+            recs.append({
+                'severity': 'warn', 'category': 'Vibration',
+                'title': f'{len(reduce_features)} feature(s) would benefit from lower acceleration',
+                'detail': 'These features showed vibration significantly above the baseline. '
+                          'Reducing their acceleration will improve surface quality:\n' +
+                          '\n'.join(f"\u2022 Accel {rf['accel']}: {rf['reason']}" for rf in reduce_features[:5]),
+                'action': 'Apply these in your slicer or via gcode:\n' + '\n'.join(gcode_lines),
+            })
+
+    # Vibration-banding correlations
+    vib_banding = data.get('vibration_banding', [])
+    if vib_banding:
+        strong = [c for c in vib_banding if c['vibration_rms'] > 200]
+        if strong:
+            detail_lines = []
+            for c in strong[:5]:
+                detail_lines.append(
+                    f"\u2022 Z={c['z_height']}mm: banding risk {c['banding_risk']}, "
+                    f"vibration {c['vibration_rms']} RMS @ accel {c['vibration_accel']} \u2014 {c['probable_cause']}"
+                )
+            recs.append({
+                'severity': 'warn', 'category': 'Vibration',
+                'title': f'{len(strong)} banding event(s) confirmed by vibration data',
+                'detail': 'ADXL data correlates with banding events at these Z-heights, '
+                          'providing evidence for the mechanical cause:\n' + '\n'.join(detail_lines),
+                'action': 'Focus on the specific accels and heights listed above. '
+                          'Reducing accel for these features will address the root cause.',
+            })
+        elif vib_banding:
+            recs.append({
+                'severity': 'info', 'category': 'Vibration',
+                'title': f'{len(vib_banding)} banding event(s) cross-referenced with vibration data',
+                'detail': 'Banding events were found near ADXL sample points, but vibration was '
+                          'moderate — the banding may be thermal or PA-related rather than mechanical.',
+                'action': 'Check thermal lag and PA stability tabs for other causes.',
+            })
+
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
         recs.append({
             'severity': 'good', 'category': 'Overall',
             'title': 'Print looks well-tuned',
-            'detail': 'No significant issues detected across heater, thermal lag, PA, or banding analysis.',
+            'detail': 'No significant issues detected across heater, thermal lag, PA, banding, or vibration analysis.',
             'action': 'Keep current settings. If you want to push speed/flow higher, do it incrementally and check the next print\u2019s dashboard.',
         })
 
@@ -5075,6 +5163,22 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             sm = s['summary']
             ba = sm.get('banding_analysis', {})
             ts = sm.get('start_time', '')
+                # Look for vibration score for this session
+            vib_score = None
+            try:
+                base_name = os.path.basename(s.get('summary_file', '')).replace('_summary.json', '')
+                vib_files = glob.glob(os.path.join(os.path.expanduser(log_dir), base_name + '*_vibration.json'))
+                if not vib_files:
+                    vib_files = glob.glob(os.path.join(os.path.expanduser(log_dir), '*_vibration.json'))
+                for vf in sorted(vib_files, reverse=True):
+                    if base_name and base_name in os.path.basename(vf):
+                        with open(vf, 'r') as fv:
+                            vd = json.load(fv)
+                            vib_score = (vd.get('summary') or {}).get('quality_score')
+                        break
+            except Exception:
+                pass
+
             trend_data.append({
                 'date': ts[:10] if len(ts) >= 10 else ts,
                 'material': sm.get('material', ''),
@@ -5084,6 +5188,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
                 'max_pwm': sm.get('max_pwm', 0),
                 'high_risk': ba.get('high_risk_events', 0),
                 'culprit': ba.get('likely_culprit', '-'),
+                'vib_score': vib_score,
             })
         data['trends'] = trend_data
 
@@ -5220,6 +5325,16 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     except Exception:
         pass
     data['vibration'] = vibration_data
+
+    # --- Cross-reference vibration with banding ---
+    vib_banding_corr = []
+    if vibration_data:
+        banding_csv = data.get('banding_csv_analysis')
+        if not banding_csv and csv_path:
+            banding_csv = analyze_csv_for_banding(csv_path)
+        if banding_csv:
+            vib_banding_corr = _correlate_vibration_with_banding(vibration_data, banding_csv)
+    data['vibration_banding'] = vib_banding_corr
 
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
@@ -5499,7 +5614,11 @@ d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behav
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
 d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
 {l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
-d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}]}
+d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}];
+var vb=D.vibration;if(vb&&vb.summary&&vb.summary.quality_score!=null){
+var vs=vb.summary.quality_score,vc=vs>=80?'#3fb950':vs>=50?'#d29922':'#f85149';
+items.push({l:'Vib Score',v:vs+'/100',s:'ADXL quality',w:vs<50,
+d:'Vibration quality score from ADXL auto-sampling. \u2022 80-100 = excellent \u2022 50-79 = moderate, some features noisy \u2022 <50 = poor, check belts and reduce accel'})}
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
@@ -5991,6 +6110,7 @@ rows+='<tr><td>'+t.date+'</td><td>'+t.material+
 '</td><td>'+t.avg_boost.toFixed(1)+'\u00b0C</td><td class="'+
 (t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
 '%</td><td class="'+(t.high_risk>10?'w':'')+'">'+t.high_risk+
+'</td><td>'+(t.vib_score!=null?t.vib_score:'\u2014')+
 '</td><td>'+t.culprit+'</td></tr>'});
 ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
 '<p class="box-desc">Each point is a completed print. Falling boost and risk = the system is learning your setup. '+
@@ -5998,7 +6118,7 @@ ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
 '</div><div class="box"><h3>Details</h3>'+
 '<p class="box-desc">Culprit = the most common cause of risk events for that print (e.g. temperature, PA, acceleration).</p>'+
 '<table><tr><th>Date</th><th>Material</th>'+
-'<th>Boost</th><th>Max PWM</th><th>Risk</th><th>Culprit</th></tr>'+rows+'</table></div>';
+'<th>Boost</th><th>Max PWM</th><th>Risk</th><th>Vib</th><th>Culprit</th></tr>'+rows+'</table></div>';
 CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
 labels:tr.map(function(t){return t.date}),
 datasets:[
@@ -6007,7 +6127,10 @@ borderColor:'#d29922',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
 {label:'Risk Events',data:tr.map(function(t){return t.high_risk}),
 borderColor:'#f85149',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
 {label:'Avg PWM (%)',data:tr.map(function(t){return t.avg_pwm*100}),
-borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'}]},
+borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
+{label:'Vib Score',data:tr.map(function(t){return t.vib_score}),
+borderColor:'#3fb950',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y',
+borderDash:[5,3],pointStyle:'rectRot',hidden:!tr.some(function(t){return t.vib_score!=null})}]},
 options:{responsive:true,animation:false,
 interaction:{intersect:false,mode:'index'},
 scales:{x:{title:{display:true,text:'Print Date'}},
@@ -6103,14 +6226,19 @@ var vb=D.vibration;
 if(!vb||!vb.summary){
 ca.innerHTML='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>'+
 '<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
-'<p style="color:#8b949e;margin-top:12px">Samples are taken every 2 minutes throughout the print. Each sample captures 2 seconds of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
+'<p style="color:#8b949e;margin-top:12px">Samples are taken every 5 minutes throughout the print. Each sample captures a short burst of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
 '<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p></div>';
 return}
 var sm=vb.summary;
 var ns=vb.n_samples||0;
+var qs=sm.quality_score;var qc=qs>=80?'#3fb950':qs>=50?'#d29922':'#f85149';
 var h='<div class="box"><div class="box-hd">📊 Print Vibration Summary</div>';
 h+='<p class="box-desc">'+ns+' ADXL samples collected during print'+(vb.filename?' of <b>'+vb.filename+'</b>':'')+'. Each sample = '+vb.sample_duration_s+'s burst at ~3200Hz.</p>';
 h+='<div style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap">';
+if(qs!=null){h+='<div class="score-box" style="min-width:140px;border:2px solid '+qc+'"><div class="score-label">Quality Score</div><div class="score-val" style="color:'+qc+';font-size:28px">'+qs+'<span style="font-size:14px;color:#8b949e">/100</span></div>';
+var sb=sm.score_breakdown;if(sb){h+='<div style="font-size:10px;color:#8b949e;margin-top:4px">';
+if(sb.mag_rms)h+='RMS:'+sb.mag_rms.score.toFixed(0)+' ';if(sb.axis_balance)h+='Bal:'+sb.axis_balance.score.toFixed(0)+' ';if(sb.peak_control)h+='Peak:'+sb.peak_control.score.toFixed(0)+' ';if(sb.feature_consistency)h+='Cons:'+sb.feature_consistency.score.toFixed(0);h+='</div>'}
+h+='</div>'}
 h+='<div class="score-box" style="min-width:120px"><div class="score-label">X RMS</div><div class="score-val" style="color:#58a6ff">'+sm.x_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.x_rms_max+'</div></div>';
 h+='<div class="score-box" style="min-width:120px"><div class="score-label">Y RMS</div><div class="score-val" style="color:#3fb950">'+sm.y_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.y_rms_max+'</div></div>';
 h+='<div class="score-box" style="min-width:120px"><div class="score-label">Mag RMS</div><div class="score-val" style="color:#f0883e">'+sm.mag_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.mag_rms_max+'</div></div>';
@@ -6126,19 +6254,33 @@ if(ba&&Object.keys(ba).length>0){
 var am=(D.slicer_diagnosis||{}).accel_map||{};
 h+='<div class="box"><div class="box-hd">🔧 Vibration by Feature / Acceleration</div>';
 h+='<p class="box-desc">How vibration varies across different print features (identified by acceleration value). Higher RMS = more vibration = lower quality.</p>';
-h+='<table class="tbl"><thead><tr><th>Accel (mm/s²)</th><th>Feature</th><th>Samples</th><th>X RMS</th><th>Y RMS</th><th>Mag RMS</th><th>Avg Speed</th><th>Z Range</th></tr></thead><tbody>';
+h+='<table class="tbl"><thead><tr><th>Accel (mm/s²)</th><th>Feature</th><th>Samples</th><th>X RMS</th><th>Y RMS</th><th>Mag RMS</th><th>Avg Speed</th><th>Z Range</th><th>Recommendation</th></tr></thead><tbody>';
 var keys=Object.keys(ba).sort(function(a,b){return Number(a)-Number(b)});
 for(var i=0;i<keys.length;i++){
 var k=keys[i],d2=ba[k];
 var feat=am[k]?am[k].features.join(', '):'—';
 var xc=d2.x_rms_avg>500?'color:#da3633':d2.x_rms_avg>200?'color:#d29922':'';
 var yc=d2.y_rms_avg>500?'color:#da3633':d2.y_rms_avg>200?'color:#d29922':'';
+var rec=d2.recommendation||{};
+var recHtml='';
+if(rec.action==='reduce'){recHtml='<span style="color:#d29922">↓ '+rec.suggested_accel+'</span><br><span style="font-size:10px;color:#8b949e">-'+rec.reduction_pct+'%</span>'}
+else if(rec.action==='keep'){recHtml='<span style="color:#3fb950">✓ OK</span>'}
+else{recHtml='<span style="color:#8b949e">—</span>'}
 h+='<tr><td>'+k+'</td><td>'+feat+'</td><td>'+d2.n_samples+'</td>';
 h+='<td style="'+xc+'">'+d2.x_rms_avg+'</td><td style="'+yc+'">'+d2.y_rms_avg+'</td>';
 h+='<td>'+d2.mag_rms_avg+'</td><td>'+d2.speed_avg+' mm/s</td>';
-h+='<td>'+d2.z_range[0]+' - '+d2.z_range[1]+' mm</td></tr>';
+h+='<td>'+d2.z_range[0]+' - '+d2.z_range[1]+' mm</td><td>'+recHtml+'</td></tr>';
 }
-h+='</tbody></table></div>';
+h+='</tbody></table>';
+/* Show gcode commands for features that need reducing */
+var reduceKeys=keys.filter(function(k){return (ba[k].recommendation||{}).action==='reduce'});
+if(reduceKeys.length>0){
+h+='<div style="margin-top:12px;padding:10px;background:#0d1117;border-radius:6px;border:1px solid #30363d">';
+h+='<div style="font-size:11px;color:#8b949e;margin-bottom:6px">Suggested G-code (apply per-feature in slicer or macros):</div>';
+for(var ri=0;ri<reduceKeys.length;ri++){var rk=reduceKeys[ri],rr=ba[rk].recommendation;
+h+='<div style="font-family:monospace;font-size:12px;color:#d29922;margin:2px 0">'+rr.gcode+'  <span style="color:#484f58">; was '+rk+', '+rr.reason+'</span></div>'}
+h+='</div>'}
+h+='</div>';
 }
 /* Vibration over time chart */
 var samps=vb.samples||[];
@@ -6147,6 +6289,18 @@ h+='<div class="box"><div class="box-hd">📈 Vibration Over Print Progress</div
 h+='<p class="box-desc">How vibration changed throughout the print. Spikes may indicate speed changes, feature transitions, or mechanical issues.</p>';
 h+='<div style="height:350px">'+mc('vib_time_chart')+'</div></div>';
 }
+/* Vibration ↔ Banding Correlation */
+var vbc=D.vibration_banding||[];
+if(vbc.length>0){
+h+='<div class="box"><div class="box-hd">🔗 Vibration × Banding Correlation</div>';
+h+='<p class="box-desc">Banding events cross-referenced with ADXL vibration data at matching Z-heights. <b>Strong correlations = mechanical cause confirmed.</b></p>';
+h+='<table class="tbl"><thead><tr><th>Z Height</th><th>Banding Risk</th><th>Vib RMS</th><th>Accel</th><th>Speed</th><th>Probable Cause</th></tr></thead><tbody>';
+for(var ci=0;ci<Math.min(vbc.length,15);ci++){var cv=vbc[ci];
+var rc2=cv.vibration_rms>500?'color:#da3633':cv.vibration_rms>200?'color:#d29922':'';
+h+='<tr><td>'+cv.z_height+' mm</td><td class="'+(cv.banding_risk>=8?'d':cv.banding_risk>=5?'w':'')+'">'+cv.banding_risk+'</td>';
+h+='<td style="'+rc2+'">'+cv.vibration_rms+'</td><td>'+cv.vibration_accel+'</td>';
+h+='<td>'+cv.vibration_speed+' mm/s</td><td>'+cv.probable_cause+'</td></tr>'}
+h+='</tbody></table></div>'}
 /* Recommendations */
 h+='<div class="box"><div class="box-hd">💡 Vibration Insights</div>';
 var recs=[];
@@ -6650,25 +6804,246 @@ def _build_vibration_summary(samples, filename):
     freq_y = [s['vibration'].get('dominant_freq_y_hz', 0) for s in samples if s['vibration'].get('dominant_freq_y_hz')]
 
     n_all = len(all_x_rms)
+    summary = {
+        'x_rms_avg': round(sum(all_x_rms) / n_all, 1) if n_all else 0,
+        'x_rms_max': round(max(all_x_rms), 1) if all_x_rms else 0,
+        'y_rms_avg': round(sum(all_y_rms) / n_all, 1) if n_all else 0,
+        'y_rms_max': round(max(all_y_rms), 1) if all_y_rms else 0,
+        'mag_rms_avg': round(sum(all_mag_rms) / n_all, 1) if n_all else 0,
+        'mag_rms_max': round(max(all_mag_rms), 1) if all_mag_rms else 0,
+        'mag_peak_max': round(max(all_mag_peak), 1) if all_mag_peak else 0,
+        'dominant_freq_x_hz': round(sum(freq_x) / len(freq_x), 1) if freq_x else 0,
+        'dominant_freq_y_hz': round(sum(freq_y) / len(freq_y), 1) if freq_y else 0,
+    }
+
+    # Compute vibration quality score (0-100)
+    score, score_breakdown = _compute_vibration_score(summary, accel_summary)
+    summary['quality_score'] = score
+    summary['score_breakdown'] = score_breakdown
+
+    # Generate per-feature accel recommendations
+    accel_advice = _compute_accel_recommendations(accel_summary, samples)
+    for accel_val in accel_advice:
+        if accel_val in accel_summary:
+            accel_summary[accel_val]['recommendation'] = accel_advice[accel_val]
+
     return {
         'filename': filename,
         'n_samples': len(samples),
         'sample_interval_s': _ADXL_SAMPLE_INTERVAL,
         'sample_duration_s': _ADXL_SAMPLE_DURATION,
         'samples': samples,
-        'summary': {
-            'x_rms_avg': round(sum(all_x_rms) / n_all, 1) if n_all else 0,
-            'x_rms_max': round(max(all_x_rms), 1) if all_x_rms else 0,
-            'y_rms_avg': round(sum(all_y_rms) / n_all, 1) if n_all else 0,
-            'y_rms_max': round(max(all_y_rms), 1) if all_y_rms else 0,
-            'mag_rms_avg': round(sum(all_mag_rms) / n_all, 1) if n_all else 0,
-            'mag_rms_max': round(max(all_mag_rms), 1) if all_mag_rms else 0,
-            'mag_peak_max': round(max(all_mag_peak), 1) if all_mag_peak else 0,
-            'dominant_freq_x_hz': round(sum(freq_x) / len(freq_x), 1) if freq_x else 0,
-            'dominant_freq_y_hz': round(sum(freq_y) / len(freq_y), 1) if freq_y else 0,
-        },
+        'summary': summary,
         'by_accel': accel_summary,
     }
+
+
+def _compute_vibration_score(summary, by_accel):
+    """Compute a 0-100 vibration quality score from summary metrics.
+
+    Scoring breakdown (each sub-score is 0-100, weighted then averaged):
+      - Magnitude RMS (40%): lower average vibration = higher score
+      - Axis balance  (15%): X and Y RMS being similar = higher score
+      - Peak control  (20%): low peak-to-average ratio = higher score
+      - Feature consistency (25%): less variation between features = higher score
+
+    Returns (score, breakdown_dict).
+    """
+    breakdown = {}
+
+    # --- Magnitude RMS score (40%) ---
+    # Map mag_rms_avg onto 0-100: 0 mm/s² → 100, 1000+ → 0
+    mag_rms = summary.get('mag_rms_avg', 0)
+    mag_score = max(0, min(100, 100 - (mag_rms / 10.0)))
+    breakdown['mag_rms'] = {'score': round(mag_score, 1), 'weight': 40,
+                            'detail': f'Avg magnitude RMS: {mag_rms} mm/s²'}
+
+    # --- Axis balance score (15%) ---
+    x_rms = summary.get('x_rms_avg', 0)
+    y_rms = summary.get('y_rms_avg', 0)
+    if max(x_rms, y_rms) > 0:
+        imbalance = abs(x_rms - y_rms) / max(x_rms, y_rms)
+        balance_score = max(0, 100 - imbalance * 200)  # 50% diff → 0
+    else:
+        balance_score = 100
+    breakdown['axis_balance'] = {'score': round(balance_score, 1), 'weight': 15,
+                                  'detail': f'X={x_rms}, Y={y_rms} (imbalance {abs(x_rms-y_rms):.0f})'}
+
+    # --- Peak control score (20%) ---
+    # Crest factor: peak/RMS.  ≤2 is excellent, ≥5 is bad
+    mag_peak = summary.get('mag_peak_max', 0)
+    if mag_rms > 0:
+        crest = mag_peak / mag_rms
+        peak_score = max(0, min(100, 100 - (crest - 1.5) * 25))
+    else:
+        peak_score = 100
+    breakdown['peak_control'] = {'score': round(peak_score, 1), 'weight': 20,
+                                  'detail': f'Peak {mag_peak} vs avg {mag_rms} (crest {mag_peak/mag_rms:.1f}x)' if mag_rms > 0 else 'No data'}
+
+    # --- Feature consistency score (25%) ---
+    # How much does vibration vary between different accel/feature values
+    if by_accel and len(by_accel) >= 2:
+        mag_values = [v.get('mag_rms_avg', 0) for v in by_accel.values()]
+        mag_mean = sum(mag_values) / len(mag_values)
+        if mag_mean > 0:
+            cv = (max(mag_values) - min(mag_values)) / mag_mean  # coefficient of variation
+            consistency_score = max(0, min(100, 100 - cv * 100))
+        else:
+            consistency_score = 100
+        breakdown['feature_consistency'] = {
+            'score': round(consistency_score, 1), 'weight': 25,
+            'detail': f'{len(by_accel)} features, range {min(mag_values):.0f}-{max(mag_values):.0f}'}
+    else:
+        consistency_score = 80  # neutral when too few features
+        breakdown['feature_consistency'] = {'score': 80, 'weight': 25, 'detail': 'Insufficient feature data'}
+
+    # Weighted average
+    total = (mag_score * 40 + balance_score * 15 + peak_score * 20 + consistency_score * 25) / 100
+    return round(max(0, min(100, total)), 0), breakdown
+
+
+def _compute_accel_recommendations(by_accel, samples):
+    """Generate per-feature acceleration recommendations based on vibration data.
+
+    For each accel group, if vibration is high, suggest a reduced accel value.
+    The reduction is proportional to how far above the "healthy" threshold
+    the vibration is.
+
+    Returns: {accel_str: {action, suggested_accel, reason, gcode}} or empty dict.
+    """
+    if not by_accel:
+        return {}
+
+    # Establish healthy baseline: the feature with the LOWEST vibration
+    mag_values = {k: v.get('mag_rms_avg', 0) for k, v in by_accel.items()}
+    if not mag_values:
+        return {}
+    baseline = min(mag_values.values())
+    if baseline <= 0:
+        baseline = 100  # sane default
+
+    # Threshold: features above 1.5× baseline get a recommendation
+    VIBRATION_THRESHOLD = 1.5
+    recommendations = {}
+
+    for accel_str, data in by_accel.items():
+        mag = data.get('mag_rms_avg', 0)
+        if mag <= 0 or baseline <= 0:
+            continue
+        ratio = mag / baseline
+        if ratio < VIBRATION_THRESHOLD:
+            recommendations[accel_str] = {
+                'action': 'keep',
+                'reason': f'Vibration OK ({mag:.0f} RMS, {ratio:.1f}× baseline)',
+            }
+            continue
+
+        # Reduce accel proportionally: 1.5× → 25% reduction, 3× → 50% reduction
+        reduction_pct = min(0.50, (ratio - 1.0) * 0.25)
+        current_accel = int(accel_str)
+        suggested = int(current_accel * (1.0 - reduction_pct))
+        # Round to nearest 500
+        suggested = max(500, round(suggested / 500) * 500)
+
+        recommendations[accel_str] = {
+            'action': 'reduce',
+            'current_accel': current_accel,
+            'suggested_accel': suggested,
+            'reduction_pct': round(reduction_pct * 100),
+            'reason': f'High vibration ({mag:.0f} RMS, {ratio:.1f}× baseline) — reduce by {round(reduction_pct*100)}%',
+            'gcode': f'SET_VELOCITY_LIMIT ACCEL={suggested}',
+        }
+
+    return recommendations
+
+
+def _correlate_vibration_with_banding(vibration_data, banding_analysis):
+    """Cross-reference ADXL vibration samples with banding events by Z-height.
+
+    Looks for banding risk events that occurred at the same Z-height as
+    high-vibration ADXL samples, providing evidence for causal links.
+
+    Returns list of correlation entries or empty list.
+    """
+    if not vibration_data or not banding_analysis:
+        return []
+
+    samples = vibration_data.get('samples', [])
+    events = banding_analysis.get('events', {})
+    high_risk = events.get('high_risk_moments', [])
+    accel_spikes = events.get('accel_spikes', [])
+
+    if not samples or not (high_risk or accel_spikes):
+        return []
+
+    # Build vibration lookup by Z-height (±1mm tolerance)
+    vib_by_z = []
+    for s in samples:
+        pr = s.get('printer', {})
+        vib = s.get('vibration', {})
+        z = pr.get('z_height', 0)
+        mag = vib.get('magnitude', {}).get('rms', 0)
+        vib_by_z.append({'z': z, 'mag_rms': mag, 'accel': pr.get('accel', 0),
+                         'speed': pr.get('speed_mm_s', 0), 'sample': s})
+
+    correlations = []
+    Z_TOLERANCE = 1.5  # mm — match within this range
+
+    for event in high_risk:
+        ez = event.get('z', 0)
+        risk = event.get('risk', 0)
+        flags = event.get('flags', '')
+
+        # Find vibration sample closest to this Z
+        best = None
+        best_dist = Z_TOLERANCE + 1
+        for v in vib_by_z:
+            dist = abs(v['z'] - ez)
+            if dist < best_dist:
+                best_dist = dist
+                best = v
+
+        if best and best_dist <= Z_TOLERANCE:
+            correlations.append({
+                'z_height': round(ez, 2),
+                'banding_risk': risk,
+                'banding_flags': flags,
+                'vibration_rms': best['mag_rms'],
+                'vibration_accel': best['accel'],
+                'vibration_speed': best['speed'],
+                'z_distance': round(best_dist, 2),
+                'probable_cause': _classify_correlation(risk, best['mag_rms'], flags),
+            })
+
+    # De-duplicate by Z (keep strongest)
+    seen_z = {}
+    for c in correlations:
+        z_key = round(c['z_height'])
+        if z_key not in seen_z or c['banding_risk'] > seen_z[z_key]['banding_risk']:
+            seen_z[z_key] = c
+
+    return sorted(seen_z.values(), key=lambda x: x['banding_risk'], reverse=True)[:20]
+
+
+def _classify_correlation(risk, mag_rms, flags):
+    """Classify the probable cause of a banding+vibration correlation."""
+    causes = []
+    if mag_rms > 500:
+        causes.append('excessive vibration')
+    elif mag_rms > 200:
+        causes.append('elevated vibration')
+    if 'accel' in flags.lower():
+        causes.append('acceleration change')
+    if 'pa' in flags.lower():
+        causes.append('PA transition')
+    if 'temp' in flags.lower():
+        causes.append('temperature shift')
+    if not causes:
+        if mag_rms > 100:
+            causes.append('moderate vibration during accel event')
+        else:
+            causes.append('banding event (low vibration — likely non-mechanical)')
+    return ' + '.join(causes)
 
 
 def _save_vibration_data(vib_data, log_dir, print_filename):
