@@ -32,6 +32,7 @@ import statistics
 import argparse
 import http.server
 import urllib.parse
+import urllib.request
 import socket
 from pathlib import Path
 from collections import defaultdict
@@ -5493,7 +5494,8 @@ var allTabs=[
 {id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
 {id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
 {id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
-{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and risk across multiple prints.'}];
+{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and risk across multiple prints.'},
+{id:'ax',l:'ADXL Live',tip:'Live accelerometer data from the toolhead ADXL345 sensor. See real-time vibration levels.'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
@@ -5512,7 +5514,9 @@ Chart.defaults.color='#8b949e';
 Chart.defaults.borderColor='#30363d';
 Chart.defaults.font.size=12;}
 var CH={};
-function dCh(){for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
+var _adxlTimer=null,_adxlChart=null,_adxlData={x:[],y:[],z:[],mag:[],ts:[]},_adxlMaxPts=300,_adxlPeakMag=0;
+function _stopAdxl(){if(_adxlTimer){clearInterval(_adxlTimer);_adxlTimer=null}}
+function dCh(){_stopAdxl();if(_adxlChart){_adxlChart.destroy();_adxlChart=null}for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
 function mc(id){return '<canvas id="'+id+'"></canvas>'}
 
 function rCh(){dCh();var tl=D.timeline||[];
@@ -5524,7 +5528,8 @@ else if(at==='ht')rHt();
 else if(at==='pa')rPA(tl);
 else if(at==='dz')rDZ();
 else if(at==='ds')rDist();
-else if(at==='tr')rTr()}
+else if(at==='tr')rTr()
+else if(at==='ax')rAdxl()}
 
 function rSlicer(){
 var ss=D.slicer_settings;
@@ -6073,6 +6078,68 @@ if(d.success){btn.textContent='\u2713 Applied';btn.classList.add('applied');show
 else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,false)}})
 .catch(function(e){btn.textContent='Apply';btn.disabled=false;showToast('Request failed: '+e,false)})}
 
+/* ── ADXL Live Vibration Monitor ── */
+function rAdxl(){
+_stopAdxl();
+_adxlData={x:[],y:[],z:[],mag:[],ts:[]};
+var h='<div class="box">';
+h+='<div class="box-hd">\ud83d\udce1 Live Toolhead Vibration (ADXL345)</div>';
+h+='<p class="box-desc">Real-time accelerometer readings from the toolhead. Tap the printhead to see spikes. Use this to check sensor health, detect loose belts, or monitor vibration during moves.</p>';
+h+='<div style="margin:8px 0">';
+h+='<button id="adxl_start" class="cfg-btn" style="margin-right:8px" onclick="_adxlRun()">\u25b6 Start</button>';
+h+='<button id="adxl_stop" class="cfg-btn" style="background:#da3633;border-color:#da3633" onclick="_stopAdxl();document.getElementById(\'adxl_start\').disabled=false;document.getElementById(\'adxl_status\').textContent=\'Stopped\'">\u25a0 Stop</button>';
+h+='<span id="adxl_status" style="margin-left:12px;font-size:12px;color:#8b949e">Ready</span>';
+h+='</div>';
+h+='<div style="display:flex;gap:16px;margin:8px 0;flex-wrap:wrap" id="adxl_gauges">';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">X</div><div class="score-val" id="adxl_vx" style="color:#58a6ff">—</div></div>';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">Y</div><div class="score-val" id="adxl_vy" style="color:#3fb950">—</div></div>';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">Z</div><div class="score-val" id="adxl_vz" style="color:#d29922">—</div></div>';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">Magnitude</div><div class="score-val" id="adxl_vm" style="color:#f0883e">—</div></div>';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">Peak</div><div class="score-val" id="adxl_pk" style="color:#da3633">—</div></div>';
+h+='</div>';
+h+='<div style="height:320px">'+mc('adxl_chart')+'</div>';
+h+='</div>';
+ca.innerHTML=h;
+var ctx=document.getElementById('adxl_chart');
+if(typeof Chart!=='undefined'&&ctx){
+_adxlChart=new Chart(ctx,{type:'line',data:{
+labels:[],datasets:[
+{label:'X',data:[],borderColor:'#58a6ff',borderWidth:1.5,pointRadius:0,tension:0.2},
+{label:'Y',data:[],borderColor:'#3fb950',borderWidth:1.5,pointRadius:0,tension:0.2},
+{label:'Z',data:[],borderColor:'#d29922',borderWidth:1.5,pointRadius:0,tension:0.2},
+{label:'Mag',data:[],borderColor:'#f0883e',borderWidth:2,pointRadius:0,tension:0.2,borderDash:[4,2]}
+]},options:{responsive:true,maintainAspectRatio:false,animation:false,
+scales:{x:{display:true,title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:10}},
+y:{title:{display:true,text:'Acceleration (mm/s\u00b2)'},beginAtZero:false}},
+plugins:{legend:{position:'top',labels:{boxWidth:12,font:{size:11}}}}}});}}
+
+function _adxlRun(){
+document.getElementById('adxl_start').disabled=true;
+document.getElementById('adxl_status').textContent='Streaming...';
+_adxlPeakMag=0;
+_adxlData={x:[],y:[],z:[],mag:[],ts:[]};
+var t0=Date.now();
+_adxlTimer=setInterval(function(){
+fetch('/api/adxl-query').then(function(r){return r.json()}).then(function(d){
+if(d.error){document.getElementById('adxl_status').textContent='Error: '+d.error;_stopAdxl();document.getElementById('adxl_start').disabled=false;return}
+var elapsed=((Date.now()-t0)/1000).toFixed(1);
+_adxlData.x.push(d.x);_adxlData.y.push(d.y);_adxlData.z.push(d.z);_adxlData.mag.push(d.mag);_adxlData.ts.push(elapsed);
+if(_adxlData.ts.length>_adxlMaxPts){_adxlData.x.shift();_adxlData.y.shift();_adxlData.z.shift();_adxlData.mag.shift();_adxlData.ts.shift()}
+if(d.mag>_adxlPeakMag)_adxlPeakMag=d.mag;
+document.getElementById('adxl_vx').textContent=d.x.toFixed(0);
+document.getElementById('adxl_vy').textContent=d.y.toFixed(0);
+document.getElementById('adxl_vz').textContent=d.z.toFixed(0);
+document.getElementById('adxl_vm').textContent=d.mag.toFixed(0);
+document.getElementById('adxl_pk').textContent=_adxlPeakMag.toFixed(0);
+if(_adxlChart){
+_adxlChart.data.labels=_adxlData.ts;
+_adxlChart.data.datasets[0].data=_adxlData.x;
+_adxlChart.data.datasets[1].data=_adxlData.y;
+_adxlChart.data.datasets[2].data=_adxlData.z;
+_adxlChart.data.datasets[3].data=_adxlData.mag;
+_adxlChart.update('none')}
+}).catch(function(e){console.error('ADXL fetch error',e)})},2000)}
+
 rCh();
 }catch(e){
 document.getElementById('_err').style.display='block';
@@ -6187,6 +6254,48 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                         data = {'error': str(exc)}
                     _cache_set(cache_key, data)
             payload = json.dumps(data, default=str).encode('utf-8', errors='replace')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif parsed.path == '/api/adxl-query':
+            # Query ADXL345 accelerometer via Moonraker
+            import subprocess
+            adxl_data = {'error': None, 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
+            try:
+                # Send ACCELEROMETER_QUERY and read gcode_store in one shot
+                subprocess.run(
+                    ['curl', '-s', '-m', '8',
+                     'http://127.0.0.1:7125/printer/gcode/script?script=ACCELEROMETER_QUERY'],
+                    capture_output=True, timeout=10
+                )
+                time.sleep(0.08)
+                r = subprocess.run(
+                    ['curl', '-s', '-m', '3',
+                     'http://127.0.0.1:7125/server/gcode_store?count=5'],
+                    capture_output=True, timeout=5
+                )
+                store = json.loads(r.stdout.decode())
+                for msg in reversed(store.get('result', {}).get('gcode_store', [])):
+                    text = msg.get('message', '')
+                    if 'accelerometer values' in text:
+                        m = re.search(r'(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\s*$', text)
+                        if m:
+                            ax = float(m.group(1))
+                            ay = float(m.group(2))
+                            az = float(m.group(3))
+                            mag = (ax**2 + ay**2 + az**2) ** 0.5
+                            adxl_data = {'x': round(ax, 1), 'y': round(ay, 1),
+                                         'z': round(az, 1), 'mag': round(mag, 1)}
+                        break
+            except Exception as exc:
+                adxl_data = {'error': str(exc), 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
+            except Exception as exc:
+                adxl_data = {'error': str(exc), 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
+            payload = json.dumps(adxl_data).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(payload)))
