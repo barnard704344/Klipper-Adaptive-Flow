@@ -3526,6 +3526,8 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
             'impact': 'better flow adaptation',
             'config_var': 'flow_k',
             'direction': 'increase',
+            'suggested_value': sug_fk if _current_flow_k is not None else None,
+            'material': material,
         })
 
     if fan_at_limit and material in ('PLA', 'PETG'):
@@ -5743,9 +5745,15 @@ for(var di=1;di<detParts.length;di++){
 var ln=detParts[di].replace(/→/g,'<span style="color:#3fb950;font-weight:600"> → </span>');
 detHtml+=ln+(di<detParts.length-1?'<br>':'');}
 detHtml+='</div>';}
+var applyBtn='';
+if(sg.config_var&&sg.suggested_value!=null){
+var bId='boost_apply_'+sg.config_var;
+applyBtn='<div style="margin-top:6px"><button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:3px 12px" '+
+'onclick="applyChange(\''+bId+'\',\''+sg.config_var+'\','+sg.suggested_value+',\''+(sg.material||'')+'\')"'+
+'>Apply '+sg.config_var+' = '+sg.suggested_value+'</button></div>';}
 h+='<div style="padding:8px 10px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
 '<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+sg.impact+'</span></div>'+
-detHtml+'</div>'});
+detHtml+applyBtn+'</div>'});
 h+='</div>'}
 
 /* Per-bracket table */
