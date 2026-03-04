@@ -34,6 +34,7 @@ import http.server
 import urllib.parse
 import urllib.request
 import socket
+import subprocess
 from pathlib import Path
 from collections import defaultdict
 
@@ -6078,16 +6079,16 @@ if(d.success){btn.textContent='\u2713 Applied';btn.classList.add('applied');show
 else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,false)}})
 .catch(function(e){btn.textContent='Apply';btn.disabled=false;showToast('Request failed: '+e,false)})}
 
-/* ── ADXL Live Vibration Monitor ── */
+/* ── ADXL Live Vibration Monitor (print-safe) ── */
 function rAdxl(){
 _stopAdxl();
 _adxlData={x:[],y:[],z:[],mag:[],ts:[]};
 var h='<div class="box">';
-h+='<div class="box-hd">\ud83d\udce1 Live Toolhead Vibration (ADXL345)</div>';
-h+='<p class="box-desc">Real-time accelerometer readings from the toolhead. Tap the printhead to see spikes. Use this to check sensor health, detect loose belts, or monitor vibration during moves.</p>';
+h+='<div class="box-hd">📡 Live Toolhead Vibration (ADXL345)</div>';
+h+='<p class="box-desc">Real-time accelerometer readings from the toolhead using background ACCELEROMETER_MEASURE — <b>safe to use while printing</b>. Tap the printhead to see spikes. Use this to check sensor health, detect loose belts, or monitor vibration during moves.</p>';
 h+='<div style="margin:8px 0">';
-h+='<button id="adxl_start" class="cfg-btn" style="margin-right:8px" onclick="_adxlRun()">\u25b6 Start</button>';
-h+='<button id="adxl_stop" class="cfg-btn" style="background:#da3633;border-color:#da3633" onclick="_stopAdxl();document.getElementById(\\'adxl_start\\').disabled=false;document.getElementById(\\'adxl_status\\').textContent=\\'Stopped\\'">\u25a0 Stop</button>';
+h+='<button id="adxl_start" class="cfg-btn" style="margin-right:8px" onclick="_adxlRun()">▶ Start</button>';
+h+='<button id="adxl_stop" class="cfg-btn" style="background:#da3633;border-color:#da3633" onclick="_adxlStop()">■ Stop</button>';
 h+='<span id="adxl_status" style="margin-left:12px;font-size:12px;color:#8b949e">Ready</span>';
 h+='</div>';
 h+='<div style="display:flex;gap:16px;margin:8px 0;flex-wrap:wrap" id="adxl_gauges">';
@@ -6096,6 +6097,7 @@ h+='<div class="score-box" style="min-width:100px"><div class="score-label">Y</d
 h+='<div class="score-box" style="min-width:100px"><div class="score-label">Z</div><div class="score-val" id="adxl_vz" style="color:#d29922">—</div></div>';
 h+='<div class="score-box" style="min-width:100px"><div class="score-label">Magnitude</div><div class="score-val" id="adxl_vm" style="color:#f0883e">—</div></div>';
 h+='<div class="score-box" style="min-width:100px"><div class="score-label">Peak</div><div class="score-val" id="adxl_pk" style="color:#da3633">—</div></div>';
+h+='<div class="score-box" style="min-width:100px"><div class="score-label">Samples</div><div class="score-val" id="adxl_ns" style="color:#8b949e;font-size:14px">—</div></div>';
 h+='</div>';
 h+='<div style="height:320px">'+mc('adxl_chart')+'</div>';
 h+='</div>';
@@ -6110,27 +6112,39 @@ labels:[],datasets:[
 {label:'Mag',data:[],borderColor:'#f0883e',borderWidth:2,pointRadius:0,tension:0.2,borderDash:[4,2]}
 ]},options:{responsive:true,maintainAspectRatio:false,animation:false,
 scales:{x:{display:true,title:{display:true,text:'Time (s)'},ticks:{maxTicksLimit:10}},
-y:{title:{display:true,text:'Acceleration (mm/s\u00b2)'},beginAtZero:false}},
+y:{title:{display:true,text:'Acceleration (mm/s²)'},beginAtZero:false}},
 plugins:{legend:{position:'top',labels:{boxWidth:12,font:{size:11}}}}}});}}
+
+function _adxlStop(){
+_stopAdxl();
+fetch('/api/adxl-stop').catch(function(){});
+document.getElementById('adxl_start').disabled=false;
+document.getElementById('adxl_status').textContent='Stopped';
+}
 
 function _adxlRun(){
 document.getElementById('adxl_start').disabled=true;
-document.getElementById('adxl_status').textContent='Streaming...';
+document.getElementById('adxl_status').textContent='Starting sensor...';
 _adxlPeakMag=0;
 _adxlData={x:[],y:[],z:[],mag:[],ts:[]};
+fetch('/api/adxl-start').then(function(r){return r.json()}).then(function(d){
+if(d.error){document.getElementById('adxl_status').textContent='Error: '+d.error;document.getElementById('adxl_start').disabled=false;return}
+document.getElementById('adxl_status').textContent='Streaming (print-safe)...';
 var t0=Date.now();
 _adxlTimer=setInterval(function(){
-fetch('/api/adxl-query').then(function(r){return r.json()}).then(function(d){
-if(d.error){document.getElementById('adxl_status').textContent='Error: '+d.error;_stopAdxl();document.getElementById('adxl_start').disabled=false;return}
+fetch('/api/adxl-data').then(function(r){return r.json()}).then(function(d){
+if(d.error){document.getElementById('adxl_status').textContent='Error: '+d.error;_adxlStop();return}
 var elapsed=((Date.now()-t0)/1000).toFixed(1);
 _adxlData.x.push(d.x);_adxlData.y.push(d.y);_adxlData.z.push(d.z);_adxlData.mag.push(d.mag);_adxlData.ts.push(elapsed);
 if(_adxlData.ts.length>_adxlMaxPts){_adxlData.x.shift();_adxlData.y.shift();_adxlData.z.shift();_adxlData.mag.shift();_adxlData.ts.shift()}
+if(d.peak_mag&&d.peak_mag>_adxlPeakMag)_adxlPeakMag=d.peak_mag;
 if(d.mag>_adxlPeakMag)_adxlPeakMag=d.mag;
 document.getElementById('adxl_vx').textContent=d.x.toFixed(0);
 document.getElementById('adxl_vy').textContent=d.y.toFixed(0);
 document.getElementById('adxl_vz').textContent=d.z.toFixed(0);
 document.getElementById('adxl_vm').textContent=d.mag.toFixed(0);
 document.getElementById('adxl_pk').textContent=_adxlPeakMag.toFixed(0);
+if(d.n_samples)document.getElementById('adxl_ns').textContent=d.n_samples;
 if(_adxlChart){
 _adxlChart.data.labels=_adxlData.ts;
 _adxlChart.data.datasets[0].data=_adxlData.x;
@@ -6138,7 +6152,8 @@ _adxlChart.data.datasets[1].data=_adxlData.y;
 _adxlChart.data.datasets[2].data=_adxlData.z;
 _adxlChart.data.datasets[3].data=_adxlData.mag;
 _adxlChart.update('none')}
-}).catch(function(e){console.error('ADXL fetch error',e)})},2000)}
+}).catch(function(e){console.error('ADXL fetch error',e)})},3000)
+}).catch(function(e){document.getElementById('adxl_status').textContent='Error: '+e;document.getElementById('adxl_start').disabled=false})}
 
 rCh();
 }catch(e){
@@ -6190,6 +6205,24 @@ def generate_dashboard_html(data):
     return DASHBOARD_TEMPLATE.replace('__DASHBOARD_DATA__', data_json)
 
 
+# --------------- ADXL live-monitor state (module-level, shared across requests) --
+_adxl_recording = False
+_ADXL_CSV = '/tmp/adxl345-live.csv'
+
+def _moonraker_gcode(script, timeout=8):
+    """Send a gcode script to Klipper via Moonraker. Returns True on success."""
+    encoded = urllib.parse.quote(script)
+    try:
+        r = subprocess.run(
+            ['curl', '-s', '-m', str(timeout),
+             'http://127.0.0.1:7125/printer/gcode/script?script=' + encoded],
+            capture_output=True, timeout=timeout + 2
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 class DashboardHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for the Adaptive Flow dashboard."""
     log_dir = LOG_DIR
@@ -6206,6 +6239,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         return None
 
     def do_GET(self):
+        global _adxl_recording
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
 
@@ -6261,38 +6295,119 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif parsed.path == '/api/adxl-query':
-            # Query ADXL345 accelerometer via Moonraker
-            import subprocess
-            adxl_data = {'error': None, 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
+        elif parsed.path == '/api/adxl-start':
+            # Start background ADXL345 recording (print-safe, no toolhead dwell)
+            result = {'status': 'ok'}
             try:
-                # Send ACCELEROMETER_QUERY and read gcode_store in one shot
-                subprocess.run(
-                    ['curl', '-s', '-m', '8',
-                     'http://127.0.0.1:7125/printer/gcode/script?script=ACCELEROMETER_QUERY'],
-                    capture_output=True, timeout=10
-                )
-                time.sleep(0.08)
-                r = subprocess.run(
-                    ['curl', '-s', '-m', '3',
-                     'http://127.0.0.1:7125/server/gcode_store?count=5'],
-                    capture_output=True, timeout=5
-                )
-                store = json.loads(r.stdout.decode())
-                for msg in reversed(store.get('result', {}).get('gcode_store', [])):
-                    text = msg.get('message', '')
-                    if 'accelerometer values' in text:
-                        m = re.search(r'(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\s*$', text)
-                        if m:
-                            ax = float(m.group(1))
-                            ay = float(m.group(2))
-                            az = float(m.group(3))
-                            mag = (ax**2 + ay**2 + az**2) ** 0.5
-                            adxl_data = {'x': round(ax, 1), 'y': round(ay, 1),
-                                         'z': round(az, 1), 'mag': round(mag, 1)}
-                        break
+                if _adxl_recording:
+                    # Already running – stop the old one first
+                    _moonraker_gcode('ACCELEROMETER_MEASURE NAME=discard', timeout=5)
+                    _adxl_recording = False
+                    time.sleep(0.2)
+                ok = _moonraker_gcode('ACCELEROMETER_MEASURE', timeout=5)
+                if ok:
+                    _adxl_recording = True
+                    result = {'status': 'started'}
+                else:
+                    result = {'error': 'Failed to start ACCELEROMETER_MEASURE'}
             except Exception as exc:
-                adxl_data = {'error': str(exc), 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
+                result = {'error': str(exc)}
+            payload = json.dumps(result).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif parsed.path == '/api/adxl-stop':
+            # Stop background ADXL345 recording
+            result = {'status': 'stopped'}
+            try:
+                if _adxl_recording:
+                    _moonraker_gcode('ACCELEROMETER_MEASURE NAME=final', timeout=5)
+                    _adxl_recording = False
+            except Exception as exc:
+                result = {'error': str(exc)}
+            payload = json.dumps(result).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif parsed.path == '/api/adxl-data':
+            # Cycle: stop recording → read CSV → restart recording
+            adxl_data = {'error': None, 'x': 0, 'y': 0, 'z': 0, 'mag': 0, 'peak_mag': 0, 'n_samples': 0}
+            try:
+                if not _adxl_recording:
+                    adxl_data = {'error': 'Not recording – press Start first'}
+                else:
+                    # Remove old CSV so we can detect when the new one is written
+                    if os.path.exists(_ADXL_CSV):
+                        os.remove(_ADXL_CSV)
+                    # Stop recording → Klipper writes CSV via daemon process
+                    _moonraker_gcode('ACCELEROMETER_MEASURE NAME=live', timeout=8)
+                    _adxl_recording = False
+                    # Wait for CSV file to appear (daemon write)
+                    csv_ready = False
+                    for _ in range(25):  # up to 2.5 seconds
+                        time.sleep(0.1)
+                        if os.path.exists(_ADXL_CSV):
+                            try:
+                                sz = os.path.getsize(_ADXL_CSV)
+                                if sz > 50:  # header + at least one data line
+                                    csv_ready = True
+                                    break
+                            except OSError:
+                                pass
+                    if csv_ready:
+                        # Read the last ~200 lines for recent data
+                        with open(_ADXL_CSV, 'r') as f:
+                            lines = f.readlines()
+                        # Parse data lines (skip header)
+                        data_lines = [l for l in lines if l and not l.startswith('#')]
+                        n = len(data_lines)
+                        if n > 0:
+                            # Use last 200 samples (or all if fewer) for averages
+                            tail = data_lines[-200:] if n > 200 else data_lines
+                            sum_x = sum_y = sum_z = 0.0
+                            peak_mag = 0.0
+                            count = 0
+                            for line in tail:
+                                parts = line.strip().split(',')
+                                if len(parts) >= 4:
+                                    try:
+                                        sx = float(parts[1])
+                                        sy = float(parts[2])
+                                        sz_val = float(parts[3])
+                                        sum_x += sx
+                                        sum_y += sy
+                                        sum_z += sz_val
+                                        m = (sx**2 + sy**2 + sz_val**2) ** 0.5
+                                        if m > peak_mag:
+                                            peak_mag = m
+                                        count += 1
+                                    except (ValueError, IndexError):
+                                        pass
+                            if count > 0:
+                                ax = sum_x / count
+                                ay = sum_y / count
+                                az = sum_z / count
+                                avg_mag = (ax**2 + ay**2 + az**2) ** 0.5
+                                adxl_data = {
+                                    'x': round(ax, 1), 'y': round(ay, 1),
+                                    'z': round(az, 1), 'mag': round(avg_mag, 1),
+                                    'peak_mag': round(peak_mag, 1),
+                                    'n_samples': n
+                                }
+                    else:
+                        adxl_data = {'error': 'Timeout waiting for sensor data'}
+                    # Restart recording immediately
+                    ok = _moonraker_gcode('ACCELEROMETER_MEASURE', timeout=5)
+                    if ok:
+                        _adxl_recording = True
             except Exception as exc:
                 adxl_data = {'error': str(exc), 'x': 0, 'y': 0, 'z': 0, 'mag': 0}
             payload = json.dumps(adxl_data).encode('utf-8')
