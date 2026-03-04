@@ -34,7 +34,7 @@ Material buttons appear dynamically based on the materials found in your log dir
 
 ### Summary Cards
 
-Five cards along the top give an at-a-glance health overview. Each card has a **?** tooltip explaining the metric, what "good" looks like, and when to worry:
+Six cards along the top give an at-a-glance health overview. Each card has a **?** tooltip explaining the metric, what "good" looks like, and when to worry:
 
 | Card | What It Shows |
 |------|---------------|
@@ -43,6 +43,7 @@ Five cards along the top give an at-a-glance health overview. Each card has a **
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
 | **DynZ** | Percentage of layers where acceleration was reduced for complex geometry |
 | **Banding** | Number of high-risk events and the diagnosed culprit |
+| **Vib Score** | ADXL vibration quality score (0–100). Only appears when vibration data exists for the selected print. Color-coded: green (≥80), amber (50–79), red (<50) |
 
 In aggregate mode, cards display weighted averages across all prints of that material, with print count and total duration.
 
@@ -61,6 +62,7 @@ Below the cards, tabs switch between analysis views. Each tab has a **?** toolti
 | **DynZ** | DynZ activation percentage and stress by Z-height |
 | **Distribution** | Speed and flow rate histograms — where your printer spends its time |
 | **Trends** | Print-over-print line charts tracking metrics across sessions |
+| **Vibration** | ADXL vibration analysis — quality score, per-feature breakdown, banding correlation, accel recommendations |
 
 Every chart includes a description paragraph explaining what you're looking at — colour coding, what "good" looks like, and what to watch for. No prior knowledge required.
 
@@ -220,7 +222,75 @@ Side-by-side histograms:
 Line charts tracking key metrics across your last N prints (oldest → newest):
 
 - Average boost, heater duty, banding events, and culprit for each session
+- Vibration Score trend line (dashed green) — only shown when at least one print has vibration data
 - Trend direction arrows (↑ worsening / ↓ improving) with percentage change
+
+### Vibration Tab
+
+Requires an ADXL345 accelerometer configured in Klipper. The system automatically samples vibration during prints — no manual action needed.
+
+**How sampling works:**
+- Samples a 0.5-second burst of accelerometer data at ~3200 Hz every 5 minutes
+- Defers sampling when the toolhead is moving faster than 80 mm/s (to avoid interfering with prints)
+- Uses exponential backoff on failures (doubles interval, caps at 30 min) to prevent MCU overload
+- First sample is taken 60 seconds into the print (after first layer stabilises)
+
+**Dashboard sections:**
+
+#### Print Vibration Summary
+
+Top-level metrics from all ADXL samples collected during the print:
+
+| Metric | Meaning |
+|--------|---------|
+| **Quality Score** | 0–100 weighted score. 80+ = excellent, 50–79 = moderate, <50 = poor |
+| **X / Y RMS** | Average and peak vibration amplitude per axis (mm/s²) |
+| **Mag RMS** | Combined magnitude RMS — the single best number for overall vibration |
+| **Mag Peak** | Highest instantaneous vibration spike observed |
+| **Dom. Freq X / Y** | Dominant vibration frequency per axis (Hz) — compare with input shaper frequencies |
+
+**Quality Score breakdown** (shown below the score):
+
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| **RMS** | 40% | Overall vibration magnitude — lower is better. 0 mm/s² → 100, 1000+ → 0 |
+| **Balance** | 15% | How similar X and Y vibration are. Imbalanced axes suggest belt tension issues |
+| **Peak** | 20% | Crest factor (peak/average). Low spikes relative to average = better control |
+| **Consistency** | 25% | Variation between features (walls vs infill vs travel). Consistent = good |
+
+#### Vibration by Feature / Acceleration
+
+Breaks down vibration by slicer feature (identified via acceleration value):
+
+- Maps each acceleration value to its slicer feature(s) (e.g., 2975 → Outer Wall / Inner Wall)
+- Shows X RMS, Y RMS, Mag RMS, average speed, and Z range per feature
+- **Recommendation column**: compares each feature's vibration against the quietest feature
+  - **✓ OK** — within 1.5× of baseline
+  - **↓ [accel]** — suggests a reduced acceleration value with percentage reduction
+- If any features are flagged for reduction, ready-to-use `SET_VELOCITY_LIMIT ACCEL=...` G-code commands are shown below the table
+
+#### Vibration × Banding Correlation
+
+Cross-references banding risk events with ADXL samples at matching Z-heights (±1.5 mm tolerance):
+
+- Shows Z-height, banding risk score, vibration RMS, acceleration, speed, and probable cause
+- **Strong correlations = mechanical cause confirmed** — the banding at that layer was caused by actual vibration, not just accel changes or PA transitions
+- Up to 20 entries, sorted by banding risk (highest first)
+
+#### Vibration Over Print Progress
+
+Line chart of X, Y, and Magnitude RMS plotted against print progress percentage. Shows how vibration evolves through the print — useful for spotting:
+- Speed/feature transitions causing vibration spikes
+- Mechanical issues that worsen as the print gets taller (Z height)
+- Specific layers where vibration peaks
+
+#### Vibration Insights
+
+Actionable recommendations based on the vibration data:
+- High overall vibration warnings (X or Y RMS above 500)
+- Axis imbalance detection (>40% difference between X and Y)
+- Input shaper frequency mismatch warnings (dominant freq vs configured shaper freq)
+- Noisiest feature identification with suggestions
 
 ---
 
@@ -331,6 +401,46 @@ Thermal lag thresholds:
 | 3–8% | **info** | Normal for smaller heaters, not visible in print quality |
 | <1% | **good** | Excellent thermal tracking |
 
+### Vibration Quality Score (0–100)
+
+The vibration quality score combines four weighted sub-scores:
+
+```
+Score = (Mag_RMS × 0.40) + (Axis_Balance × 0.15) + (Peak_Control × 0.20) + (Feature_Consistency × 0.25)
+```
+
+- **Mag RMS (40%):** Maps average magnitude RMS onto 0–100 scale (0 mm/s² = 100, 1000+ mm/s² = 0)
+- **Axis Balance (15%):** Penalises imbalance between X and Y RMS. 50%+ difference = score of 0
+- **Peak Control (20%):** Based on crest factor (peak ÷ RMS). Crest ≤1.5 = 100, crest ≥5.5 = 0
+- **Feature Consistency (25%):** How much vibration varies between different print features. Low variation = high score
+
+Interpretation:
+- **80–100:** Excellent. Printer is mechanically sound, belts properly tensioned
+- **50–79:** Moderate. Some features are noisy — check the per-feature table for specific recommendations
+- **<50:** Poor. Likely belt tension issues, loose components, or excessive acceleration
+
+### Per-Feature Accel Recommendations
+
+For each slicer feature (identified by acceleration value), vibration is compared against the quietest feature as a baseline:
+
+- **Below 1.5× baseline:** marked as OK — no action needed
+- **Above 1.5× baseline:** a reduced acceleration is suggested, proportional to how far above baseline:
+  - 1.5× → 12.5% reduction
+  - 2.0× → 25% reduction
+  - 3.0× → 50% reduction (maximum)
+- Suggested values are rounded to the nearest 500 mm/s² (minimum 500)
+- Ready-to-use `SET_VELOCITY_LIMIT ACCEL=` G-code is provided for each recommendation
+
+### Banding × Vibration Correlation
+
+For prints with both banding events and ADXL data, the system cross-references by Z-height:
+
+1. Each high-risk banding moment is matched to the nearest ADXL sample within ±1.5 mm Z tolerance
+2. A probable cause is classified based on vibration level and event flags (accel change, PA transition, temperature shift)
+3. Results are de-duplicated by Z-height (keeping strongest) and limited to 20 entries
+
+This provides evidence-based diagnosis: "the banding at Z=15mm was accompanied by 450 mm/s² vibration during an acceleration change" vs "the banding at Z=20mm had minimal vibration — likely a temperature issue instead."
+
 ### PA Oscillation Zones
 
 An oscillation zone is a period where PA changed ≥4 times within 10 seconds. These zones often correlate with visible ribbing. If many zones are detected, increase `pa_deadband` (try 0.005+). If PA range is very wide (>0.02), lower `pa_boost_k`.
@@ -394,6 +504,9 @@ python3 analyze_print.py --distribution
 
 # Custom log directory
 python3 analyze_print.py --log-dir /path/to/logs
+
+# Start dashboard without ADXL sampling (prevents timer-too-close on slow boards)
+python3 analyze_print.py --serve --port 7127 --no-adxl
 ```
 
 ---
@@ -455,3 +568,29 @@ ss -tlnp | grep 7127
 # Restart the service
 sudo systemctl restart adaptive-flow-dashboard
 ```
+
+### Vibration tab shows "No vibration data"
+
+The ADXL auto-sampler requires:
+- An ADXL345 accelerometer configured in Klipper (`[adxl345]` section in `printer.cfg`)
+- At least one completed print **after** the vibration feature was installed
+- The dashboard service must have been running during the print (not just started after)
+
+Older prints stored before the update won't have vibration data — this is normal. The quality score, per-feature recommendations, and banding correlation will appear after your next print.
+
+### ADXL "timer too close" errors
+
+If ADXL sampling causes MCU timing errors:
+
+```bash
+# Option 1: Disable ADXL sampling entirely
+# Edit /etc/systemd/system/adaptive-flow-dashboard.service
+# Add --no-adxl to the ExecStart line
+sudo systemctl daemon-reload && sudo systemctl restart adaptive-flow-dashboard
+
+# Option 2: The system handles this automatically
+# Sampling uses 0.5s bursts (not 2s), defers when toolhead is fast,
+# and backs off exponentially on failures (up to 30 min between retries)
+```
+
+The auto-sampler is designed to be safe: short bursts, speed-aware deferral, and automatic backoff. Most printers handle it fine. The `--no-adxl` flag is a fallback for boards that can't handle any concurrent I2C/SPI traffic during printing.
