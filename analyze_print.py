@@ -5175,6 +5175,15 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
                         with open(vf, 'r') as fv:
                             vd = json.load(fv)
                             vib_score = (vd.get('summary') or {}).get('quality_score')
+                            # Retroactively compute score if missing
+                            if vib_score is None:
+                                vs = vd.get('summary') or {}
+                                ba = vd.get('by_accel') or {}
+                                if vs:
+                                    try:
+                                        vib_score, _ = _compute_vibration_score(vs, ba)
+                                    except Exception:
+                                        pass
                         break
             except Exception:
                 pass
@@ -5324,6 +5333,32 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
                     vibration_data = json.load(f)
     except Exception:
         pass
+
+    # --- Retroactively compute vibration scores if missing ---
+    if vibration_data:
+        summary_v = vibration_data.get('summary') or {}
+        by_accel_v = vibration_data.get('by_accel') or {}
+        if summary_v.get('quality_score') is None and summary_v:
+            try:
+                score, breakdown = _compute_vibration_score(summary_v, by_accel_v)
+                summary_v['quality_score'] = score
+                summary_v['score_breakdown'] = breakdown
+                vibration_data['summary'] = summary_v
+            except Exception:
+                pass
+        # Retroactively compute per-accel recommendations if missing
+        has_recs = any(v.get('recommendation') not in (None, '') for v in by_accel_v.values()) if by_accel_v else True
+        if not has_recs and by_accel_v:
+            try:
+                samples_v = vibration_data.get('samples') or []
+                recs = _compute_accel_recommendations(by_accel_v, samples_v)
+                for accel_val in recs:
+                    if accel_val in by_accel_v:
+                        by_accel_v[accel_val]['recommendation'] = recs[accel_val]
+                vibration_data['by_accel'] = by_accel_v
+            except Exception:
+                pass
+
     data['vibration'] = vibration_data
 
     # --- Cross-reference vibration with banding ---
