@@ -3170,6 +3170,374 @@ def print_distribution(dist):
 
 
 # =============================================================================
+# BOOST OPTIMIZATION ANALYSIS — can the printer go faster?
+# =============================================================================
+
+def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
+                                printer_hw=None, rows=None):
+    """Analyze actual print data to determine if the printer could be pushed faster.
+
+    Examines per-sample boost, PWM, flow, and speed data to find where the
+    printer had thermal/flow headroom.  Returns a dict with per-aspect
+    headroom analysis and concrete speed suggestions.
+
+    This is the "could I go faster?" analysis — it uses *actual print data*
+    rather than just slicer settings, so it reflects real-world performance.
+    """
+    all_rows = rows if rows is not None else load_csv_rows(csv_file)
+    if not all_rows or len(all_rows) < 50:
+        return None
+
+    s = summary or {}
+    hw = printer_hw or {}
+    hi = hotend_info or {}
+
+    safe_flow = hi.get('safe_flow', 11)
+    peak_flow = hi.get('peak_flow', 14)
+    nozzle_type = hi.get('nozzle_type', 'SF')
+    material = hi.get('material', 'PLA')
+    kinematics = hw.get('kinematics', 'unknown')
+
+    # Input shaper data
+    is_data = hw.get('input_shaper', {})
+    shaper_limits = {}
+    for ax in ('x', 'y'):
+        ax_data = is_data.get(ax, {})
+        rec = ax_data.get('recommended_max_accel')
+        if rec:
+            shaper_limits[ax] = rec
+    shaper_quality_max = min(shaper_limits.values()) if shaper_limits else None
+
+    # ── Collect per-sample stats ──
+    boost_vals = []
+    pwm_vals = []
+    flow_vals = []
+    speed_vals = []
+    accel_vals_raw = []
+    fan_vals = []
+
+    # Per-flow-bracket analysis (how much headroom at each flow level)
+    flow_brackets = {}  # {bracket_label: {samples, boost_sum, pwm_sum, ...}}
+    bracket_edges = [0, 2, 4, 6, 8, 10, 12, 15, 20, 25]
+
+    for row in all_rows:
+        try:
+            flow = float(row.get('flow', 0))
+            speed = float(row.get('speed', 0))
+            boost = float(row.get('boost', 0))
+            pwm = float(row.get('pwm', 0))
+            accel = float(row.get('accel', 0))
+            fan = float(row.get('fan_pct', 0))
+
+            if flow <= 0 and speed <= 0:
+                continue  # skip travel/idle samples
+
+            boost_vals.append(boost)
+            pwm_vals.append(pwm)
+            flow_vals.append(flow)
+            speed_vals.append(speed)
+            if accel > 0:
+                accel_vals_raw.append(accel)
+            fan_vals.append(fan)
+
+            # Bin into flow bracket
+            placed = False
+            for j in range(len(bracket_edges) - 1):
+                if bracket_edges[j] <= flow < bracket_edges[j + 1]:
+                    key = f"{bracket_edges[j]}-{bracket_edges[j+1]}"
+                    placed = True
+                    break
+            if not placed:
+                key = f"{bracket_edges[-1]}+"
+
+            if key not in flow_brackets:
+                flow_brackets[key] = {
+                    'samples': 0, 'boost_sum': 0, 'boost_max': 0,
+                    'pwm_sum': 0, 'pwm_max': 0, 'speed_sum': 0,
+                    'speed_max': 0, 'flow_sum': 0, 'flow_max': 0,
+                    'fan_sum': 0, 'accel_sum': 0, 'accel_count': 0,
+                }
+            b = flow_brackets[key]
+            b['samples'] += 1
+            b['boost_sum'] += boost
+            b['boost_max'] = max(b['boost_max'], boost)
+            b['pwm_sum'] += pwm
+            b['pwm_max'] = max(b['pwm_max'], pwm)
+            b['speed_sum'] += speed
+            b['speed_max'] = max(b['speed_max'], speed)
+            b['flow_sum'] += flow
+            b['flow_max'] = max(b['flow_max'], flow)
+            b['fan_sum'] += fan
+            if accel > 0:
+                b['accel_sum'] += accel
+                b['accel_count'] += 1
+
+        except (KeyError, ValueError):
+            continue
+
+    if not flow_vals:
+        return None
+
+    n = len(flow_vals)
+    avg_flow = sum(flow_vals) / n
+    max_flow = max(flow_vals)
+    avg_speed = sum(speed_vals) / n
+    max_speed = max(speed_vals)
+    avg_boost = sum(boost_vals) / n
+    max_boost = max(boost_vals)
+    avg_pwm = sum(pwm_vals) / n
+    max_pwm = max(pwm_vals)
+
+    # ── Compute headroom on each dimension ──
+
+    # 1. THERMAL HEADROOM: how much more boost could the heater handle
+    #    PWM headroom = how far from saturation
+    thermal_headroom_pct = round((1.0 - avg_pwm) * 100, 1)
+    thermal_at_limit = avg_pwm >= 0.85
+
+    # 2. FLOW HEADROOM: how far from hotend safe limit
+    flow_headroom = round(safe_flow - max_flow, 1)
+    flow_headroom_pct = round((safe_flow - avg_flow) / safe_flow * 100, 1) if safe_flow > 0 else 0
+    flow_at_limit = max_flow >= safe_flow * 0.90
+
+    # 3. BOOST HEADROOM: how much temp boost was used vs available
+    #    Typical max boost for PLA is ~25-30°C, PETG ~20°C
+    max_boost_available = {'PLA': 30, 'PETG': 25, 'ABS': 20, 'ASA': 20, 'TPU': 15}.get(material, 25)
+    boost_headroom = round(max_boost_available - max_boost, 1)
+    boost_headroom_pct = round((max_boost_available - avg_boost) / max_boost_available * 100, 1) if max_boost_available > 0 else 0
+
+    # 4. ACCEL HEADROOM: were actual accels near shaper/firmware limit
+    accel_headroom = None
+    if accel_vals_raw and shaper_quality_max:
+        max_accel_used = max(accel_vals_raw)
+        avg_accel_used = sum(accel_vals_raw) / len(accel_vals_raw)
+        accel_headroom = {
+            'avg_used': int(avg_accel_used),
+            'max_used': int(max_accel_used),
+            'shaper_limit': int(shaper_quality_max),
+            'pct_used': round(max_accel_used / shaper_quality_max * 100, 1),
+            'at_limit': max_accel_used >= shaper_quality_max * 0.90,
+        }
+
+    # 5. FAN HEADROOM: was part cooling at max
+    avg_fan = sum(fan_vals) / n if fan_vals else 0
+    max_fan = max(fan_vals) if fan_vals else 0
+    fan_at_limit = max_fan >= 98  # effectively at 100%
+
+    # ── Per-bracket summary ──
+    bracket_analysis = {}
+    for key in sorted(flow_brackets.keys(), key=lambda k: float(k.split('-')[0]) if '-' in k else float(k.replace('+', ''))):
+        b = flow_brackets[key]
+        if b['samples'] < 5:
+            continue
+        ns = b['samples']
+        avg_b = b['boost_sum'] / ns
+        avg_p = b['pwm_sum'] / ns
+        avg_s = b['speed_sum'] / ns
+        avg_f = b['flow_sum'] / ns
+        avg_fn = b['fan_sum'] / ns
+        avg_a = b['accel_sum'] / b['accel_count'] if b['accel_count'] > 0 else 0
+
+        bracket_analysis[key] = {
+            'samples': ns,
+            'pct_time': round(ns / n * 100, 1),
+            'avg_boost': round(avg_b, 1),
+            'max_boost': round(b['boost_max'], 1),
+            'avg_pwm': round(avg_p, 3),
+            'max_pwm': round(b['pwm_max'], 3),
+            'avg_speed': round(avg_s, 1),
+            'max_speed': round(b['speed_max'], 1),
+            'avg_flow': round(avg_f, 1),
+            'max_flow': round(b['flow_max'], 1),
+            'avg_fan': round(avg_fn, 1),
+            'avg_accel': int(avg_a),
+            # Per-bracket verdicts
+            'thermal_ok': avg_p < 0.80,
+            'boost_ok': avg_b < max_boost_available * 0.7,
+            'flow_ok': b['flow_max'] < safe_flow * 0.90,
+        }
+
+    # ── Overall optimization verdict ──
+    # Determine what's the limiting factor and what can be increased
+    limiting_factors = []
+    can_increase = []
+
+    if thermal_at_limit:
+        limiting_factors.append('heater')
+    elif thermal_headroom_pct > 30:
+        can_increase.append({
+            'aspect': 'Heater capacity',
+            'headroom': f'{thermal_headroom_pct:.0f}% PWM headroom',
+            'detail': f'Avg PWM was only {avg_pwm*100:.0f}% — the heater has '
+                      f'significant reserve capacity for higher flow demands.',
+        })
+
+    if flow_at_limit:
+        limiting_factors.append('hotend flow')
+    elif flow_headroom_pct > 25:
+        can_increase.append({
+            'aspect': 'Flow capacity',
+            'headroom': f'{flow_headroom:.1f} mm³/s headroom ({flow_headroom_pct:.0f}%)',
+            'detail': f'Peak flow was {max_flow:.1f} mm³/s vs safe limit of '
+                      f'{safe_flow} mm³/s — room to increase speeds.',
+        })
+
+    if boost_headroom > 5:
+        can_increase.append({
+            'aspect': 'Temperature boost',
+            'headroom': f'{boost_headroom:.0f}°C unused boost range',
+            'detail': f'Max boost used was {max_boost:.1f}°C out of ~{max_boost_available}°C '
+                      f'available — the system can compensate for higher flow.',
+        })
+
+    if accel_headroom and not accel_headroom['at_limit']:
+        can_increase.append({
+            'aspect': 'Acceleration',
+            'headroom': f'{accel_headroom["pct_used"]:.0f}% of shaper limit used',
+            'detail': f'Max accel used was {accel_headroom["max_used"]} vs shaper '
+                      f'limit of {accel_headroom["shaper_limit"]} — room for higher accels.',
+        })
+
+    # ── Compute suggested speed increase ──
+    # Find the bottleneck and compute how much faster the printer could go
+    speed_increase_pct = 0
+    bottleneck = None
+
+    if not limiting_factors:
+        # Nothing at limit — compute increase based on tightest headroom
+        # Flow is usually the binding constraint
+        if safe_flow > 0 and avg_flow > 0:
+            flow_ratio = (safe_flow * 0.85) / avg_flow  # target 85% of safe
+            speed_increase_pct = min(int((flow_ratio - 1) * 100), 100)  # cap at 100%
+        if thermal_headroom_pct < flow_headroom_pct:
+            # Thermal is tighter — recalculate based on PWM headroom
+            # Rough model: each 10% more speed → ~8% more PWM demand
+            thermal_increase = int(thermal_headroom_pct / 0.8)
+            speed_increase_pct = min(speed_increase_pct, thermal_increase)
+        bottleneck = 'none — all systems have headroom'
+    else:
+        bottleneck = ', '.join(limiting_factors)
+        if 'hotend flow' in limiting_factors and 'heater' not in limiting_factors:
+            # Flow-limited but heater OK — can push a bit more with boost
+            if boost_headroom > 5:
+                speed_increase_pct = min(int(boost_headroom / max_boost_available * 30), 15)
+        elif 'heater' in limiting_factors and 'hotend flow' not in limiting_factors:
+            # Heater-limited — no room to increase
+            speed_increase_pct = 0
+
+    # Clamp to reasonable range
+    speed_increase_pct = max(0, min(speed_increase_pct, 100))
+
+    # ── Build concrete suggestions ──
+    suggestions = []
+    if speed_increase_pct >= 10:
+        new_avg_flow = round(avg_flow * (1 + speed_increase_pct / 100), 1)
+        suggestions.append({
+            'what': 'Increase print speeds',
+            'detail': f'You can increase speeds by ~{speed_increase_pct}% across the board. '
+                      f'This would raise avg flow from {avg_flow:.1f} to ~{new_avg_flow} mm³/s '
+                      f'(still within Revo {nozzle_type} safe limit of {safe_flow} mm³/s).',
+            'impact': 'faster prints',
+        })
+
+    if accel_headroom and accel_headroom['pct_used'] < 70:
+        suggestions.append({
+            'what': 'Increase accelerations',
+            'detail': f'Actual accels averaged {accel_headroom["avg_used"]} mm/s² '
+                      f'(max {accel_headroom["max_used"]}). Your input shaper supports '
+                      f'{accel_headroom["shaper_limit"]}. Higher slicer accels will let '
+                      f'the printer reach target speeds on short segments.',
+            'impact': 'less time accelerating/decelerating',
+        })
+
+    if boost_headroom > 10 and not thermal_at_limit:
+        suggestions.append({
+            'what': 'Increase flow_k for more aggressive boost',
+            'detail': f'The temperature boost system only used {max_boost:.1f}°C of '
+                      f'~{max_boost_available}°C range, and heater duty was {avg_pwm*100:.0f}%. '
+                      f'Increasing flow_k would let the system pre-heat more aggressively for '
+                      f'flow transitions, improving extrusion consistency at higher speeds.',
+            'impact': 'better flow adaptation',
+            'config_var': 'flow_k',
+            'direction': 'increase',
+        })
+
+    if fan_at_limit and material in ('PLA', 'PETG'):
+        suggestions.append({
+            'what': 'Fan at maximum — may limit cooling at higher speeds',
+            'detail': f'Part fan was at {max_fan:.0f}% during this print. '
+                      f'If you increase speeds, cooling may become the bottleneck. '
+                      f'Consider a higher-CFM fan or duct upgrade.',
+            'impact': 'cooling constraint',
+        })
+
+    # ── Overall verdict ──
+    if speed_increase_pct >= 25:
+        verdict = 'significant_headroom'
+        verdict_text = (f'Your printer has significant room to go faster. '
+                        f'All systems had headroom — you could increase speeds by '
+                        f'~{speed_increase_pct}% without exceeding thermal or flow limits.')
+    elif speed_increase_pct >= 10:
+        verdict = 'moderate_headroom'
+        verdict_text = (f'There\'s moderate room for improvement (~{speed_increase_pct}% faster). '
+                        f'The printer handled this print comfortably.')
+    elif limiting_factors:
+        verdict = 'at_limit'
+        verdict_text = (f'The printer was near its limits on {bottleneck}. '
+                        f'Current speeds are well-matched to your hardware.')
+    else:
+        verdict = 'well_tuned'
+        verdict_text = ('Speeds are well-matched to your hardware. '
+                        'The printer is close to optimal for this setup.')
+
+    return {
+        'verdict': verdict,
+        'verdict_text': verdict_text,
+        'speed_increase_pct': speed_increase_pct,
+        'bottleneck': bottleneck,
+        'limiting_factors': limiting_factors,
+        'can_increase': can_increase,
+        'suggestions': suggestions,
+        'thermal': {
+            'avg_pwm': round(avg_pwm, 3),
+            'max_pwm': round(max_pwm, 3),
+            'headroom_pct': thermal_headroom_pct,
+            'at_limit': thermal_at_limit,
+        },
+        'flow': {
+            'avg_flow': round(avg_flow, 1),
+            'max_flow': round(max_flow, 1),
+            'safe_flow': safe_flow,
+            'peak_flow': peak_flow,
+            'headroom': flow_headroom,
+            'headroom_pct': flow_headroom_pct,
+            'at_limit': flow_at_limit,
+        },
+        'boost': {
+            'avg_boost': round(avg_boost, 1),
+            'max_boost': round(max_boost, 1),
+            'max_available': max_boost_available,
+            'headroom': boost_headroom,
+            'headroom_pct': boost_headroom_pct,
+        },
+        'accel': accel_headroom,
+        'fan': {
+            'avg_fan': round(avg_fan, 1),
+            'max_fan': round(max_fan, 1),
+            'at_limit': fan_at_limit,
+        },
+        'speed': {
+            'avg_speed': round(avg_speed, 1),
+            'max_speed': round(max_speed, 1),
+        },
+        'brackets': bracket_analysis,
+        'material': material,
+        'kinematics': kinematics,
+        'nozzle_type': nozzle_type,
+    }
+
+
+# =============================================================================
 # WEB DASHBOARD
 # =============================================================================
 
@@ -4029,6 +4397,64 @@ def generate_recommendations(data):
         # 35-50% utilization: slicer profile tab already has per-setting
         # suggestions, so no need for a separate generic warning here.
 
+    # --- Boost optimization insights (from actual print data) ---
+    bopt = data.get('boost_optimization')
+    if bopt and bopt.get('verdict'):
+        v = bopt['verdict']
+        increase = bopt.get('speed_increase_pct', 0)
+        suggestions = bopt.get('suggestions', [])
+        can_increase = bopt.get('can_increase', [])
+
+        if v == 'significant_headroom' and increase >= 25:
+            detail_parts = [bopt['verdict_text']]
+            for ci in can_increase[:3]:
+                detail_parts.append(f"• {ci['aspect']}: {ci['headroom']}")
+            action_parts = []
+            for sg in suggestions[:3]:
+                action_parts.append(f"{sg['what']}: {sg['detail']}")
+            rec = {
+                'severity': 'info', 'category': 'Optimization',
+                'title': f'Room to go ~{increase}% faster (based on actual print data)',
+                'detail': '\n'.join(detail_parts),
+                'action': '\n'.join(action_parts) if action_parts else 'See the Slicer Profile tab for per-setting suggestions.',
+            }
+            # If flow_k increase is suggested, add config change
+            flow_k_sug = [sg for sg in suggestions if sg.get('config_var') == 'flow_k']
+            if flow_k_sug:
+                chg = _suggest_change('flow_k', 'increase', 0.15, material=material, maximum=2.5)
+                if chg:
+                    rec['config_changes'] = [chg]
+            recs.append(rec)
+
+        elif v == 'moderate_headroom' and increase >= 10:
+            detail_parts = [bopt['verdict_text']]
+            for ci in can_increase[:2]:
+                detail_parts.append(f"• {ci['aspect']}: {ci['headroom']}")
+            recs.append({
+                'severity': 'info', 'category': 'Optimization',
+                'title': f'Moderate room to optimize (~{increase}% headroom)',
+                'detail': '\n'.join(detail_parts),
+                'action': 'Check the Slicer Profile tab for specific speed/accel suggestions based on your hardware limits.',
+            })
+
+        elif v == 'at_limit':
+            limiting = bopt.get('limiting_factors', [])
+            recs.append({
+                'severity': 'good', 'category': 'Optimization',
+                'title': 'Speeds well-matched to hardware',
+                'detail': f'{bopt["verdict_text"]} Limiting factor(s): {", ".join(limiting)}.',
+                'action': 'Current settings are a good match for your hardware. '
+                          'To go faster, you would need to upgrade the limiting component.',
+            })
+
+        elif v == 'well_tuned':
+            recs.append({
+                'severity': 'good', 'category': 'Optimization',
+                'title': 'Print speeds are well-tuned',
+                'detail': bopt['verdict_text'],
+                'action': 'No speed changes needed — the printer is close to optimal.',
+            })
+
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
         recs.append({
@@ -4431,6 +4857,7 @@ def collect_material_overview(log_dir, material):
         'is_aggregate': True,
         'aggregate_material': material,
         'aggregate_sessions': n,
+        'boost_optimization': None,  # not available for aggregate view
     }
 
     # Generate recommendations from aggregated data
@@ -4683,6 +5110,17 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         )
     data['slicer_profile_advice'] = profile_advice
 
+    # --- Boost optimization analysis — "can I go faster?" ---
+    boost_opt = None
+    if csv_path and hotend_info:
+        boost_opt = analyze_boost_optimization(
+            csv_path,
+            summary=data.get('summary'),
+            hotend_info=hotend_info,
+            printer_hw=printer_hw,
+            rows=csv_rows,
+        )
+    data['boost_optimization'] = boost_opt
 
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
@@ -5174,6 +5612,79 @@ h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+e.k.replace(/_/g,'
 '<td style="font-weight:600;color:#3fb950">'+sug+'</td>'+
 '<td style="font-size:12px;color:#8b949e;line-height:1.4">'+detail+'</td></tr>'});
 h+='</table></div>';
+
+/* --- Boost Optimization Analysis panel --- */
+var bo=D.boost_optimization;
+if(bo){
+var vColors={'significant_headroom':'#3fb950','moderate_headroom':'#58a6ff','at_limit':'#d29922','well_tuned':'#3fb950'};
+var vIcons={'significant_headroom':'\ud83d\ude80','moderate_headroom':'\u2139\ufe0f','at_limit':'\u2705','well_tuned':'\u2705'};
+var vClr=vColors[bo.verdict]||'#8b949e';
+var vIcon=vIcons[bo.verdict]||'';
+h+='<div class="box" style="border-left:3px solid '+vClr+';margin-top:16px">';
+h+='<div style="font-weight:700;font-size:15px;color:'+vClr+';margin-bottom:8px">'+vIcon+' Optimization Analysis <span style="font-size:12px;font-weight:400;color:#8b949e">(based on actual print data)</span></div>';
+h+='<div style="color:#c9d1d9;font-size:13px;margin-bottom:12px">'+bo.verdict_text+'</div>';
+
+/* Headroom gauges */
+h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:12px">';
+var gauges=[
+{label:'Heater',val:bo.thermal.headroom_pct,unit:'% PWM free',limit:bo.thermal.at_limit},
+{label:'Flow',val:bo.flow.headroom_pct,unit:'% headroom',limit:bo.flow.at_limit},
+{label:'Boost',val:bo.boost.headroom_pct,unit:'% range free',limit:false}];
+if(bo.accel)gauges.push({label:'Accel',val:(100-bo.accel.pct_used),unit:'% unused',limit:bo.accel.at_limit});
+gauges.push({label:'Fan',val:bo.fan.at_limit?0:(100-bo.fan.max_fan),unit:'% free',limit:bo.fan.at_limit});
+gauges.forEach(function(g){
+var pct=Math.max(0,Math.min(100,g.val||0));
+var barClr=g.limit?'#f85149':pct>30?'#3fb950':pct>15?'#d29922':'#f85149';
+h+='<div style="background:#161b22;border-radius:6px;padding:10px 12px">'+
+'<div style="font-size:11px;color:#8b949e;margin-bottom:4px">'+g.label+'</div>'+
+'<div style="font-size:18px;font-weight:700;color:'+(g.limit?'#f85149':'#c9d1d9')+'">'+Math.round(pct)+'<span style="font-size:11px;font-weight:400;color:#8b949e">'+g.unit+'</span></div>'+
+'<div style="background:#21262d;border-radius:3px;height:6px;margin-top:6px;overflow:hidden">'+
+'<div style="width:'+pct+'%;height:100%;background:'+barClr+';border-radius:3px"></div></div></div>'});
+h+='</div>';
+
+/* Can increase list */
+if(bo.can_increase&&bo.can_increase.length){
+h+='<div style="margin-bottom:12px">';
+h+='<div style="font-weight:600;font-size:12px;color:#58a6ff;margin-bottom:6px">AVAILABLE HEADROOM</div>';
+bo.can_increase.forEach(function(ci){
+h+='<div style="padding:6px 10px;background:rgba(88,166,255,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
+'<span style="color:#58a6ff;font-weight:600">'+ci.aspect+':</span> '+
+'<span style="color:#c9d1d9">'+ci.headroom+'</span>'+
+'<div style="color:#8b949e;font-size:11px;margin-top:2px">'+ci.detail+'</div></div>'});
+h+='</div>'}
+
+/* Suggestions */
+if(bo.suggestions&&bo.suggestions.length){
+h+='<div style="margin-bottom:8px">';
+h+='<div style="font-weight:600;font-size:12px;color:#3fb950;margin-bottom:6px">SUGGESTIONS</div>';
+bo.suggestions.forEach(function(sg){
+var impactClr=sg.impact==='cooling constraint'?'#d29922':'#3fb950';
+h+='<div style="padding:8px 10px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
+'<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+sg.impact+'</span></div>'+
+'<div style="color:#8b949e;font-size:11px;margin-top:2px">'+sg.detail+'</div></div>'});
+h+='</div>'}
+
+/* Per-bracket table */
+var bk=bo.brackets;
+if(bk&&Object.keys(bk).length>1){
+h+='<details style="margin-top:4px"><summary style="cursor:pointer;color:#58a6ff;font-size:12px;font-weight:600">Per-Flow-Bracket Breakdown</summary>';
+h+='<table class="pa-table" style="margin-top:8px;font-size:11px"><tr><th>Flow (mm\u00b3/s)</th><th>% Time</th><th>Avg Boost</th><th>Avg PWM</th><th>Avg Speed</th><th>Max Speed</th><th>Status</th></tr>';
+Object.keys(bk).sort(function(a,b){return parseFloat(a)-parseFloat(b)}).forEach(function(k){
+var br=bk[k];
+var ok=br.thermal_ok&&br.boost_ok&&br.flow_ok;
+var stIcon=ok?'<span style="color:#3fb950">\u2705</span>':'<span style="color:#d29922">\u26a0\ufe0f</span>';
+var reasons=[];
+if(!br.thermal_ok)reasons.push('heater');
+if(!br.boost_ok)reasons.push('boost');
+if(!br.flow_ok)reasons.push('flow');
+var stText=ok?'OK':reasons.join(', ')+' stressed';
+h+='<tr><td style="font-weight:600">'+k+'</td><td>'+br.pct_time+'%</td>'+
+'<td>'+br.avg_boost+'\u00b0C</td><td>'+(br.avg_pwm*100).toFixed(0)+'%</td>'+
+'<td>'+br.avg_speed+'</td><td>'+br.max_speed+'</td>'+
+'<td>'+stIcon+' '+stText+'</td></tr>'});
+h+='</table></details>'}
+
+h+='</div>'}
 
 ca.innerHTML=h}
 
