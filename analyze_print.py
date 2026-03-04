@@ -5618,7 +5618,7 @@ d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u2
 var vb=D.vibration;if(vb&&vb.summary&&vb.summary.quality_score!=null){
 var vs=vb.summary.quality_score,vc=vs>=80?'#3fb950':vs>=50?'#d29922':'#f85149';
 items.push({l:'Vib Score',v:vs+'/100',s:'ADXL quality',w:vs<50,
-d:'Vibration quality score from ADXL auto-sampling. \u2022 80-100 = excellent \u2022 50-79 = moderate, some features noisy \u2022 <50 = poor, check belts and reduce accel'})}
+d:'Vibration quality score from ADXL auto-sampling. \u2022 80-100 = excellent \u2022 50-79 = moderate, some features noisy \u2022 <50 = poor, check belts and reduce accel'})}}
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
