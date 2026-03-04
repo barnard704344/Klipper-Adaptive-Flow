@@ -6087,7 +6087,7 @@ h+='<div class="box-hd">\ud83d\udce1 Live Toolhead Vibration (ADXL345)</div>';
 h+='<p class="box-desc">Real-time accelerometer readings from the toolhead. Tap the printhead to see spikes. Use this to check sensor health, detect loose belts, or monitor vibration during moves.</p>';
 h+='<div style="margin:8px 0">';
 h+='<button id="adxl_start" class="cfg-btn" style="margin-right:8px" onclick="_adxlRun()">\u25b6 Start</button>';
-h+='<button id="adxl_stop" class="cfg-btn" style="background:#da3633;border-color:#da3633" onclick="_stopAdxl();document.getElementById(\'adxl_start\').disabled=false;document.getElementById(\'adxl_status\').textContent=\'Stopped\'">\u25a0 Stop</button>';
+h+='<button id="adxl_stop" class="cfg-btn" style="background:#da3633;border-color:#da3633" onclick="_stopAdxl();document.getElementById(\\'adxl_start\\').disabled=false;document.getElementById(\\'adxl_status\\').textContent=\\'Stopped\\'">\u25a0 Stop</button>';
 h+='<span id="adxl_status" style="margin-left:12px;font-size:12px;color:#8b949e">Ready</span>';
 h+='</div>';
 h+='<div style="display:flex;gap:16px;margin:8px 0;flex-wrap:wrap" id="adxl_gauges">';
