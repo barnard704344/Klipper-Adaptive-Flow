@@ -911,7 +911,7 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
 # SLICER PROFILE ADVISOR — comprehensive per-setting recommendations
 # =============================================================================
 
-def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=None, printer_hw=None):
+def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=None, printer_hw=None, boost_speed_increase_pct=None):
     """Produce comprehensive per-setting advice for every parsed slicer value.
 
     *hotend_info* is a dict with keys from the adaptive flow config:
@@ -1482,21 +1482,30 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             # ~65% utilization is leaving significant time on the table
             optimal = _optimal_speed(line_w, layer, quality_factor=0.85)
             if optimal and speed < optimal * 0.70:
-                # Significantly below optimal — suggest increase
-                # quality_factor already reserves 15% headroom, so suggest
-                # close to optimal.  Input shaper handles ringing.
-                suggest_speed = int(optimal * 0.90)
-                suggest_speed = max(suggest_speed, int(speed * 1.3))  # at least 30% increase
-                suggest_speed = min(suggest_speed, _fw_max_vel)  # cap at firmware limit
+                # Compute theoretical max for reference
+                max_theoretical = int(optimal * 0.90)
+                max_theoretical = min(max_theoretical, _fw_max_vel)
+                # Use the data-backed speed_increase_pct from boost
+                # optimization when available — this ensures the per-speed
+                # suggestions match the Optimization Analysis section.
+                if boost_speed_increase_pct is not None and boost_speed_increase_pct >= 5:
+                    suggest_speed = int(speed * (1 + boost_speed_increase_pct / 100))
+                else:
+                    # No actual print data — cap at 50% as a safe default
+                    suggest_speed = int(speed * 1.5)
+                suggest_speed = max(suggest_speed, int(speed * 1.10))  # at least 10% increase
+                suggest_speed = min(suggest_speed, max_theoretical)    # don't exceed theoretical
+                suggest_speed = min(suggest_speed, _fw_max_vel)        # cap at firmware limit
                 suggest_flow = _flow(suggest_speed, line_w, layer)
+                pct_inc = int((suggest_speed / speed - 1) * 100)
                 _add(setting, category, f'{int(speed)} mm/s', 'warn',
                      f'{suggest_speed} mm/s',
                      f'{feature_name}: only {flow} mm\u00b3/s \u2014 '
                      f'{int(flow / safe_flow * 100)}% of your Revo {variant} capacity '
                      f'({safe_flow} mm\u00b3/s for {material}). '
-                     f'Your {_kinematics} printer can handle {suggest_speed} mm/s '
-                     f'({suggest_flow} mm\u00b3/s). Increase speed for faster prints '
-                     f'without sacrificing quality.', flow)
+                     f'Suggest {suggest_speed} mm/s '
+                     f'({suggest_flow} mm\u00b3/s, +{pct_inc}%) \u2014 '
+                     f'hardware capacity allows up to {max_theoretical} mm/s.', flow)
             else:
                 _add(setting, category, f'{int(speed)} mm/s', 'good', None,
                      f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
@@ -5292,17 +5301,10 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         pass
     data['hotend_info'] = hotend_info
 
-    # --- Comprehensive per-setting profile advice ---
-    profile_advice = None
-    if slicer and hotend_info:
-        profile_advice = generate_slicer_profile_advice(
-            slicer, hotend_info,
-            print_summary=data.get('summary'),
-            printer_hw=printer_hw,
-        )
-    data['slicer_profile_advice'] = profile_advice
-
     # --- Boost optimization analysis — "can I go faster?" ---
+    # Computed BEFORE profile advice so its data-backed speed_increase_pct
+    # can be passed to the per-setting speed recommendations, ensuring both
+    # sections suggest the same target speeds.
     boost_opt = None
     if csv_path and hotend_info:
         boost_opt = analyze_boost_optimization(
@@ -5314,6 +5316,20 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             rows=csv_rows,
         )
     data['boost_optimization'] = boost_opt
+
+    # --- Comprehensive per-setting profile advice ---
+    _boost_speed_pct = None
+    if boost_opt:
+        _boost_speed_pct = boost_opt.get('speed_increase_pct')
+    profile_advice = None
+    if slicer and hotend_info:
+        profile_advice = generate_slicer_profile_advice(
+            slicer, hotend_info,
+            print_summary=data.get('summary'),
+            printer_hw=printer_hw,
+            boost_speed_increase_pct=_boost_speed_pct,
+        )
+    data['slicer_profile_advice'] = profile_advice
 
     # --- Vibration data from ADXL auto-sampler ---
     vibration_data = None
