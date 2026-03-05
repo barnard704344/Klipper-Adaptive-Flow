@@ -6585,14 +6585,14 @@ def _is_toolhead_busy():
     should defer ADXL sampling to avoid overwhelming the MCU.
     """
     data = _moonraker_query(
-        '/printer/objects/query?gcode_move&toolhead', timeout=3
+        '/printer/objects/query?motion_report', timeout=3
     )
     if not data:
         return True  # assume busy if we can't query
     status = data.get('result', {}).get('status', {})
-    gm = status.get('gcode_move', {})
-    speed = gm.get('speed', 0)
-    # speed is in mm/s in gcode_move
+    mr = status.get('motion_report', {})
+    speed = mr.get('live_velocity', 0)
+    # live_velocity is the actual instantaneous speed in mm/s
     return speed > _ADXL_SPEED_THRESHOLD
 
 
@@ -6681,6 +6681,7 @@ def _adxl_print_sampler_loop(log_dir):
     - On print end: save all samples to *_vibration.json
     """
     import logging
+    logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s')
     logger = logging.getLogger('ADXLSampler')
     global _adxl_sampler_active
 
