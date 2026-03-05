@@ -6486,6 +6486,7 @@ _ADXL_SAMPLE_CSV = '/tmp/adxl345-autosample.csv'
 _ADXL_SAMPLE_INTERVAL = 300   # seconds between samples (5 minutes — reduced from 2min to ease MCU load)
 _ADXL_SAMPLE_DURATION = 0.5   # seconds of ADXL recording per sample (reduced from 2.0s to prevent timer-too-close)
 _ADXL_SPEED_THRESHOLD = 80    # mm/s — defer sampling when toolhead is moving faster than this
+_ADXL_MIN_BUFFER_TIME = 3.0   # seconds — defer sampling when MCU step buffer is below this
 _ADXL_MAX_BACKOFF = 1800      # max backoff interval in seconds (30 min)
 _adxl_sampler_active = False   # True while a print is being sampled
 _adxl_sampler_enabled = True   # Set to False via --no-adxl to disable entirely
@@ -6579,21 +6580,42 @@ def _parse_adxl_csv(csv_path):
 
 
 def _is_toolhead_busy():
-    """Check if the toolhead is actively moving at high speed.
+    """Check if the toolhead is actively moving or MCU buffer is low.
     
-    Returns True if the printer is in a high-speed move — in that case we
-    should defer ADXL sampling to avoid overwhelming the MCU.
+    Returns True if we should defer ADXL sampling — either because the
+    toolhead is moving fast, or because the MCU step buffer is too thin
+    to safely absorb the CPU load of an ADXL burst measurement.
     """
     data = _moonraker_query(
-        '/printer/objects/query?motion_report', timeout=3
+        '/printer/objects/query?motion_report&toolhead', timeout=3
     )
     if not data:
         return True  # assume busy if we can't query
     status = data.get('result', {}).get('status', {})
+
+    # Check speed
     mr = status.get('motion_report', {})
     speed = mr.get('live_velocity', 0)
-    # live_velocity is the actual instantaneous speed in mm/s
-    return speed > _ADXL_SPEED_THRESHOLD
+    if speed > _ADXL_SPEED_THRESHOLD:
+        return True
+
+    # Check MCU step buffer: buffer_time = print_time - estimated_print_time
+    # When printing, print_time is the furthest scheduled time and
+    # estimated_print_time is the MCU's current clock time.  A thin buffer
+    # means the MCU will run out of queued steps if gcode feeding pauses
+    # (which ADXL SPI processing on the host will cause).
+    th = status.get('toolhead', {})
+    print_time = th.get('print_time', 0)
+    est_time = th.get('estimated_print_time', 0)
+    buffer_time = print_time - est_time
+    if 0 < buffer_time < _ADXL_MIN_BUFFER_TIME:
+        logger.debug(
+            f"  Deferring ADXL sample — buffer_time={buffer_time:.2f}s "
+            f"< {_ADXL_MIN_BUFFER_TIME}s"
+        )
+        return True
+
+    return False
 
 
 def _take_adxl_sample():
