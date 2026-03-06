@@ -5741,12 +5741,6 @@ pa.forEach(function(a){advMap[a.setting]=a});
 /* --- Unified printer/hotend card --- */
 h+='<div class="box" style="padding:14px 16px">';
 
-/* Material & file row */
-h+='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
-h+='<span class="sl-mat"><span class="sl-icon">\u25cf</span>'+mat+'</span>';
-if(fname)h+='<span class="sl-file">'+fname+'</span>';
-h+='</div>';
-
 /* Hotend info row */
 if(hi){
 var sfLabel=hi.safe_flow||hi.max_safe_flow||'?';
@@ -5778,7 +5772,11 @@ if(phw.kinematics)h+='<div><span style="color:#8b949e">Kinematics:</span> <b>'+p
 if(phw.build_volume)h+='<div><span style="color:#8b949e">Build:</span> <b>'+phw.build_volume.join('\u00d7')+'mm</b></div>';
 if(hasShaper){
 h+='<div><span style="color:#8b949e">Quality Max Accel:</span> <b style="color:#3fb950">'+shaperMinAccel+'</b> <span style="color:#484f58">(Y limit)</span></div>';
-h+='<div><span style="color:#8b949e">Input Shaper:</span> <b>X: '+(isx.type||'?').toUpperCase()+'@'+(isx.freq||'?')+'Hz ('+isx.recommended_max_accel+') / Y: '+(isy.type||'?').toUpperCase()+'@'+(isy.freq||'?')+'Hz ('+isy.recommended_max_accel+')</b></div>';
+h+='<div style="grid-column:span 2"><span style="color:#8b949e">Input Shaper:</span>'+
+'<div style="display:inline-grid;grid-template-columns:auto auto auto;gap:0 6px;vertical-align:middle;margin-left:6px;font-size:12px">'+
+'<b style="color:#58a6ff">X:</b><b>'+(isx.type||'?').toUpperCase()+' @ '+(isx.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+isx.recommended_max_accel+')</span>'+
+'<b style="color:#3fb950">Y:</b><b>'+(isy.type||'?').toUpperCase()+' @ '+(isy.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+isy.recommended_max_accel+')</span>'+
+'</div></div>';
 }
 if(phw.firmware_max_accel)h+='<div><span style="color:#8b949e">Firmware Ceiling:</span> <span style="color:#484f58">'+phw.firmware_max_accel+' accel / '+(phw.firmware_max_velocity||'?')+' mm/s</span></div>';
 if(ext.drive_type)h+='<div><span style="color:#8b949e">Extruder:</span> <b>'+ext.drive_type+'</b> (rot_dist: '+ext.rotation_distance+')</div>';
