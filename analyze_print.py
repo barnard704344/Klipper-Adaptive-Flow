@@ -28,6 +28,7 @@ import re
 import glob
 import math
 import time
+import logging
 import statistics
 import argparse
 import http.server
@@ -6739,7 +6740,6 @@ def _adxl_print_sampler_loop(log_dir):
     - Uses exponential backoff on consecutive failures (max 30 min)
     - On print end: save all samples to *_vibration.json
     """
-    import logging
     logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s')
     logger = logging.getLogger('ADXLSampler')
     global _adxl_sampler_active
