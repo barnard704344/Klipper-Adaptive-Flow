@@ -6213,8 +6213,11 @@ if(ext.nozzle_diameter)hwHtml+='<div><span style="color:#8b949e">Nozzle:</span> 
 if(ext.tmc_driver)hwHtml+='<div><span style="color:#8b949e">Extruder TMC:</span> '+ext.tmc_driver+(ext.run_current?' @ '+ext.run_current+'A':'')+'</div>';
 var fan=hw.part_fan||{};
 if(fan.max_power!=null){var fp=Math.round(fan.max_power*100);hwHtml+='<div><span style="color:#8b949e">Fan Cap:</span> <span style="color:'+(fan.max_power<1?"#f85149":"#3fb950")+'">'+fp+'%</span></div>'}
-if(is_.x||is_.y){hwHtml+='<div><span style="color:#8b949e">Input Shaper:</span> ';
-var parts=[];if(is_.x)parts.push('X: '+(is_.x.type||'?').toUpperCase()+' @ '+is_.x.freq+'Hz ('+is_.x.recommended_max_accel+')');if(is_.y)parts.push('Y: '+(is_.y.type||'?').toUpperCase()+' @ '+is_.y.freq+'Hz ('+is_.y.recommended_max_accel+')');hwHtml+=parts.join(', ')+'</div>'}
+if(is_.x||is_.y){hwHtml+='<div style="grid-column:span 2"><span style="color:#8b949e">Input Shaper:</span>'+
+'<div style="display:inline-grid;grid-template-columns:auto auto auto;gap:0 6px;vertical-align:middle;margin-left:6px;font-size:12px">';
+if(is_.x)hwHtml+='<b style="color:#58a6ff">X:</b><b>'+(is_.x.type||'?').toUpperCase()+' @ '+(is_.x.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+is_.x.recommended_max_accel+')</span>';
+if(is_.y)hwHtml+='<b style="color:#3fb950">Y:</b><b>'+(is_.y.type||'?').toUpperCase()+' @ '+(is_.y.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+is_.y.recommended_max_accel+')</span>';
+hwHtml+='</div></div>'}
 if(hw.z_steppers)hwHtml+='<div><span style="color:#8b949e">Z Steppers:</span> '+hw.z_steppers+(hw.z_steppers>=4?' (Quad Gantry)':'')+'</div>';
 if(hw.probe_type)hwHtml+='<div><span style="color:#8b949e">Probe:</span> '+hw.probe_type+'</div>';
 if(hw.mmu_present)hwHtml+='<div><span style="color:#8b949e">MMU:</span> \u2713 Detected</div>';
