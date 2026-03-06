@@ -53,7 +53,7 @@ GCODES_DIR = os.path.expanduser('~/printer_data/gcodes')
 
 # Material-specific variables live in material_profiles_user.cfg;
 # everything else lives in auto_flow_user.cfg.
-_MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k', 'sc_flow_k'])
+_MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k', 'sc_flow_k', 'sc_max_fan', 'sc_min_fan'])
 
 
 def _parse_config_variables(filepath):
@@ -4019,6 +4019,93 @@ def generate_recommendations(data):
             'detail': f'Heater stayed within target throughout \u2014 only {lag_pct:.1f}% lag time.',
             'action': 'No changes needed. Thermal control is well-tuned.',
         })
+
+    # --- Fan-induced thermal saturation ---
+    # Detect when part cooling fan overwhelms the heater: PWM maxes out
+    # and temp drops below target specifically when fan speed is high.
+    timeline = data.get('timeline') or []
+    if timeline and not data.get('is_aggregate'):
+        sat_fan = []      # fan % during saturation samples
+        sat_drops = []     # temp drop (°C) during saturation
+        normal_fan = []    # fan % when heater is coping fine
+        active_pts = 0
+
+        for pt in timeline:
+            pw = pt.get('pw', 0)
+            ta = pt.get('ta', 0)
+            tt = pt.get('tt', 0)
+            fn = pt.get('fn', 0)
+            fl = pt.get('f', 0)
+
+            if fl <= 0:
+                continue  # skip idle / travel
+            active_pts += 1
+            temp_drop = tt - ta
+
+            if pw >= 0.95 and temp_drop >= 1.5:
+                sat_fan.append(fn)
+                sat_drops.append(temp_drop)
+            elif pw < 0.85 and temp_drop < 1.0:
+                normal_fan.append(fn)
+
+        if len(sat_fan) >= 5 and active_pts > 0:
+            avg_sat_fan = statistics.mean(sat_fan)
+            avg_normal_fan = statistics.mean(normal_fan) if normal_fan else 0
+            max_drop = max(sat_drops)
+            avg_drop = statistics.mean(sat_drops)
+            sat_pct = len(sat_fan) / active_pts * 100
+
+            # Fan-correlated: saturation happens while fan is delivering
+            # significant cooling load.  We don't require fan to be *higher*
+            # during saturation vs normal — PLA often runs fan near-constant,
+            # and the saturation is caused by the combined fan + flow load.
+            # A meaningful fan (>20% actual duty) during saturation means
+            # reducing it will give the heater more thermal headroom.
+            fan_correlated = avg_sat_fan > 20
+
+            if fan_correlated:
+                current_sc_max = _get_config_value('sc_max_fan', material)
+                if current_sc_max is None:
+                    current_sc_max = 1.0
+
+                # Calculate reduction: larger temp drops need bigger cuts
+                reduction = min(0.35, max(0.10, avg_drop / 8.0))
+                suggested = round(current_sc_max * (1 - reduction), 2)
+                suggested = max(0.30, min(0.95, suggested))
+
+                severity = 'bad' if max_drop > 2.5 or sat_pct > 5 else 'warn'
+
+                rec = {
+                    'severity': severity,
+                    'category': 'Thermal',
+                    'title': 'Part cooling fan is overwhelming the heater',
+                    'detail': (
+                        f'When the part fan exceeds ~{avg_sat_fan:.0f}%, the heater '
+                        f'maxes out (PWM \u226595%) and temperature drops up to '
+                        f'{max_drop:.1f}\u00b0C below target. This happened in '
+                        f'{len(sat_fan)} samples ({sat_pct:.1f}% of print). '
+                        f'Average fan during saturation: {avg_sat_fan:.0f}% vs '
+                        f'{avg_normal_fan:.0f}% when the heater is coping. '
+                        f'The heater cannot deliver enough power to compensate '
+                        f'for fan cooling at high flow rates \u2014 this causes '
+                        f'under-extrusion banding visible on walls.'
+                    ),
+                    'action': (
+                        f'Reduce sc_max_fan for {material or "this material"} '
+                        f'to limit part cooling to what the heater can sustain. '
+                        f'Also verify PID was tuned with the fan running '
+                        f'(run M106 S255 before PID_CALIBRATE).'
+                    ),
+                }
+                chg = _suggest_change(
+                    'sc_max_fan', 'reduce',
+                    round(current_sc_max - suggested, 2),
+                    material=material,
+                    minimum=0.30, maximum=0.95,
+                )
+                if chg:
+                    rec['config_changes'] = [chg]
+                recs.append(rec)
 
     # --- PA stability ---
     pa_zones = pa.get('oscillation_zones', [])
