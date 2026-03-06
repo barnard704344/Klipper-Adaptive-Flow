@@ -6301,12 +6301,12 @@ else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,fa
 function rVib(){
 var vb=D.vibration;
 if(!vb||!vb.summary){
-var mc=D.adxl_mcu||'';
-var ml=mc.toLowerCase();
+var mcuN=D.adxl_mcu||'';
+var ml=mcuN.toLowerCase();
 var is8bit=(ml.indexOf('atmega')>=0||ml.indexOf('at90')>=0);
 var h='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
 if(is8bit){
-h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) is an 8-bit processor and does not support during-print ADXL sampling.</p>'+
+h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mcuN+'</b>) is an 8-bit processor and does not support during-print ADXL sampling.</p>'+
 '<p style="color:#8b949e;margin-top:8px">8-bit AVR MCUs have limited step buffers &mdash; reading the ADXL345 over SPI during a print stalls motion planning and causes &ldquo;Timer too close&rdquo; errors. '+
 'Upgrading to a 32-bit board (STM32, RP2040, etc.) would allow live vibration monitoring.</p>';
 }else{
