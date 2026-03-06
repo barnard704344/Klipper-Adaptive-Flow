@@ -6277,10 +6277,12 @@ function rVib(){
 var vb=D.vibration;
 if(!vb||!vb.summary){
 var mc=D.adxl_mcu||'';
+var ml=mc.toLowerCase();
+var is8bit=(ml.indexOf('atmega')>=0||ml.indexOf('at90')>=0);
 var h='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
-if(mc.toLowerCase().indexOf('atmega')>=0){
-h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) does not support during-print ADXL sampling.</p>'+
-'<p style="color:#8b949e;margin-top:8px">ATmega MCUs have limited step buffers — reading the ADXL345 over SPI during a print would stall motion planning and cause \'Timer too close\' errors. '+
+if(is8bit){
+h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) is an 8-bit processor and does not support during-print ADXL sampling.</p>'+
+'<p style="color:#8b949e;margin-top:8px">8-bit AVR MCUs have limited step buffers &mdash; reading the ADXL345 over SPI during a print stalls motion planning and causes &ldquo;Timer too close&rdquo; errors. '+
 'Upgrading to a 32-bit board (STM32, RP2040, etc.) would allow live vibration monitoring.</p>';
 }else{
 h+='<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
@@ -6767,14 +6769,13 @@ def _adxl_print_sampler_loop(log_dir):
     """
     logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s')
     logger = logging.getLogger('ADXLSampler')
-    global _adxl_sampler_active
+    global _adxl_sampler_active, _adxl_mcu_name
 
-    # --- ATmega MCU check: disable during-print sampling --------------------
-    # ATmega MCUs (atmega2560 etc.) have very limited step buffers.
+    # --- 8-bit AVR MCU check: disable during-print sampling ----------------
+    # 8-bit AVR MCUs (atmega, at90usb) have very limited step buffers.
     # ADXL SPI communication stalls gcode processing on the host, draining
     # the MCU step buffer and causing "Timer too close" shutdowns.
-    global _adxl_mcu_name
-    _atmega_mcu = False
+    _8bit_mcu = False
     for _attempt in range(6):
         mcu_data = _moonraker_query('/printer/objects/query?mcu')
         if mcu_data:
@@ -6782,11 +6783,12 @@ def _adxl_print_sampler_loop(log_dir):
                         .get('mcu', {}).get('mcu_constants', {})
                         .get('MCU', ''))
             _adxl_mcu_name = mcu_name
-            if 'atmega' in mcu_name.lower():
-                _atmega_mcu = True
+            ml = mcu_name.lower()
+            if 'atmega' in ml or 'at90' in ml:
+                _8bit_mcu = True
                 logger.info(
-                    f"Main MCU is {mcu_name} — ADXL during-print sampling "
-                    "DISABLED (insufficient step buffer for safe SPI reads)"
+                    f"Main MCU is {mcu_name} (8-bit AVR) — ADXL during-print "
+                    "sampling DISABLED (insufficient step buffer)"
                 )
             break
         time.sleep(5)
@@ -6821,9 +6823,9 @@ def _adxl_print_sampler_loop(log_dir):
                 initial_delay_done = False
                 consecutive_failures = 0
                 current_interval = _ADXL_SAMPLE_INTERVAL
-                _adxl_sampler_active = not _atmega_mcu
-                if _atmega_mcu:
-                    logger.info(f"Print started: {print_filename} — ADXL sampling SKIPPED (ATmega MCU)")
+                _adxl_sampler_active = not _8bit_mcu
+                if _8bit_mcu:
+                    logger.info(f"Print started: {print_filename} — ADXL sampling SKIPPED (8-bit MCU)")
                 else:
                     logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
 
