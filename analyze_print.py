@@ -3466,6 +3466,7 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
             ('top_surface_speed', 'Top surface'),
         ]
         speed_lines = []
+        per_setting_changes = []
         for sk, label in _speed_keys:
             cur = sls.get(sk)
             if cur is not None:
@@ -3480,6 +3481,7 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
                 new_v = min(new_v, max_v)
                 if new_v > cur_v:
                     speed_lines.append(f'{label}: {int(cur_v)} → {new_v} mm/s')
+                    per_setting_changes.append({'key': sk, 'current': int(cur_v), 'suggested': new_v})
 
         detail_text = (f'Increase speeds by ~{speed_increase_pct}% — avg flow rises from '
                        f'{avg_flow:.1f} to ~{new_avg_flow} mm³/s '
@@ -3491,6 +3493,7 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
             'what': 'Increase print speeds',
             'detail': detail_text,
             'impact': 'faster prints',
+            'per_setting': per_setting_changes,
         })
 
     if accel_headroom and accel_headroom['pct_used'] < 70:
@@ -5732,6 +5735,21 @@ var hi=D.hotend_info;
 /* --- Build lookup from profile advice keyed by setting name --- */
 var advMap={};
 pa.forEach(function(a){advMap[a.setting]=a});
+
+/* Merge boost optimization per-setting suggestions into advMap */
+var bo=D.boost_optimization;
+if(bo&&bo.suggestions){
+bo.suggestions.forEach(function(sg){
+if(sg.per_setting){
+sg.per_setting.forEach(function(ps){
+var a=advMap[ps.key];
+if(a&&!a.suggestion){
+a.suggestion=ps.suggested+' mm/s';
+a.verdict='warn';
+a.reason='\ud83d\ude80 Boost data: increase to '+ps.suggested+' mm/s. '+a.reason}
+else if(a&&a.suggestion){
+a.reason='\ud83d\ude80 Boost data agrees: '+ps.suggested+' mm/s. '+a.reason}
+})}})}
 
 /* --- Unified printer/hotend card --- */
 h+='<div class="box" style="padding:14px 16px">';
