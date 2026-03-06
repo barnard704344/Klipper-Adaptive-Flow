@@ -1754,11 +1754,20 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'safe limit of {safe_flow} mm\u00b3/s but within burst peak '
                  f'({peak_flow}). Short bursts OK, sustained sections may struggle.')
         elif headroom < 3:
-            _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
-                 'warn', None,
-                 f'Only {headroom:.1f} mm\u00b3/s headroom below Revo {variant} safe limit '
-                 f'({safe_flow} mm\u00b3/s, E3D data). The adaptive flow system needs room '
-                 f'to boost \u2014 consider slowing infill by 10\u201315%.')
+            # If boost optimization says there's room to go faster, the static
+            # "slow down" advice contradicts actual print data — downgrade.
+            if boost_speed_increase_pct is not None and boost_speed_increase_pct >= 5:
+                _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                     'info', None,
+                     f'Peak flow near Revo {variant} safe limit '
+                     f'({safe_flow} mm\u00b3/s, E3D data) but actual print data '
+                     f'shows thermal and flow headroom remain.')
+            else:
+                _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
+                     'warn', None,
+                     f'Only {headroom:.1f} mm\u00b3/s headroom below Revo {variant} safe limit '
+                     f'({safe_flow} mm\u00b3/s, E3D data). The adaptive flow system needs room '
+                     f'to boost \u2014 consider slowing infill by 10\u201315%.')
         else:
             _add('_flow_headroom', 'Summary', f'{peak_actual} mm\u00b3/s peak',
                  'good', None,
