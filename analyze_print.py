@@ -6610,7 +6610,7 @@ def _is_toolhead_busy():
     est_time = th.get('estimated_print_time', 0)
     buffer_time = print_time - est_time
     if 0 < buffer_time < _ADXL_MIN_BUFFER_TIME:
-        logger.debug(
+        logging.getLogger('ADXLSampler').debug(
             f"  Deferring ADXL sample — buffer_time={buffer_time:.2f}s "
             f"< {_ADXL_MIN_BUFFER_TIME}s"
         )
@@ -6621,61 +6621,79 @@ def _is_toolhead_busy():
 
 def _take_adxl_sample():
     """Take a single ADXL burst sample. Returns vibration metrics dict or None.
-    
+
     Sequence: drain orphan → start MEASURE → wait → stop MEASURE → wait for CSV → parse.
-    
+
     IMPORTANT: Klipper's ACCELEROMETER_MEASURE is a toggle.  If bg_client is
     None it starts; if bg_client exists it stops and writes a CSV.  A previous
     failed sample can leave the accelerometer running, which inverts the
     start/stop semantics of the next attempt.  We therefore always send a
-    "drain" stop first (NAME=_drain) to guarantee bg_client is None before
-    we issue the real start command.
+    "drain" toggle-pair before the real sample to guarantee bg_client is None.
+
+    During active printing, gcode commands queue behind print moves, so we
+    use generous timeouts (30s) to avoid curl timing out while Klipper
+    catches up — a timed-out curl still leaves the command queued in Klipper,
+    which silently desynchronises the toggle state.
     """
     sampler_log = logging.getLogger('ADXLSampler')
+    _ADXL_CMD_TIMEOUT = 30   # generous for during-print gcode queue delays
 
-    # --- 1. Drain any orphaned measurement ----------------------------------
-    # This stop will be a no-op if nothing is running (Klipper starts a new
-    # measurement when bg_client is None, so we catch that and immediately
-    # stop it again).  Either way, after this block bg_client is guaranteed
-    # to be None.
-    drain_csv = '/tmp/adxl345-_drain.csv'
-    _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain', timeout=10)
-    time.sleep(0.5)
-    # If the drain actually started instead of stopped (nothing was running),
-    # we need to stop it.  Check if the drain CSV was written:
-    if not os.path.exists(drain_csv):
-        # No CSV → the drain *started* a measurement; stop it now
-        _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain', timeout=10)
-        time.sleep(0.5)
-    # Clean up drain CSV
+    # --- 0. Clean up any stale files from previous attempts -----------------
     for p in glob.glob('/tmp/adxl345-_drain*.csv'):
         try:
             os.remove(p)
         except OSError:
             pass
-
-    # --- 2. Clean up any old autosample CSV ---------------------------------
     if os.path.exists(_ADXL_SAMPLE_CSV):
         try:
             os.remove(_ADXL_SAMPLE_CSV)
         except OSError:
             pass
 
-    # --- 3. Start recording -------------------------------------------------
-    if not _moonraker_gcode('ACCELEROMETER_MEASURE', timeout=10):
+    # --- 1. Drain any orphaned measurement ----------------------------------
+    # First toggle: if accel is running ⇒ stops it (writes _drain CSV);
+    #               if accel is idle   ⇒ starts it (no CSV yet).
+    drain_csv = '/tmp/adxl345-_drain.csv'
+    if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain',
+                            timeout=_ADXL_CMD_TIMEOUT):
+        sampler_log.warning("  Drain command timed out — aborting sample")
+        return None
+
+    # Give Klipper a moment to write the CSV if it stopped a measurement
+    time.sleep(0.5)
+
+    if not os.path.exists(drain_csv):
+        # No CSV → the drain *started* a measurement; second toggle stops it
+        if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain',
+                                timeout=_ADXL_CMD_TIMEOUT):
+            sampler_log.warning("  Drain stop command timed out — aborting")
+            return None
+        time.sleep(0.5)
+
+    # Clean up drain artefacts
+    for p in glob.glob('/tmp/adxl345-_drain*.csv'):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    # --- 2. Start recording -------------------------------------------------
+    if not _moonraker_gcode('ACCELEROMETER_MEASURE',
+                            timeout=_ADXL_CMD_TIMEOUT):
         sampler_log.warning("  ACCELEROMETER_MEASURE start command failed")
         return None
 
-    # --- 4. Let it record for the sample duration ---------------------------
+    # --- 3. Let it record for the sample duration ---------------------------
     time.sleep(_ADXL_SAMPLE_DURATION)
 
-    # --- 5. Stop recording — Klipper writes CSV -----------------------------
-    if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=autosample', timeout=15):
+    # --- 4. Stop recording — Klipper writes CSV -----------------------------
+    if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=autosample',
+                            timeout=_ADXL_CMD_TIMEOUT):
         sampler_log.warning("  ACCELEROMETER_MEASURE stop command failed")
         return None
 
-    # --- 6. Wait for CSV to appear and have data (up to 4 seconds) ----------
-    for _ in range(40):
+    # --- 5. Wait for CSV to appear and have data (up to 5 seconds) ----------
+    for _ in range(50):
         time.sleep(0.1)
         if os.path.exists(_ADXL_SAMPLE_CSV):
             try:
