@@ -5788,17 +5788,17 @@ if(phw.probe_type)h+='<div><span style="color:#8b949e">Probe:</span> <b>'+phw.pr
 if(phw.mmu_present)h+='<div><span style="color:#d29922">MMU Present</span></div>';
 h+='</div></div>'}
 
-/* --- Performance/Utilization summary items --- */
-var perfItems=pa.filter(function(a){return a.category==='Performance'});
+/* --- Performance/Utilization summary items (only show bad/warn, skip info/good as redundant with Boost panel) --- */
+var perfItems=pa.filter(function(a){return a.category==='Performance'&&(a.verdict==='bad'||a.verdict==='warn')});
 if(perfItems.length){
 h+='<div class="box">';
 perfItems.forEach(function(a){
-var clrMap={'bad':'#f85149','warn':'#d29922','good':'#3fb950','info':'#58a6ff'};
-var bgMap={'bad':'rgba(248,81,73,0.1)','warn':'rgba(210,153,34,0.1)','good':'rgba(63,185,80,0.1)','info':'rgba(88,166,255,0.1)'};
-var iconMap={'bad':'\u26a1','warn':'\u26a0\ufe0f','good':'\u2705','info':'\u2139\ufe0f'};
-h+='<div style="padding:12px 16px;border-left:3px solid '+clrMap[a.verdict]+';background:'+bgMap[a.verdict]+';border-radius:4px;margin-bottom:4px">'+
-'<div style="font-weight:700;color:'+clrMap[a.verdict]+';font-size:14px">'+iconMap[a.verdict]+' '+a.current+'</div>'+
-'<div style="color:#c9d1d9;font-size:13px;margin:4px 0">'+a.reason+'</div></div>'});
+var clrMap={'bad':'#f85149','warn':'#d29922'};
+var bgMap={'bad':'rgba(248,81,73,0.1)','warn':'rgba(210,153,34,0.1)'};
+var iconMap={'bad':'\u26a1','warn':'\u26a0\ufe0f'};
+h+='<div style="padding:10px 16px;border-left:3px solid '+clrMap[a.verdict]+';background:'+bgMap[a.verdict]+';border-radius:4px;margin-bottom:4px">'+
+'<div style="font-weight:700;color:'+clrMap[a.verdict]+';font-size:13px">'+iconMap[a.verdict]+' '+a.current+'</div>'+
+'<div style="color:#c9d1d9;font-size:12px;margin-top:4px">'+a.reason+'</div></div>'});
 h+='</div>'}
 
 /* --- Ordered list of all settings to show --- */
@@ -5892,12 +5892,12 @@ var vColors={'significant_headroom':'#3fb950','moderate_headroom':'#58a6ff','at_
 var vIcons={'significant_headroom':'\ud83d\ude80','moderate_headroom':'\u2139\ufe0f','at_limit':'\u2705','well_tuned':'\u2705'};
 var vClr=vColors[bo.verdict]||'#8b949e';
 var vIcon=vIcons[bo.verdict]||'';
-h+='<div class="box" style="border-left:3px solid '+vClr+';margin-top:16px">';
-h+='<div style="font-weight:700;font-size:15px;color:'+vClr+';margin-bottom:8px">'+vIcon+' Optimization Analysis <span style="font-size:12px;font-weight:400;color:#8b949e">(based on actual print data)</span></div>';
-h+='<div style="color:#c9d1d9;font-size:13px;margin-bottom:12px">'+bo.verdict_text+'</div>';
+h+='<div class="box" style="border-left:3px solid '+vClr+'">';
+h+='<div style="font-weight:700;font-size:14px;color:'+vClr+';margin-bottom:6px">'+vIcon+' Optimization Analysis <span style="font-size:11px;font-weight:400;color:#8b949e">(based on actual print data)</span></div>';
+h+='<div style="color:#c9d1d9;font-size:13px;margin-bottom:10px">'+bo.verdict_text+'</div>';
 
 /* Headroom gauges */
-h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:12px">';
+h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:10px">';
 var gauges=[
 {label:'Heater',val:bo.thermal.headroom_pct,unit:'% PWM free',limit:bo.thermal.at_limit},
 {label:'Flow',val:bo.flow.headroom_pct,unit:'% headroom',limit:bo.flow.at_limit},
@@ -5943,12 +5943,13 @@ detHtml+='</div>';}
 var applyBtn='';
 if(sg.config_var&&sg.suggested_value!=null){
 var bId='boost_apply_'+sg.config_var;
-applyBtn='<div style="margin-top:6px"><button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:3px 12px" '+
+applyBtn='<button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:4px 14px;flex-shrink:0;align-self:center" '+
 'onclick="applyChange(\\''+bId+'\\',\\''+sg.config_var+'\\','+sg.suggested_value+',\\''+(sg.material||'')+'\\')"'+
-'>Apply '+sg.config_var+' = '+sg.suggested_value+'</button></div>';}
-h+='<div style="padding:8px 10px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
+'>Apply '+sg.config_var+' = '+sg.suggested_value+'</button>';}
+h+='<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
+'<div style="flex:1;min-width:0">'+
 '<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+sg.impact+'</span></div>'+
-detHtml+applyBtn+'</div>'});
+detHtml+'</div>'+applyBtn+'</div>'});
 h+='</div>'}
 
 /* Per-bracket table */
