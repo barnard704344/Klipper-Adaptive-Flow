@@ -6263,7 +6263,7 @@ var applyBtn='';
 if(sg.config_var&&sg.suggested_value!=null){
 var bId='rec_apply_'+sg.config_var;
 applyBtn='<button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:4px 14px;flex-shrink:0;align-self:center" '+
-'onclick="applyChange(\''+bId+'\'  ,\''+sg.config_var+'\','+sg.suggested_value+',\''+(sg.material||'')+'\')"'+
+'onclick="applyChange(\\''+bId+'\\',\\''+sg.config_var+'\\','+sg.suggested_value+',\\''+(sg.material||'')+'\\')"'+
 '>Apply '+sg.config_var+' = '+sg.suggested_value+'</button>';}
 html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
 '<div style="flex:1;min-width:0">'+
