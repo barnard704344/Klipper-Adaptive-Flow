@@ -5062,7 +5062,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         'thermal_lag': None, 'headroom': None, 'pa_stability': None,
         'dynz_zones': {}, 'speed_flow': None, 'trends': None,
         'sessions': [], 'selected_file': '', 'is_live': False,
-        'materials': [],
+        'materials': [], 'adxl_mcu': _adxl_mcu_name,
     }
 
     all_sessions = find_recent_sessions(log_dir, count=50, material=material)
@@ -6276,26 +6276,17 @@ else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,fa
 function rVib(){
 var vb=D.vibration;
 if(!vb||!vb.summary){
-var msg='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
-fetch('//' + location.hostname + ':7125/printer/objects/query?mcu')
-.then(function(r){return r.json()})
-.then(function(d){
-var mcu=(d.result||{}).status||{};
-var mc=((mcu.mcu||{}).mcu_constants||{}).MCU||'';
+var mc=D.adxl_mcu||'';
+var h='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
 if(mc.toLowerCase().indexOf('atmega')>=0){
-msg+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) does not support during-print ADXL sampling.</p>'+
+h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) does not support during-print ADXL sampling.</p>'+
 '<p style="color:#8b949e;margin-top:8px">ATmega MCUs have limited step buffers — reading the ADXL345 over SPI during a print would stall motion planning and cause \'Timer too close\' errors. '+
 'Upgrading to a 32-bit board (STM32, RP2040, etc.) would allow live vibration monitoring.</p>';
 }else{
-msg+='<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
+h+='<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
 '<p style="color:#8b949e;margin-top:12px">Samples are taken every 5 minutes throughout the print. Each sample captures a short burst of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
 '<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p>';}
-ca.innerHTML=msg+'</div>';})
-.catch(function(){
-ca.innerHTML=msg+
-'<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
-'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p></div>';});
-return}
+ca.innerHTML=h+'</div>';return}
 var sm=vb.summary;
 var ns=vb.n_samples||0;
 var qs=sm.quality_score;var qc=qs>=80?'#3fb950':qs>=50?'#d29922':'#f85149';
@@ -6506,6 +6497,7 @@ _ADXL_MIN_BUFFER_TIME = 3.0   # seconds — defer sampling when MCU step buffer 
 _ADXL_MAX_BACKOFF = 1800      # max backoff interval in seconds (30 min)
 _adxl_sampler_active = False   # True while a print is being sampled
 _adxl_sampler_enabled = True   # Controlled at runtime by ATmega MCU detection
+_adxl_mcu_name = ''            # Populated by sampler thread on startup (e.g. 'atmega2560')
 
 
 def _parse_adxl_csv(csv_path):
@@ -6781,6 +6773,7 @@ def _adxl_print_sampler_loop(log_dir):
     # ATmega MCUs (atmega2560 etc.) have very limited step buffers.
     # ADXL SPI communication stalls gcode processing on the host, draining
     # the MCU step buffer and causing "Timer too close" shutdowns.
+    global _adxl_mcu_name
     _atmega_mcu = False
     for _attempt in range(6):
         mcu_data = _moonraker_query('/printer/objects/query?mcu')
@@ -6788,6 +6781,7 @@ def _adxl_print_sampler_loop(log_dir):
             mcu_name = (mcu_data.get('result', {}).get('status', {})
                         .get('mcu', {}).get('mcu_constants', {})
                         .get('MCU', ''))
+            _adxl_mcu_name = mcu_name
             if 'atmega' in mcu_name.lower():
                 _atmega_mcu = True
                 logger.info(
