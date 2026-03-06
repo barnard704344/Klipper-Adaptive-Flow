@@ -6276,10 +6276,25 @@ else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,fa
 function rVib(){
 var vb=D.vibration;
 if(!vb||!vb.summary){
-ca.innerHTML='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>'+
-'<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
+var msg='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
+fetch('//' + location.hostname + ':7125/printer/objects/query?mcu')
+.then(function(r){return r.json()})
+.then(function(d){
+var mcu=(d.result||{}).status||{};
+var mc=((mcu.mcu||{}).mcu_constants||{}).MCU||'';
+if(mc.toLowerCase().indexOf('atmega')>=0){
+msg+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mc+'</b>) does not support during-print ADXL sampling.</p>'+
+'<p style="color:#8b949e;margin-top:8px">ATmega MCUs have limited step buffers — reading the ADXL345 over SPI during a print would stall motion planning and cause \'Timer too close\' errors. '+
+'Upgrading to a 32-bit board (STM32, RP2040, etc.) would allow live vibration monitoring.</p>';
+}else{
+msg+='<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
 '<p style="color:#8b949e;margin-top:12px">Samples are taken every 5 minutes throughout the print. Each sample captures a short burst of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
-'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p></div>';
+'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p>';}
+ca.innerHTML=msg+'</div>';})
+.catch(function(){
+ca.innerHTML=msg+
+'<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
+'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p></div>';});
 return}
 var sm=vb.summary;
 var ns=vb.n_samples||0;
