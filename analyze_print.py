@@ -6490,7 +6490,7 @@ _ADXL_SPEED_THRESHOLD = 80    # mm/s — defer sampling when toolhead is moving 
 _ADXL_MIN_BUFFER_TIME = 3.0   # seconds — defer sampling when MCU step buffer is below this
 _ADXL_MAX_BACKOFF = 1800      # max backoff interval in seconds (30 min)
 _adxl_sampler_active = False   # True while a print is being sampled
-_adxl_sampler_enabled = True   # Set to False via --no-adxl to disable entirely
+_adxl_sampler_enabled = True   # Controlled at runtime by ATmega MCU detection
 
 
 def _parse_adxl_csv(csv_path):
@@ -6762,6 +6762,26 @@ def _adxl_print_sampler_loop(log_dir):
     logger = logging.getLogger('ADXLSampler')
     global _adxl_sampler_active
 
+    # --- ATmega MCU check: disable during-print sampling --------------------
+    # ATmega MCUs (atmega2560 etc.) have very limited step buffers.
+    # ADXL SPI communication stalls gcode processing on the host, draining
+    # the MCU step buffer and causing "Timer too close" shutdowns.
+    _atmega_mcu = False
+    for _attempt in range(6):
+        mcu_data = _moonraker_query('/printer/objects/query?mcu')
+        if mcu_data:
+            mcu_name = (mcu_data.get('result', {}).get('status', {})
+                        .get('mcu', {}).get('mcu_constants', {})
+                        .get('MCU', ''))
+            if 'atmega' in mcu_name.lower():
+                _atmega_mcu = True
+                logger.info(
+                    f"Main MCU is {mcu_name} — ADXL during-print sampling "
+                    "DISABLED (insufficient step buffer for safe SPI reads)"
+                )
+            break
+        time.sleep(5)
+
     last_state = 'standby'
     samples = []
     print_filename = ''
@@ -6792,8 +6812,11 @@ def _adxl_print_sampler_loop(log_dir):
                 initial_delay_done = False
                 consecutive_failures = 0
                 current_interval = _ADXL_SAMPLE_INTERVAL
-                _adxl_sampler_active = True
-                logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
+                _adxl_sampler_active = not _atmega_mcu
+                if _atmega_mcu:
+                    logger.info(f"Print started: {print_filename} — ADXL sampling SKIPPED (ATmega MCU)")
+                else:
+                    logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
 
             # ---------- Currently printing ----------
             if state == 'printing' and _adxl_sampler_active:
