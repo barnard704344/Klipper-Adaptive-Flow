@@ -5738,23 +5738,27 @@ var hi=D.hotend_info;
 var advMap={};
 pa.forEach(function(a){advMap[a.setting]=a});
 
-/* --- Material & file header --- */
-h+='<div class="sl-hdr"><span class="sl-mat"><span class="sl-icon">\u25cf</span>'+mat+'</span>';
+/* --- Unified printer/hotend card --- */
+h+='<div class="box" style="padding:14px 16px">';
+
+/* Material & file row */
+h+='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
+h+='<span class="sl-mat"><span class="sl-icon">\u25cf</span>'+mat+'</span>';
 if(fname)h+='<span class="sl-file">'+fname+'</span>';
 h+='</div>';
 
-/* --- Hotend info (compact one-liner) --- */
+/* Hotend info row */
 if(hi){
 var sfLabel=hi.safe_flow||hi.max_safe_flow||'?';
 var pkLabel=hi.peak_flow||'?';
 var ndLabel=hi.nozzle_diameter||'0.4';
-h+='<div class="box" style="padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
-'<span style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:8px;padding:6px 12px;font-weight:700;color:#fff;font-size:14px">Revo '+(hi.nozzle_type||'HF')+'</span>'+
+h+='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid #21262d;margin-bottom:10px">'+
+'<span style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:8px;padding:5px 12px;font-weight:700;color:#fff;font-size:13px">Revo '+(hi.nozzle_type||'HF')+'</span>'+
 '<span style="color:#e6edf3;font-size:13px">E3D Revo '+(hi.nozzle_type||'HF')+' '+ndLabel+'mm \u2022 '+(hi.heater_wattage||'?')+'W \u2022 '+mat+'</span>'+
 '<span style="color:#8b949e;font-size:12px">Safe: <b style="color:#3fb950">'+sfLabel+'</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+'</b> mm\u00b3/s</span>'+
 '</div>'}
 
-/* --- Printer Hardware panel --- */
+/* Printer Hardware grid */
 var phw=D.printer_hw;
 if(phw&&Object.keys(phw).length>0){
 var ext=phw.extruder||{};
@@ -5764,14 +5768,12 @@ var isx=is_hw.x||{};
 var isy=is_hw.y||{};
 var fanPct=fan.max_power!==undefined?Math.round(fan.max_power*100):100;
 var fanClr=fanPct<100?'#f85149':'#3fb950';
-h+='<div class="box" style="padding:12px 16px">';
-h+='<div style="font-weight:700;font-size:13px;color:#58a6ff;margin-bottom:8px">\ud83d\udd27 Detected Printer Hardware</div>';
 /* Compute practical limits from input shaper (the real constraint) */
 var shaperMinAccel=Math.min(isx.recommended_max_accel||99999,isy.recommended_max_accel||99999);
 var shaperMaxAccel=Math.max(isx.recommended_max_accel||0,isy.recommended_max_accel||0);
 var hasShaper=shaperMinAccel<99999;
 var practicalAccel=hasShaper?shaperMinAccel:phw.firmware_max_accel;
-h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;font-size:12px">';
+h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;font-size:12px">';
 if(phw.kinematics)h+='<div><span style="color:#8b949e">Kinematics:</span> <b>'+phw.kinematics.toUpperCase()+'</b></div>';
 if(phw.build_volume)h+='<div><span style="color:#8b949e">Build:</span> <b>'+phw.build_volume.join('\u00d7')+'mm</b></div>';
 if(hasShaper){
@@ -5786,7 +5788,9 @@ h+='<div><span style="color:#8b949e">Part Fan:</span> <b style="color:'+fanClr+'
 if(phw.z_steppers>=4)h+='<div><span style="color:#8b949e">Z:</span> <b>Quad Gantry</b> ('+phw.z_steppers+' steppers)</div>';
 if(phw.probe_type)h+='<div><span style="color:#8b949e">Probe:</span> <b>'+phw.probe_type+'</b></div>';
 if(phw.mmu_present)h+='<div><span style="color:#d29922">MMU Present</span></div>';
-h+='</div></div>'}
+h+='</div>'}
+
+h+='</div>';
 
 /* --- Performance/Utilization summary items (only show bad/warn, skip info/good as redundant with Boost panel) --- */
 var perfItems=pa.filter(function(a){return a.category==='Performance'&&(a.verdict==='bad'||a.verdict==='warn')});
