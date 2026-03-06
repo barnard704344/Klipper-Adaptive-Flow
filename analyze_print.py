@@ -4494,17 +4494,13 @@ def generate_recommendations(data):
         can_increase = bopt.get('can_increase', [])
 
         if v == 'significant_headroom' and increase >= 25:
-            detail_parts = [bopt['verdict_text']]
-            for ci in can_increase[:3]:
-                detail_parts.append(f"• {ci['aspect']}: {ci['headroom']}")
-            action_parts = []
-            for sg in suggestions[:3]:
-                action_parts.append(f"{sg['what']}: {sg['detail']}")
             rec = {
                 'severity': 'info', 'category': 'Optimization',
                 'title': f'Room to go ~{increase}% faster (based on actual print data)',
-                'detail': '\n'.join(detail_parts),
-                'action': '\n'.join(action_parts) if action_parts else 'See the Slicer Profile tab for per-setting suggestions.',
+                'detail': bopt['verdict_text'],
+                'action': 'See per-setting suggestions below.',
+                'optimization_suggestions': suggestions[:3],
+                'optimization_headroom': can_increase[:3],
             }
             # If flow_k increase is suggested, add config change
             flow_k_sug = [sg for sg in suggestions if sg.get('config_var') == 'flow_k']
@@ -4515,14 +4511,13 @@ def generate_recommendations(data):
             recs.append(rec)
 
         elif v == 'moderate_headroom' and increase >= 10:
-            detail_parts = [bopt['verdict_text']]
-            for ci in can_increase[:2]:
-                detail_parts.append(f"• {ci['aspect']}: {ci['headroom']}")
             recs.append({
                 'severity': 'info', 'category': 'Optimization',
                 'title': f'Moderate room to optimize (~{increase}% headroom)',
-                'detail': '\n'.join(detail_parts),
-                'action': 'Check the Slicer Profile tab for specific speed/accel suggestions based on your hardware limits.',
+                'detail': bopt['verdict_text'],
+                'action': 'See per-setting suggestions below.',
+                'optimization_suggestions': suggestions[:3],
+                'optimization_headroom': can_increase[:2],
             })
 
         elif v == 'at_limit':
@@ -6240,8 +6235,44 @@ var html='<div class="rec sev-'+r.severity+'">'+
 '<span class="rec-cat">'+r.category+'</span>'+
 '</div>'+
 '<div class="rec-title">'+r.title+'</div>'+
-'<div class="rec-detail">'+r.detail+'</div>'+
-'<div class="rec-action">'+r.action+'</div>';
+'<div class="rec-detail">'+r.detail+'</div>';
+/* Optimization recs: render structured headroom + suggestion cards matching slicer tab */
+if(r.optimization_headroom&&r.optimization_headroom.length){
+html+='<div style="margin:8px 0">';
+html+='<div style="font-weight:600;font-size:11px;color:#58a6ff;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Available Headroom</div>';
+r.optimization_headroom.forEach(function(ci){
+html+='<div style="padding:5px 10px;background:rgba(88,166,255,0.06);border-radius:4px;margin-bottom:3px;font-size:12px">'+
+'<span style="color:#58a6ff;font-weight:600">'+ci.aspect+':</span> '+
+'<span style="color:#c9d1d9">'+ci.headroom+'</span>'+
+(ci.detail?'<div style="color:#8b949e;font-size:11px;margin-top:2px">'+ci.detail+'</div>':'')+'</div>'});
+html+='</div>'}
+if(r.optimization_suggestions&&r.optimization_suggestions.length){
+html+='<div style="margin:8px 0">';
+html+='<div style="font-weight:600;font-size:11px;color:#3fb950;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Suggestions</div>';
+r.optimization_suggestions.forEach(function(sg){
+var impactClr=(sg.impact==='cooling constraint')?'#d29922':'#3fb950';
+var detParts=(sg.detail||'').split('\\n');
+var detHtml='<div style="color:#8b949e;font-size:11px;margin-top:2px">'+detParts[0]+'</div>';
+if(detParts.length>1){
+detHtml+='<div style="margin-top:4px;padding:4px 8px;background:rgba(139,148,158,0.08);border-radius:3px;font-family:monospace;font-size:11px;color:#c9d1d9;line-height:1.6">';
+for(var di=1;di<detParts.length;di++){
+var ln=detParts[di].replace(/\u2192/g,'<span style="color:#3fb950;font-weight:600"> \u2192 </span>');
+detHtml+=ln+(di<detParts.length-1?'<br>':'');}
+detHtml+='</div>';}
+var applyBtn='';
+if(sg.config_var&&sg.suggested_value!=null){
+var bId='rec_apply_'+sg.config_var;
+applyBtn='<button id="'+bId+'" class="cfg-btn" style="font-size:11px;padding:4px 14px;flex-shrink:0;align-self:center" '+
+'onclick="applyChange(\''+bId+'\'  ,\''+sg.config_var+'\','+sg.suggested_value+',\''+(sg.material||'')+'\')"'+
+'>Apply '+sg.config_var+' = '+sg.suggested_value+'</button>';}
+html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;background:rgba(63,185,80,0.06);border-radius:4px;margin-bottom:4px;font-size:12px">'+
+'<div style="flex:1;min-width:0">'+
+'<div style="color:#3fb950;font-weight:600">'+sg.what+' <span style="font-size:10px;color:'+impactClr+';font-weight:400">'+(sg.impact||'')+'</span></div>'+
+detHtml+'</div>'+applyBtn+'</div>'});
+html+='</div>'}
+if(!r.optimization_suggestions&&!r.optimization_headroom){
+html+='<div class="rec-action">'+r.action+'</div>';}
+
 if(r.config_changes&&r.config_changes.length){
 html+='<div class="cfg-changes"><div class="cfg-hd">Suggested config changes</div>';
 r.config_changes.forEach(function(c,ci){
