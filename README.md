@@ -30,7 +30,8 @@ That's it. Adaptive Flow handles:
 | What | How |
 |------|-----|
 | **Temperature** | Dynamically boosts during high-flow moves, pre-heats 5 seconds ahead |
-| **Pressure Advance** | Sets correct PA for your material, adjusts in real-time as temp changes |
+| **Pressure Advance** | Sets correct PA for your material and nozzle, adjusts in real-time as temp changes |
+| **HF nozzle compensation** | Auto-detects HF melt zone, scales PA and smooth_time — no calibration needed |
 | **Fan speed** | Adapts to flow rate, layer time, and heater capacity |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
 | **Complex geometry** | Learns where domes and overhangs cause trouble, adapts on future prints |
@@ -41,8 +42,8 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
-- **No calibration prints.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone means these values are consistent across every Revo hotend.
-- **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
+- **No calibration prints.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone means these values are consistent across every Revo hotend — including automatic HF compensation for the larger melt zone.
+- **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
 - **Learns from every print.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the better it gets.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything.
 
@@ -116,16 +117,18 @@ Restart Klipper. Every material automatically gets appropriate scaling.
 
 All materials work out of the box with hardware-appropriate defaults:
 
-| Material | Default PA | Base Temp | Notes |
-|----------|-----------|-----------|-------|
-| PLA | 0.032 | 210–215°C | Tuned for high-flow variants |
-| PETG | 0.040 | 240–245°C | Conservative for 40W, scales up for 60W+ |
-| ABS | 0.040 | 245–250°C | Requires enclosure |
-| ASA | 0.040 | 250–255°C | Similar to ABS |
-| TPU | 0.060 | 220–225°C | Gentle ramps, slow speeds |
-| Nylon | 0.040 | 250–255°C | Dry filament before printing |
-| PC | 0.045 | 275–280°C | High-temp hotend + enclosure |
-| HIPS | 0.045 | 230–235°C | Support material |
+| Material | Default PA (Std) | PA with HF | Base Temp | Notes |
+|----------|-----------------|------------|-----------|-------|
+| PLA | 0.032 | 0.045 | 210–215°C | Tuned for high-flow variants |
+| PETG | 0.040 | 0.056 | 240–245°C | Conservative for 40W, scales up for 60W+ |
+| ABS | 0.040 | 0.056 | 245–250°C | Requires enclosure |
+| ASA | 0.040 | 0.056 | 250–255°C | Similar to ABS |
+| TPU | 0.060 | 0.084 | 220–225°C | Gentle ramps, slow speeds |
+| Nylon | 0.040 | 0.056 | 250–255°C | Dry filament before printing |
+| PC | 0.045 | 0.063 | 275–280°C | High-temp hotend + enclosure |
+| HIPS | 0.045 | 0.063 | 230–235°C | Support material |
+
+> PA with HF is auto-computed (default_pa × 1.4) when `use_high_flow_nozzle: True`. No configuration needed.
 
 Custom materials: copy any profile to `material_profiles_user.cfg` and adjust.
 
@@ -202,7 +205,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 <summary>Features in detail</summary>
 
 - **Dynamic Temperature** — Flow, speed, and acceleration-based boost with soft gating
-- **Dynamic PA** — Scales with temperature boost (hotter = lower viscosity = less PA)
+- **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
 - **Smart Cooling** — Flow-based + layer-time + heater-adaptive fan control
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers

@@ -4,13 +4,14 @@ Detailed configuration options for Klipper Adaptive Flow.
 
 ## Quick Start
 
-Most users only need to set one option in `auto_flow_user.cfg`:
+Most users only need to set two options in `auto_flow_user.cfg`:
 
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
+variable_sc_heater_wattage: 40         # 40W (stock) or 60W (upgrade)
 ```
 
-Everything else auto-configures based on your material.
+Everything else auto-configures: PA values, smooth_time, thermal parameters, fan control, and HF melt zone compensation are all derived from your nozzle type and heater wattage.
 
 ---
 
@@ -43,33 +44,39 @@ Material profiles are defined in `material_profiles.cfg`. Edit this file to cust
 Each profile is a Klipper macro:
 ```ini
 [gcode_macro _AF_PROFILE_PETG]
-variable_flow_k: 1.20           # Temp boost per mm³/s of flow
-variable_speed_boost_k: 0.08    # Temp boost per mm/s above 100mm/s
-variable_max_boost: 40.0        # Maximum temp boost cap (°C)
+variable_flow_k: 0.50           # Temp boost per mm³/s (40W base, auto-scaled)
+variable_speed_boost_k: 0.06    # Temp boost per mm/s above 100mm/s
+variable_max_boost: 15.0        # Maximum temp boost cap (°C, auto-scaled)
 variable_max_temp: 280          # Absolute temp safety limit
-variable_flow_gate: 14.0        # Flow threshold for HF nozzle (mm³/s)
-variable_flow_gate_std: 10.0    # Flow threshold for std nozzle (mm³/s)
-variable_pa_boost_k: 0.0012     # PA reduction per °C of boost
-variable_ramp_rise: 4.0         # Heat up rate (°C/s)
+variable_flow_gate: 12.0        # Flow threshold for HF nozzle (mm³/s)
+variable_flow_gate_std: 8.0     # Flow threshold for std nozzle (mm³/s)
+variable_pa_boost_k: 0.0008     # PA reduction per °C of boost
+variable_ramp_rise: 3.0         # Heat up rate (°C/s, auto-scaled)
 variable_ramp_fall: 1.5         # Cool down rate (°C/s)
-variable_default_pa: 0.060      # Default PA if not calibrated
+variable_default_pa: 0.040      # Default PA (Standard nozzle; HF auto-scales)
+variable_sc_flow_gate: 10.0     # Smart cooling flow threshold
+variable_sc_flow_k: 0.02        # Fan reduction per mm³/s above gate
+variable_sc_min_fan: 0.15       # Minimum fan speed
+variable_sc_max_fan: 0.40       # Maximum fan speed (absolute ceiling)
 gcode:
 ```
 
+> **Note:** `default_pa` values are calibrated for Standard Revo nozzles. When `use_high_flow_nozzle` is True, PA is automatically scaled by `hf_pa_scale` (1.4×) — no manual override needed.
+
 ### Default Profiles
 
-| Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA |
-|----------|--------|---------|-----------|----------|----------|------------|
-| **PLA** | 1.00 | 0.08 | 30°C | 245°C | 5.0/2.5 | 0.035 |
-| **PETG** | 1.10 | 0.10 | 40°C | 280°C | 5.0/2.0 | 0.060 |
-| **ABS** | 0.80 | 0.10 | 50°C | 290°C | 5.0/3.0 | 0.050 |
-| **ASA** | 0.80 | 0.10 | 50°C | 295°C | 5.0/3.0 | 0.050 |
-| **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.200 |
-| **Nylon** | 0.90 | 0.07 | 35°C | 275°C | 3.0/1.5 | 0.055 |
-| **PC** | 0.70 | 0.10 | 50°C | 310°C | 5.0/2.5 | 0.045 |
-| **HIPS** | 0.75 | 0.08 | 45°C | 250°C | 4.0/2.0 | 0.045 |
+| Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA (Std) | PA with HF (auto) |
+|----------|--------|---------|-----------|----------|----------|------------------|--------------------|
+| **PLA** | 0.50 | 0.06 | 12°C | 245°C | 2.5/1.5 | 0.032 | 0.045 |
+| **PETG** | 0.50 | 0.06 | 15°C | 280°C | 3.0/1.5 | 0.040 | 0.056 |
+| **ABS** | 0.50 | 0.08 | 18°C | 290°C | 3.0/2.0 | 0.040 | 0.056 |
+| **ASA** | 0.50 | 0.08 | 18°C | 295°C | 3.0/2.0 | 0.040 | 0.056 |
+| **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.060 | 0.084 |
+| **Nylon** | 0.50 | 0.06 | 18°C | 275°C | 2.5/1.5 | 0.040 | 0.056 |
+| **PC** | 0.45 | 0.06 | 18°C | 310°C | 3.0/2.0 | 0.045 | 0.063 |
+| **HIPS** | 0.50 | 0.06 | 18°C | 250°C | 3.0/1.5 | 0.045 | 0.063 |
 
-> **Note:** The PLA profile is tuned for high-flow variants (PLA+, PLA HF) commonly used with Revo HF nozzles. At 18mm³/s with a 215°C base temp, the system will boost to ~233°C. See recommended base temps below.
+> **Note:** Flow K, Ramp ↑, Max Boost, and Speed K are 40W base values — automatically scaled up for 60W+ heaters. PA with HF column shows the auto-computed value when `use_high_flow_nozzle: True` (hf_pa_scale × default_pa).
 
 ### Recommended Base Temperatures
 
@@ -91,10 +98,12 @@ Set these start temperatures in your slicer. The system will automatically boost
 - **Medium flow** (10-15mm³/s): General purpose printing, balanced speed and quality (80-150mm/s)
 - **High flow** (15-20mm³/s): Speed-focused printing with high-flow filament and nozzles (150-300mm/s)
 
-**Temperature Boost Examples:**
-- PLA at 18mm³/s: 215°C base + (18 × 1.00) = 233°C final
-- PETG at 18mm³/s: 240°C base + (18 × 1.10) = 259.8°C final
-- ABS at 15mm³/s: 245°C base + (15 × 0.80) = 257°C final
+**Temperature Boost Examples (40W heater):**
+- PLA at 16mm³/s: 215°C base + (16−12) × 0.50 = 217°C final
+- PETG at 16mm³/s: 240°C base + (16−12) × 0.50 = 242°C final
+- ABS at 18mm³/s: 245°C base + (18−14) × 0.50 = 247°C final
+
+Boosts are modest by design for 40W heaters — only demanding what the heater can actually deliver. With a 60W heater, flow_k auto-scales to ~0.65, giving larger boosts.
 
 ### Additional PLA Temperature Details
 
@@ -119,7 +128,11 @@ For PLA specifically, more granular temperature recommendations based on exact f
 | `pa_boost_k` | PA reduction per °C of boost |
 | `ramp_rise` | How fast temp can increase (°C/s) |
 | `ramp_fall` | How fast temp can decrease (°C/s) |
-| `default_pa` | PA value if user hasn't calibrated |
+| `default_pa` | PA value if user hasn't calibrated (Std nozzle base) |
+| `sc_flow_gate` | Smart cooling: flow threshold for fan reduction |
+| `sc_flow_k` | Smart cooling: fan reduction per mm³/s above gate |
+| `sc_min_fan` | Smart cooling: minimum fan speed (0.0-1.0) |
+| `sc_max_fan` | Smart cooling: maximum fan speed — absolute ceiling |
 
 ### Adding Custom Materials
 
@@ -132,7 +145,26 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ## Advanced Configuration
 
-Edit these variables in `auto_flow_user.cfg` if needed:
+Edit these variables in `auto_flow_user.cfg` if needed.
+
+### HF Melt Zone Compensation
+
+The Revo HF has ~2.3× more melt zone volume than the Revo Standard. This stored molten filament acts as a pressure reservoir — after speed changes at feature transitions, the HF responds slower, causing visible artifacts that the Standard handles cleanly.
+
+When `use_high_flow_nozzle: True`, the system automatically:
+- **Scales PA** by `hf_pa_scale` (default 1.4×) so the extruder can overcome the HF's larger melt zone
+- **Sets smooth_time** to `hf_smooth_time` (0.060s vs Klipper's default 0.040s) for a wider PA smoothing window that matches the HF's slower pressure response
+- **Adds temp offset** of `hf_temp_offset` (5°C) since the HF melt zone benefits from extra heat
+- **Warns** at print start if extruder microsteps < 32 (recommended for sufficient PA resolution)
+
+```ini
+variable_hf_pa_scale: 1.40       # PA multiplier for HF nozzles (1.0 = no scaling)
+variable_hf_smooth_time: 0.060   # PA smooth_time for HF (seconds)
+variable_sf_smooth_time: 0.040   # PA smooth_time for Standard (seconds)
+variable_hf_temp_offset: 5.0     # Extra temp offset for HF nozzles (°C)
+```
+
+All compensation is restored to defaults when the print ends (`AT_END`).
 
 ### Global Limits
 
@@ -156,8 +188,10 @@ Example at 300mm/s: `(300-100) × 0.08 = +16°C` boost
 ### Flow Smoothing
 
 ```ini
-variable_flow_smoothing: 0.15          # 0.0-1.0, lower = faster response
+variable_flow_smoothing: 0.35          # 0.0-1.0, lower = faster response
 ```
+
+0.35 is recommended for quality-focused prints (less jitter). Use 0.15 for faster response if needed.
 
 ### First Layer Mode
 
@@ -184,6 +218,8 @@ variable_pa_max_reduction: 0.020       # Max PA reduction from base value
 ```
 
 The `pa_deadband` prevents unnecessary `SET_PRESSURE_ADVANCE` commands for tiny fluctuations.
+
+PA values come from material profiles (`default_pa`) and are automatically scaled for HF nozzles. Users can override with `AT_SET_PA MATERIAL=X PA=Y`, which takes priority over auto-computed values.
 
 ### Thermal Safety
 
