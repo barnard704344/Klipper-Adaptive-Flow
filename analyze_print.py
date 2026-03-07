@@ -4697,19 +4697,31 @@ def generate_recommendations(data):
     # --- Hardware-aware recommendations ---
     printer_hw = data.get('printer_hw') or {}
 
-    # Fan cap warning
+    # Fan cap warning — only flag if Smart Cooling isn't already managing the limit
     fan_hw = printer_hw.get('part_fan', {})
     fan_max = fan_hw.get('max_power', 1.0)
     if fan_max < 1.0:
         pct = int(fan_max * 100)
-        recs.append({
-            'severity': 'bad', 'category': 'Hardware',
-            'title': f'Part cooling fan capped at {pct}%',
-            'detail': f'Your [fan] config has max_power: {fan_max}. The fan can never exceed {pct}%, '
-                       f'which limits Smart Cooling and may cause overheating on PLA/PETG overhangs.',
-            'action': f'Set max_power: 1.0 in your [fan] section (typically btt.cfg). '
-                       f'If your fan is too strong at 100%, use the slicer or Smart Cooling to limit it.',
-        })
+        sc_max = _get_config_value('sc_max_fan', material)
+        if sc_max is not None:
+            # Smart Cooling already caps below hardware limit — the cap is fine
+            recs.append({
+                'severity': 'info', 'category': 'Hardware',
+                'title': f'Part cooling fan hardware-limited to {pct}%',
+                'detail': f'Your [fan] config has max_power: {fan_max}. Smart Cooling sc_max_fan '
+                           f'({sc_max:.2f}) keeps the fan within this limit, so no action is needed.',
+                'action': 'No change required. The hardware cap matches your heater capacity and '
+                           'Smart Cooling is configured to respect it.',
+            })
+        else:
+            recs.append({
+                'severity': 'warn', 'category': 'Hardware',
+                'title': f'Part cooling fan capped at {pct}%',
+                'detail': f'Your [fan] config has max_power: {fan_max}. The fan can never exceed {pct}%, '
+                           f'which limits Smart Cooling and may cause overheating on PLA/PETG overhangs.',
+                'action': f'If this is intentional (e.g. powerful CPAP fan), set sc_max_fan to stay within '
+                           f'the heater\'s thermal capacity. Otherwise, raise max_power in your [fan] section.',
+            })
 
     # Firmware max_accel vs slicer
     fw_max_accel = printer_hw.get('firmware_max_accel')
@@ -4799,49 +4811,9 @@ def generate_recommendations(data):
         avg_utilization = avg_flow_val / safe_flow_val * 100
         peak_utilization = max_flow_val / safe_flow_val * 100 if max_flow_val else avg_utilization
 
-        if avg_utilization < 30:
-            # Compute what optimized speeds could look like
-            nozzle_dia_val = hotend_data.get('nozzle_diameter', 0.4)
-            layer_h_val = 0.2  # standard
-            line_w_val = nozzle_dia_val + 0.05
-            optimal_infill = int(safe_flow_val * 0.85 / (line_w_val * layer_h_val)) if line_w_val * layer_h_val > 0 else 200
-            optimal_wall = int(safe_flow_val * 0.65 / (line_w_val * layer_h_val)) if line_w_val * layer_h_val > 0 else 150
-
-            # Estimate potential time savings
-            speed_ratio = safe_flow_val * 0.70 / avg_flow_val if avg_flow_val > 0 else 2.0
-            duration = s.get('duration_min', 0)
-            estimated_new = duration / speed_ratio if speed_ratio > 0 else duration
-            time_saved = duration - estimated_new
-
-            # Compute recommended accel with shaper awareness
-            _shaper_y_accel = is_data.get("y", {}).get("recommended_max_accel", 0)
-            if _shaper_y_accel:
-                _rec_accel = int(min(_shaper_y_accel, fw_max_accel or 20000) * 0.85)
-                _accel_note = ' (based on your input shaper)'
-            else:
-                _rec_accel = int((fw_max_accel or 5000) * 0.85)
-                _accel_note = ''
-
-            recs.append({
-                'severity': 'bad', 'category': 'Performance',
-                'title': f'Printer at {avg_utilization:.0f}% capacity \u2014 printing far too slow',
-                'detail': f'Your {kinematics.upper()} printer with Revo '
-                           f'{hotend_data.get("nozzle_type", "HF")} averaged only '
-                           f'{avg_flow_val:.1f} mm\u00b3/s (safe limit: {safe_flow_val}). '
-                           f'Firmware supports {fw_max_accel or "high"} max accel and '
-                           f'{printer_hw.get("firmware_max_velocity", 500)} mm/s max velocity, '
-                           f'but the slicer profile is barely using any of it.'
-                           + (f' Estimated time savings with optimized speeds: ~{time_saved:.0f} min '
-                              f'({duration:.0f} \u2192 ~{estimated_new:.0f} min).' if time_saved > 2 else ''),
-                'action': f'In your slicer, update speeds: outer wall \u2192 {optimal_wall} mm/s, '
-                           f'inner wall \u2192 {int(optimal_wall * 1.5)} mm/s, '
-                           f'infill \u2192 {optimal_infill} mm/s. '
-                           f'Set all print accelerations to {_rec_accel}{_accel_note}. '
-                           f'Travel accel \u2192 {min(fw_max_accel or 15000, 15000)}. '
-                           f'See the Slicer Profile tab for per-setting details.',
-            })
-        # 35-50% utilization: slicer profile tab already has per-setting
-        # suggestions, so no need for a separate generic warning here.
+        # Speed/utilization recommendations belong in the Slicer Profile tab
+        # which already has per-setting details with proper context.
+        pass
 
     # --- Boost optimization insights (from actual print data) ---
     bopt = data.get('boost_optimization')
