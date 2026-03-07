@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Adaptive Flow Print Analyzer — Banding Detection & Print Stats
+Adaptive Flow Print Analyzer — Extrusion Quality Analysis & Print Stats
 
-Statistical analysis of print logs to identify banding culprits
+Statistical analysis of print logs to identify print quality issues
 and display per-print health summaries. No external APIs required.
 
 Usage:
@@ -1983,9 +1983,9 @@ def print_single_summary(summary, path):
     if ba:
         hr = ba.get('high_risk_events', 0)
         culprit = ba.get('likely_culprit', 'none')
-        print(f"Banding  : {hr} high-risk events \u2014 cause: {_culprit_name(culprit)}")
+        print(f"Legacy   : {hr} risk events (deprecated \u2014 see Quality Score)")
     else:
-        print("Banding  : no banding data (update extruder_monitor?)")
+        print("Legacy   : no banding data")
 
     # Quick health verdict
     print()
@@ -1996,8 +1996,6 @@ def print_single_summary(summary, path):
         warnings.append("High average heater duty (>85%)")
     if max_boost > 30:
         warnings.append(f"Large temp boost ({max_boost:.0f}\u00b0C) \u2014 check flow_k / max_boost_limit")
-    if ba.get('high_risk_events', 0) > 20:
-        warnings.append(f"{ba['high_risk_events']} high-risk banding events \u2014 run --count analysis")
 
     if warnings:
         for w in warnings:
@@ -2043,6 +2041,188 @@ def find_recent_sessions(log_dir, count=None, material=None):
         sessions = sessions[:count]
 
     return sessions
+
+
+# =========================================================================
+# EXTRUSION QUALITY SCORE — physics-based print quality predictor
+# =========================================================================
+# Replaces the old "banding risk" event counter which just tallied
+# potential causes without checking if they actually affected extrusion.
+#
+# Four sub-scores (each 0-100, higher = better) that each map to a
+# measurable physical quantity AND a specific remediation:
+#
+#  1. Thermal Stability  — temp within ±1°C of target during extrusion
+#  2. Flow Steadiness    — inverse of sample-to-sample flow rate jitter
+#  3. Heater Reserve     — inverse of time PWM ≥95% during extrusion
+#  4. Pressure Stability — inverse of accel-induced pressure transients
+#
+# Combined into a single 0-100 "Extrusion Quality" score.
+# =========================================================================
+
+def compute_extrusion_quality(timeline):
+    """Compute extrusion quality score from timeline data.
+
+    Parameters
+    ----------
+    timeline : list[dict]
+        Timeline points with keys: ta (temp actual), tt (temp target),
+        f (flow mm³/s), pw (pwm 0-1), a (accel mm/s²), fn (fan %).
+
+    Returns
+    -------
+    dict with keys:
+        score       : int 0-100 overall quality
+        thermal     : int 0-100 thermal stability sub-score
+        flow        : int 0-100 flow steadiness sub-score
+        heater      : int 0-100 heater reserve sub-score
+        pressure    : int 0-100 pressure stability sub-score
+        detail      : dict with raw metrics behind each sub-score
+    Returns None if insufficient data.
+    """
+    if not timeline or len(timeline) < 20:
+        return None
+
+    # Filter to actively-extruding samples only (flow > 0.5 mm³/s)
+    active = [pt for pt in timeline if pt.get('f', 0) > 0.5]
+    if len(active) < 10:
+        return None
+
+    n = len(active)
+
+    # ------------------------------------------------------------------
+    # 1. THERMAL STABILITY — what % of extrusion time is temp on-target?
+    #    Direct correlation: temp deviation → viscosity change → banding
+    # ------------------------------------------------------------------
+    temp_in_band = 0    # within ±1°C
+    temp_close = 0      # within ±2°C
+    temp_deviations = []
+    for pt in active:
+        dev = abs(pt.get('ta', 0) - pt.get('tt', 0))
+        temp_deviations.append(dev)
+        if dev <= 1.0:
+            temp_in_band += 1
+        if dev <= 2.0:
+            temp_close += 1
+
+    pct_in_band = temp_in_band / n * 100
+    pct_close = temp_close / n * 100
+    avg_dev = statistics.mean(temp_deviations) if temp_deviations else 0
+    max_dev = max(temp_deviations) if temp_deviations else 0
+
+    # Score: 100 if always in band, scales down.
+    # Use a blend: 70% weight on ±1°C, 30% on ±2°C
+    thermal_score = int(min(100, pct_in_band * 0.7 + pct_close * 0.3))
+
+    # ------------------------------------------------------------------
+    # 2. FLOW STEADINESS — how smooth is the commanded flow rate?
+    #    Large sample-to-sample jumps = pressure transients = banding.
+    #    This is what flow_smoothing is supposed to fix.
+    # ------------------------------------------------------------------
+    flows = [pt.get('f', 0) for pt in active]
+    mean_flow = statistics.mean(flows)
+    if mean_flow < 1.0:
+        mean_flow = 1.0  # avoid div-by-zero on very low flow prints
+
+    # Compute sample-to-sample flow deltas
+    flow_deltas = [abs(flows[i] - flows[i - 1]) for i in range(1, len(flows))]
+    avg_delta = statistics.mean(flow_deltas) if flow_deltas else 0
+    # Normalize by mean flow: 0 = perfectly smooth, higher = jittery
+    normalized_jitter = avg_delta / mean_flow
+
+    # Count "big jumps" (>2 mm³/s delta) — these are the ones that
+    # actually cause visible pressure artifacts
+    big_jumps = sum(1 for d in flow_deltas if d > 2.0)
+    big_jump_pct = big_jumps / max(len(flow_deltas), 1) * 100
+
+    # Score: penalize jitter.  Typical good print: jitter < 0.05
+    # Typical moderate: jitter 0.10-0.20. Bad: jitter > 0.30
+    flow_score = int(max(0, min(100, 100 - normalized_jitter * 200)))
+    # Extra penalty for big jumps, but capped to avoid double-floor
+    if big_jump_pct > 5:
+        flow_score = int(max(10, flow_score - big_jump_pct * 0.5))
+
+    # ------------------------------------------------------------------
+    # 3. HEATER RESERVE — how much headroom does the heater have?
+    #    When PWM≥95% during extrusion, the heater can't respond to
+    #    demand changes → temp drops → under-extrusion → banding.
+    # ------------------------------------------------------------------
+    pwm_saturated = sum(1 for pt in active if pt.get('pw', 0) >= 0.95)
+    sat_pct = pwm_saturated / n * 100
+    avg_pwm = statistics.mean([pt.get('pw', 0) for pt in active])
+
+    # Score: 100 if never saturated, 0 if always saturated
+    heater_score = int(max(0, min(100, 100 - sat_pct * 3)))
+    # Also penalize high average PWM (little margin)
+    if avg_pwm > 0.80:
+        heater_score = int(max(0, heater_score - (avg_pwm - 0.80) * 100))
+
+    # ------------------------------------------------------------------
+    # 4. PRESSURE STABILITY — accel-induced pressure transients
+    #    Large accel changes during high-flow extrusion cause pressure
+    #    spikes that PA can't fully compensate for.
+    # ------------------------------------------------------------------
+    accels = [pt.get('a', 0) for pt in active]
+    accel_deltas = [abs(accels[i] - accels[i - 1])
+                    for i in range(1, len(accels))]
+
+    # Weight by flow: a 3000 accel swing at 15 mm³/s matters much more
+    # than the same swing at 2 mm³/s
+    weighted_transients = []
+    for i in range(1, len(accels)):
+        ad = abs(accels[i] - accels[i - 1])
+        fl = max(flows[i], flows[i - 1])
+        if ad > 200 and fl > 2.0:
+            # Normalize: 1000 accel delta at 10 mm³/s flow = 1.0 impact
+            impact = (ad / 1000.0) * (fl / 10.0)
+            weighted_transients.append(impact)
+
+    avg_transient = (statistics.mean(weighted_transients)
+                     if weighted_transients else 0)
+    transient_count = len(weighted_transients)
+    transient_pct = transient_count / max(n - 1, 1) * 100
+
+    # Score: penalize transients
+    # avg_transient of 1.0 = moderate (1000 accel swing at 10 mm³/s)
+    # avg_transient of 3.0 = severe
+    pressure_score = int(max(0, min(100, 100 - avg_transient * 15
+                                    - transient_pct * 0.3)))
+
+    # ------------------------------------------------------------------
+    # OVERALL SCORE — weighted combination
+    # ------------------------------------------------------------------
+    overall = int(
+        thermal_score * 0.35
+        + flow_score * 0.30
+        + heater_score * 0.20
+        + pressure_score * 0.15
+    )
+    overall = max(0, min(100, overall))
+
+    return {
+        'score': overall,
+        'thermal': thermal_score,
+        'flow': flow_score,
+        'heater': heater_score,
+        'pressure': pressure_score,
+        'detail': {
+            'temp_in_band_pct': round(pct_in_band, 1),
+            'temp_close_pct': round(pct_close, 1),
+            'avg_temp_dev': round(avg_dev, 2),
+            'max_temp_dev': round(max_dev, 1),
+            'flow_jitter': round(normalized_jitter, 3),
+            'big_jump_pct': round(big_jump_pct, 1),
+            'big_jumps': big_jumps,
+            'avg_flow_delta': round(avg_delta, 2),
+            'mean_flow': round(mean_flow, 1),
+            'pwm_saturated_pct': round(sat_pct, 1),
+            'avg_pwm': round(avg_pwm, 3),
+            'avg_transient_impact': round(avg_transient, 3),
+            'transient_count': transient_count,
+            'transient_pct': round(transient_pct, 1),
+            'active_samples': n,
+        },
+    }
 
 
 def analyze_csv_for_banding(csv_file):
@@ -4186,70 +4366,159 @@ def generate_recommendations(data):
             rec['config_changes'] = [c]
         recs.append(rec)
 
-    # --- Banding risk ---
-    high_risk = ba.get('high_risk_events', 0)
-    culprit = ba.get('likely_culprit', '')
-    culprit_friendly = _culprit_name(culprit) if culprit else 'Unknown'
+    # --- Extrusion Quality Score (replaces old "banding risk" event count) ---
+    eq = data.get('extrusion_quality') or {}
+    eq_score = eq.get('score')
+    eq_detail = eq.get('detail') or {}
 
-    def _culprit_config_changes(code):
-        """Build config_changes list appropriate for a banding culprit."""
-        changes = []
-        if not code:
-            return changes
-        if 'temp' in code:
-            c = _suggest_change('ramp_rate_rise', 'reduce', 1.0, minimum=2.0, maximum=6.0)
-            if c:
-                changes.append(c)
-            c = _suggest_change('flow_smoothing', 'increase', 0.15, minimum=0.2, maximum=0.8)
-            if c:
-                changes.append(c)
-        elif 'pa' in code:
-            c = _suggest_change('pa_deadband', 'increase', 0.003, minimum=0.004, maximum=0.012)
-            if c:
-                changes.append(c)
-        elif 'dynz_accel' in code:
-            c = _suggest_change('dynz_activate_score', 'increase', 2.0, minimum=4.0, maximum=12.0)
-            if c:
-                changes.append(c)
-        elif 'slicer_accel' in code:
-            c = _suggest_change('flow_smoothing', 'increase', 0.1, minimum=0.2, maximum=0.6)
-            if c:
-                changes.append(c)
-        return changes
+    if eq_score is not None:
+        # --- Overall quality ---
+        if eq_score >= 85:
+            recs.append({
+                'severity': 'good', 'category': 'Quality',
+                'title': f'Extrusion quality score: {eq_score}/100',
+                'detail': (
+                    f'Thermal stability {eq.get("thermal", 0)}/100, '
+                    f'flow steadiness {eq.get("flow", 0)}/100, '
+                    f'heater reserve {eq.get("heater", 0)}/100, '
+                    f'pressure stability {eq.get("pressure", 0)}/100.'
+                ),
+                'action': 'Excellent extrusion consistency — no changes needed.',
+            })
+        elif eq_score >= 65:
+            # Find weakest sub-score
+            subs = {'Thermal stability': eq.get('thermal', 100),
+                     'Flow steadiness': eq.get('flow', 100),
+                     'Heater reserve': eq.get('heater', 100),
+                     'Pressure stability': eq.get('pressure', 100)}
+            weakest = min(subs, key=subs.get)
+            recs.append({
+                'severity': 'info', 'category': 'Quality',
+                'title': f'Extrusion quality score: {eq_score}/100',
+                'detail': (
+                    f'Thermal stability {eq.get("thermal", 0)}/100, '
+                    f'flow steadiness {eq.get("flow", 0)}/100, '
+                    f'heater reserve {eq.get("heater", 0)}/100, '
+                    f'pressure stability {eq.get("pressure", 0)}/100. '
+                    f'Weakest area: {weakest} ({subs[weakest]}/100).'
+                ),
+                'action': f'Acceptable quality. {weakest} is the main area for improvement — see specific recommendations below.',
+            })
+        else:
+            subs = {'Thermal stability': eq.get('thermal', 100),
+                     'Flow steadiness': eq.get('flow', 100),
+                     'Heater reserve': eq.get('heater', 100),
+                     'Pressure stability': eq.get('pressure', 100)}
+            weakest = min(subs, key=subs.get)
+            recs.append({
+                'severity': 'warn' if eq_score >= 45 else 'bad',
+                'category': 'Quality',
+                'title': f'Extrusion quality score: {eq_score}/100',
+                'detail': (
+                    f'Thermal stability {eq.get("thermal", 0)}/100, '
+                    f'flow steadiness {eq.get("flow", 0)}/100, '
+                    f'heater reserve {eq.get("heater", 0)}/100, '
+                    f'pressure stability {eq.get("pressure", 0)}/100. '
+                    f'Weakest area: {weakest} ({subs[weakest]}/100).'
+                ),
+                'action': f'Print quality is likely affected. Focus on {weakest} — see recommendations below.',
+            })
 
-    _banding_fallback = 'Too many events \u2014 visible banding is very likely.'
-    if high_risk > 50:
-        detail_explain = _culprit_explain(culprit) if culprit else _banding_fallback
-        rec = {
-            'severity': 'bad', 'category': 'Banding',
-            'title': f'{high_risk} high-risk banding events',
-            'detail': f'Cause: {culprit_friendly}. {detail_explain}',
-            'action': _culprit_fix(culprit) if culprit else 'Investigate belt tension, Z-axis, and nozzle condition.',
-        }
-        changes = _culprit_config_changes(culprit)
-        if changes:
-            rec['config_changes'] = changes
-        recs.append(rec)
-    elif high_risk > 20:
-        detail_explain = _culprit_explain(culprit) if culprit else 'May be visible on smooth surfaces.'
-        action_fix = _culprit_fix(culprit) if culprit else 'If visible, check mechanical and slicer settings.'
-        rec = {
-            'severity': 'warn', 'category': 'Banding',
-            'title': f'{high_risk} banding risk events',
-            'detail': f'Moderate banding risk. Cause: {culprit_friendly}. {detail_explain}',
-            'action': f'Inspect the print at flagged Z-heights. {action_fix}',
-        }
-        changes = _culprit_config_changes(culprit)
-        if changes:
-            rec['config_changes'] = changes
-        recs.append(rec)
-    elif high_risk <= 5 and s.get('duration_min', 0) > 5:
-        recs.append({
-            'severity': 'good', 'category': 'Banding',
-            'title': 'Minimal banding risk',
-            'detail': f'Only {high_risk} risk events \u2014 excellent for print quality.',
-            'action': 'No changes needed.',
-        })
+        # --- Specific sub-score recommendations ---
+        # Thermal stability
+        ts = eq.get('thermal', 100)
+        if ts < 60:
+            rec = {
+                'severity': 'warn' if ts >= 40 else 'bad',
+                'category': 'Quality',
+                'title': f'Thermal stability: {ts}/100 — temp off-target {100 - eq_detail.get("temp_in_band_pct", 100):.0f}% of extrusion time',
+                'detail': (
+                    f'Only {eq_detail.get("temp_in_band_pct", 0):.0f}% of extrusion time was within ±1°C of target '
+                    f'(avg deviation {eq_detail.get("avg_temp_dev", 0):.1f}°C, max {eq_detail.get("max_temp_dev", 0):.1f}°C). '
+                    f'Temperature deviation directly changes melt viscosity — '
+                    f'each °C off target alters extrusion width, causing visible banding on walls.'
+                ),
+                'action': 'Re-tune PID with fan running (M106 S255 before PID_CALIBRATE). Check sc_max_fan if using high fan speeds.',
+            }
+            changes = []
+            c = _suggest_change('flow_smoothing', 'increase', 0.1, minimum=0.3, maximum=0.8)
+            if c:
+                changes.append(c)
+            if changes:
+                rec['config_changes'] = changes
+            recs.append(rec)
+
+        # Flow steadiness
+        fs = eq.get('flow', 100)
+        if fs < 60:
+            bjumps = eq_detail.get('big_jumps', 0)
+            jitter = eq_detail.get('flow_jitter', 0)
+            rec = {
+                'severity': 'warn' if fs >= 40 else 'bad',
+                'category': 'Quality',
+                'title': f'Flow steadiness: {fs}/100 — {bjumps} large flow jumps (>{2} mm³/s)',
+                'detail': (
+                    f'Flow jitter index: {jitter:.3f} (ideal <0.05). '
+                    f'{eq_detail.get("big_jump_pct", 0):.1f}% of samples had large flow changes. '
+                    f'Average flow delta: {eq_detail.get("avg_flow_delta", 0):.1f} mm³/s at mean flow {eq_detail.get("mean_flow", 0):.1f} mm³/s. '
+                    f'Large flow rate changes cause pressure transients in the melt zone that '
+                    f'PA cannot fully compensate — each one leaves a mark on walls.'
+                ),
+                'action': 'Increase flow_smoothing to dampen flow spikes. In slicer, unify speeds for walls/infill to reduce abrupt flow changes.',
+            }
+            c = _suggest_change('flow_smoothing', 'increase', 0.15, minimum=0.3, maximum=0.8)
+            if c:
+                rec['config_changes'] = [c]
+            recs.append(rec)
+
+        # Heater reserve
+        hs = eq.get('heater', 100)
+        if hs < 60:
+            rec = {
+                'severity': 'warn' if hs >= 40 else 'bad',
+                'category': 'Quality',
+                'title': f'Heater reserve: {hs}/100 — PWM saturated {eq_detail.get("pwm_saturated_pct", 0):.0f}% of extrusion time',
+                'detail': (
+                    f'Heater was at ≥95% PWM for {eq_detail.get("pwm_saturated_pct", 0):.1f}% of active extrusion '
+                    f'(avg PWM {eq_detail.get("avg_pwm", 0) * 100:.0f}%). '
+                    f'When the heater has no reserve, it cannot respond to temperature demand '
+                    f'changes from flow variation or fan cooling — temp drops below target '
+                    f'and extrusion becomes inconsistent.'
+                ),
+                'action': 'Reduce sc_max_fan to give the heater thermal headroom. Verify PID was tuned with fan on. Consider a 60W heater upgrade.',
+            }
+            changes = []
+            c = _suggest_change('sc_max_fan', 'reduce', 0.10, material=material, minimum=0.30, maximum=0.95)
+            if c:
+                changes.append(c)
+            c = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
+            if c:
+                changes.append(c)
+            if changes:
+                rec['config_changes'] = changes
+            recs.append(rec)
+
+        # Pressure stability
+        ps = eq.get('pressure', 100)
+        if ps < 60:
+            rec = {
+                'severity': 'warn' if ps >= 40 else 'bad',
+                'category': 'Quality',
+                'title': f'Pressure stability: {ps}/100 — {eq_detail.get("transient_count", 0)} accel-induced transients',
+                'detail': (
+                    f'{eq_detail.get("transient_pct", 0):.1f}% of samples had significant '
+                    f'acceleration changes during high-flow extrusion (avg impact: '
+                    f'{eq_detail.get("avg_transient_impact", 0):.2f}). '
+                    f'Large acceleration changes at high flow create pressure waves in the '
+                    f'melt zone that Pressure Advance cannot fully absorb — each transition '
+                    f'shows as a faint line on the print surface.'
+                ),
+                'action': 'In slicer, unify acceleration values for all print moves (walls, infill, top surface) to the Y-axis shaper limit. Only travel should use a higher accel.',
+            }
+            c = _suggest_change('flow_smoothing', 'increase', 0.1, minimum=0.3, maximum=0.7)
+            if c:
+                rec['config_changes'] = [c]
+            recs.append(rec)
 
     # --- Slicer-specific recommendations (from gcode analysis) ---
     slicer_diag = data.get('slicer_diagnosis') or {}
@@ -4269,10 +4538,11 @@ def generate_recommendations(data):
             'Review your slicer acceleration settings to reduce the spread of values.'
         )
 
-        # Severity depends on whether there are actual banding events
-        if high_risk > 20:
+        # Severity depends on extrusion quality score
+        _ps = eq.get('pressure', 100) if eq else 100
+        if _ps < 50:
             sev = 'warn'
-        elif high_risk > 5:
+        elif _ps < 75:
             sev = 'info'
         else:
             sev = 'info'
@@ -4283,7 +4553,7 @@ def generate_recommendations(data):
             'detail': issue_details,
             'action': action_text,
         })
-    elif data.get('slicer_settings') and high_risk <= 5:
+    elif data.get('slicer_settings') and (eq_score is None or eq_score >= 75):
         # We have slicer data but no issues — good news
         distinct = len(slicer_diag.get('distinct_accels', []))
         if distinct > 0:
@@ -4343,25 +4613,28 @@ def generate_recommendations(data):
     if len(same_mat) >= 3:
         recent = same_mat[-3:]  # last 3 same-material prints (chronological)
 
-        # --- Banding trend ---
-        risk_vals = [t.get('high_risk', 0) for t in recent]
-        if all(risk_vals[i] < risk_vals[i + 1] for i in range(len(risk_vals) - 1)):
-            delta = risk_vals[-1] - risk_vals[0]
-            if delta > 5:
-                recs.append({
-                    'severity': 'warn', 'category': 'Trend',
-                    'title': f'Banding risk climbing ({risk_vals[0]} \u2192 {risk_vals[-1]} over 3 {mat_label} prints)',
-                    'detail': 'Risk events have increased each print. Something is degrading \u2014 nozzle wear, partial clog, or a config change made things worse.',
-                    'action': 'Compare what changed between prints. If nothing was changed, inspect nozzle for wear or partial blockage. Cold pull recommended.',
-                })
-        elif all(risk_vals[i] > risk_vals[i + 1] for i in range(len(risk_vals) - 1)):
-            if risk_vals[0] > 10:
-                recs.append({
-                    'severity': 'good', 'category': 'Trend',
-                    'title': f'Banding improving ({risk_vals[0]} \u2192 {risk_vals[-1]} across {mat_label})',
-                    'detail': 'Risk events dropping over recent prints \u2014 your changes are working.',
-                    'action': 'Keep current settings. Continue monitoring.',
-                })
+        # --- Quality score trend ---
+        eq_vals = [t.get('eq_score') for t in recent]
+        eq_valid = [v for v in eq_vals if v is not None]
+        if len(eq_valid) >= 3:
+            if all(eq_valid[i] > eq_valid[i + 1] for i in range(len(eq_valid) - 1)):
+                drop = eq_valid[0] - eq_valid[-1]
+                if drop > 10:
+                    recs.append({
+                        'severity': 'warn', 'category': 'Trend',
+                        'title': f'Quality declining ({eq_valid[0]} \u2192 {eq_valid[-1]} over 3 {mat_label} prints)',
+                        'detail': 'Extrusion quality score has dropped each print. Something is degrading \u2014 nozzle wear, partial clog, or a config change made things worse.',
+                        'action': 'Compare what changed between prints. If nothing was changed, inspect nozzle for wear or partial blockage. Cold pull recommended.',
+                    })
+            elif all(eq_valid[i] < eq_valid[i + 1] for i in range(len(eq_valid) - 1)):
+                gain = eq_valid[-1] - eq_valid[0]
+                if gain > 5:
+                    recs.append({
+                        'severity': 'good', 'category': 'Trend',
+                        'title': f'Quality improving ({eq_valid[0]} \u2192 {eq_valid[-1]} across {mat_label})',
+                        'detail': 'Extrusion quality score is climbing over recent prints \u2014 your changes are working.',
+                        'action': 'Keep current settings. Continue monitoring.',
+                    })
 
         # --- Heater duty trend ---
         pwm_vals = [t.get('max_pwm', 0) for t in recent]
@@ -4386,34 +4659,20 @@ def generate_recommendations(data):
                     'action': 'If intentional (faster prints), this is fine. If not, check nozzle condition.',
                 })
 
-        # --- Repeated same culprit ---
-        culprits = [t.get('culprit', '-') for t in recent]
-        culprits_real = [c for c in culprits if c and c != '-' and c.lower() != 'none']
-        if len(culprits_real) >= 2 and len(set(culprits_real)) == 1:
-            repeated = culprits_real[0]
-            repeated_name = _culprit_name(repeated)
-            rec = {
-                'severity': 'warn', 'category': 'Trend',
-                'title': f'Same cause repeating for {mat_label}: {repeated_name}',
-                'detail': f'"{repeated_name}" has appeared in your last {len(culprits_real)} {mat_label} prints. {_culprit_explain(repeated)}',
-                'action': _culprit_fix(repeated),
-            }
-            changes = _culprit_config_changes(repeated)
-            if changes:
-                rec['config_changes'] = changes
-            recs.append(rec)
-
     elif len(same_mat) >= 2:
-        # With just 2 same-material prints, check for a big jump
+        # With just 2 same-material prints, check for a big quality change
         prev, curr = same_mat[-2], same_mat[-1]
-        risk_jump = curr.get('high_risk', 0) - prev.get('high_risk', 0)
-        if risk_jump > 20:
-            recs.append({
-                'severity': 'warn', 'category': 'Trend',
-                'title': f'Banding risk jumped +{risk_jump} since last print',
-                'detail': f'Previous: {prev.get("high_risk", 0)} events, now: {curr.get("high_risk", 0)}.',
-                'action': 'Something changed between these prints. Review config changes, material, or slicer settings.',
-            })
+        eq_prev = prev.get('eq_score')
+        eq_curr = curr.get('eq_score')
+        if eq_prev is not None and eq_curr is not None:
+            eq_drop = eq_prev - eq_curr
+            if eq_drop > 15:
+                recs.append({
+                    'severity': 'warn', 'category': 'Trend',
+                    'title': f'Quality dropped {eq_drop} points since last print',
+                    'detail': f'Previous: {eq_prev}/100, now: {eq_curr}/100.',
+                    'action': 'Something changed between these prints. Review config changes, material, or slicer settings.',
+                })
         pwm_jump = curr.get('max_pwm', 0) - prev.get('max_pwm', 0)
         if pwm_jump > 0.10:
             recs.append({
@@ -5083,7 +5342,6 @@ def collect_material_overview(log_dir, material):
     trend_data = []
     for s_info in reversed(sessions[:10]):
         sm = s_info['summary']
-        ba = sm.get('banding_analysis', {})
         ts = sm.get('start_time', '')
         trend_data.append({
             'date': ts[:10] if len(ts) >= 10 else ts,
@@ -5092,8 +5350,7 @@ def collect_material_overview(log_dir, material):
             'max_boost': sm.get('max_boost', 0),
             'avg_pwm': sm.get('avg_pwm', 0),
             'max_pwm': sm.get('max_pwm', 0),
-            'high_risk': ba.get('high_risk_events', 0),
-            'culprit': ba.get('likely_culprit', '-'),
+            'eq_score': None,
         })
 
     # Session list (this material only)
@@ -5214,6 +5471,9 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
 
     data['timeline'] = read_csv_timeline(csv_path, rows=csv_rows)
 
+    # --- Extrusion Quality Score (physics-based, replaces banding risk) ---
+    data['extrusion_quality'] = compute_extrusion_quality(data['timeline'])
+
     data['z_banding'] = {
         str(k): v for k, v in analyze_z_banding(csv_path, bin_size=0.5, rows=csv_rows).items()
     }
@@ -5295,10 +5555,22 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
                 'max_boost': sm.get('max_boost', 0),
                 'avg_pwm': sm.get('avg_pwm', 0),
                 'max_pwm': sm.get('max_pwm', 0),
-                'high_risk': ba.get('high_risk_events', 0),
-                'culprit': ba.get('likely_culprit', '-'),
                 'vib_score': vib_score,
+                'eq_score': None,  # filled below
             })
+
+        # Compute extrusion quality score for each trend print (lightweight)
+        for i, s in enumerate(reversed(all_sessions[:10])):
+            csv_f = s.get('csv_file', '')
+            if csv_f and os.path.exists(csv_f) and i < 5:  # cap to 5 newest
+                try:
+                    tl = read_csv_timeline(csv_f, max_points=400)
+                    eq = compute_extrusion_quality(tl)
+                    if eq:
+                        trend_data[i]['eq_score'] = eq['score']
+                except Exception:
+                    pass
+
         data['trends'] = trend_data
 
     # === Slicer settings extraction & cross-reference with banding ===
@@ -5728,7 +6000,7 @@ rc();rCh();
 
 function rc(){var c=document.getElementById('cds'),s=D.summary;
 if(!s){c.innerHTML='<div class="cd"><div class="vl d">No data</div></div>';return}
-var ba=s.banding_analysis||{},dp=s.dynz_active_pct||0;
+var eq=D.extrusion_quality||{},dp=s.dynz_active_pct||0;
 var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
 var aggBadge=isAgg?'<span class="agg-badge">'+s.session_count+' prints</span>':'';
 var items;
@@ -5740,12 +6012,12 @@ d:'Aggregated data across all prints with this material.'},
 d:'Weighted average temp boost across all prints of this material.'},
 {l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,
 d:'Weighted average heater duty across all prints.'},
-{l:'Avg Banding/Print',v:''+(ba.avg_high_risk_per_print!=null?ba.avg_high_risk_per_print.toFixed(0):(ba.high_risk_events||0)),
-s:'total '+(ba.high_risk_events||0)+', culprit: '+(ba.likely_culprit||'none'),w:(ba.high_risk_events||0)>50,
-d:'Average banding risk events per print. Total across all prints shown.'},
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'averaged':'inactive across prints',
 d:'Weighted average DynZ activation across prints.'}]}
 else{
+var qs=eq.score!=null?eq.score:null;
+var qc=qs!=null?(qs>=80?'#3fb950':qs>=60?'#d29922':'#f85149'):'#8b949e';
+var qSub=qs!=null?'T:'+eq.thermal+' F:'+eq.flow+' H:'+eq.heater+' P:'+eq.pressure:'no data';
 items=[
 {l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),
 d:'Active material profile and total print duration.'},
@@ -5755,8 +6027,8 @@ d:'Extra temperature added above base to meet flow demand. \u2022 0\u201310\u00b
 d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behavior). \u2022 Avg under 60% = lots of headroom (good) \u2022 60\u201380% = healthy \u2022 80%+ avg with thermal lag = heater struggling'},
 {l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
 d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
-{l:'Banding',v:''+(ba.high_risk_events||0),s:s._live?'in progress':ba.likely_culprit||'none',w:(ba.high_risk_events||0)>10,
-d:'Samples flagged as banding risk from rapid temp/PA/accel changes. \u2022 0\u20135 = excellent \u2022 5\u201320 = minor, unlikely visible \u2022 20\u201350 = moderate, check print quality \u2022 50+ = high, likely visible banding'}];
+{l:'Quality',v:qs!=null?'<span style="color:'+qc+'">'+qs+'/100</span>':'\u2014',s:qSub,w:qs!=null&&qs<60,
+d:'Extrusion quality score based on 4 physics metrics. \u2022 T = Thermal stability (temp on target) \u2022 F = Flow steadiness (flow jitter) \u2022 H = Heater reserve (PWM headroom) \u2022 P = Pressure stability (accel transients). \u2022 85+ = excellent \u2022 65\u201384 = acceptable \u2022 <65 = likely visible issues'}];
 var vb=D.vibration;if(vb&&vb.summary&&vb.summary.quality_score!=null){
 var vs=vb.summary.quality_score,vc=vs>=80?'#3fb950':vs>=50?'#d29922':'#f85149';
 items.push({l:'Vib Score',v:vs+'/100',s:'ADXL quality',w:vs<50,
@@ -5776,7 +6048,7 @@ var allTabs=[
 {id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
 {id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
 {id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
-{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and risk across multiple prints.'},
+{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and extrusion quality across multiple prints.'},
 {id:'vb',l:'Vibration',tip:'ADXL vibration analysis from auto-sampling during prints. Shows per-feature vibration, dominant frequencies, and quality recommendations.'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
@@ -6266,36 +6538,38 @@ function rTr(){
 var tr=D.trends;
 if(!tr||tr.length<2){ca.innerHTML='<p>Need at least 2 prints for trends.</p>';return}
 var rows='';tr.forEach(function(t){
+var eqv=t.eq_score!=null?t.eq_score:'\u2014';
+var eqc=t.eq_score!=null?(t.eq_score>=80?'g':t.eq_score>=60?'':' w'):''
 rows+='<tr><td>'+t.date+'</td><td>'+t.material+
 '</td><td>'+t.avg_boost.toFixed(1)+'\u00b0C</td><td class="'+
 (t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
-'%</td><td class="'+(t.high_risk>10?'w':'')+'">'+t.high_risk+
+'%</td><td class="'+eqc+'">'+eqv+
 '</td><td>'+(t.vib_score!=null?t.vib_score:'\u2014')+
-'</td><td>'+t.culprit+'</td></tr>'});
+'</td></tr>'});
 ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
-'<p class="box-desc">Each point is a completed print. Falling boost and risk = the system is learning your setup. '+
-'Rising values may indicate a clog, worn nozzle, or changed slicer settings.</p>'+mc('c9')+
+'<p class="box-desc">Each point is a completed print. Rising quality scores = the system is learning your setup. '+
+'Falling scores may indicate a clog, worn nozzle, or changed slicer settings.</p>'+mc('c9')+
 '</div><div class="box"><h3>Details</h3>'+
-'<p class="box-desc">Culprit = the most common cause of risk events for that print (e.g. temperature, PA, acceleration).</p>'+
+'<p class="box-desc">Quality = extrusion quality score (0\u2013100) based on thermal stability, flow steadiness, heater reserve, and pressure stability.</p>'+
 '<table><tr><th>Date</th><th>Material</th>'+
-'<th>Boost</th><th>Max PWM</th><th>Risk</th><th>Vib</th><th>Culprit</th></tr>'+rows+'</table></div>';
+'<th>Boost</th><th>Max PWM</th><th>Quality</th><th>Vib</th></tr>'+rows+'</table></div>';
 CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
 labels:tr.map(function(t){return t.date}),
 datasets:[
 {label:'Avg Boost (\u00b0C)',data:tr.map(function(t){return t.avg_boost}),
 borderColor:'#d29922',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
-{label:'Risk Events',data:tr.map(function(t){return t.high_risk}),
-borderColor:'#f85149',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
+{label:'Quality Score',data:tr.map(function(t){return t.eq_score}),
+borderColor:'#3fb950',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
 {label:'Avg PWM (%)',data:tr.map(function(t){return t.avg_pwm*100}),
 borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
 {label:'Vib Score',data:tr.map(function(t){return t.vib_score}),
-borderColor:'#3fb950',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y',
+borderColor:'#58a6ff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1',
 borderDash:[5,3],pointStyle:'rectRot',hidden:!tr.some(function(t){return t.vib_score!=null})}]},
 options:{responsive:true,animation:false,
 interaction:{intersect:false,mode:'index'},
 scales:{x:{title:{display:true,text:'Print Date'}},
 y:{title:{display:true,text:'\u00b0C / %'},position:'left'},
-y1:{title:{display:true,text:'Events'},position:'right',
+y1:{title:{display:true,text:'Score (0\u2013100)'},position:'right',min:0,max:100,
 grid:{drawOnChartArea:false}}}}})}
 
 function rRec(){
@@ -6337,7 +6611,7 @@ var h='<div style="margin-bottom:16px"><h3 style="color:#c9d1d9;font-size:16px;m
 if(badCount>0)h+='<span style="color:#f85149">'+badCount+' issue'+(badCount>1?'s':'')+'</span> found';
 else if(warnCount>0)h+='<span style="color:#d29922">'+warnCount+' warning'+(warnCount>1?'s':'')+'</span> to review';
 else h+='<span style="color:#3fb950">All looking good</span>';
-h+='</h3><p style="font-size:12px;color:#484f58">Based on heater, thermal lag, PA, banding, and DynZ analysis</p></div>';
+h+='</h3><p style="font-size:12px;color:#484f58">Based on extrusion quality, heater, thermal, PA, and slicer analysis</p></div>';
 h+=recs.map(function(r,ri){
 var html='<div class="rec sev-'+r.severity+'">'+
 '<div class="rec-hd">'+
