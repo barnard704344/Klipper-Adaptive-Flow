@@ -14,7 +14,7 @@
 |---|---|
 | **CSV log** (per-print) | Flow rate, temperature, fan %, PA value, accel events, speed, Z height — sampled every ~1s during print |
 | **G-code comments** | Slicer settings (accel, speed, layer height, line width, fan, PA, etc.) via `extract_slicer_settings()` |
-| `auto_flow_user.cfg` / `auto_flow_defaults.cfg` | `use_high_flow_nozzle`, `max_safe_flow_hf/std`, `sc_heater_wattage` — 3 values total |
+| `auto_flow_user.cfg` / `auto_flow_defaults.cfg` | `use_high_flow_nozzle`, `max_safe_flow_hf/std`, `heater_wattage` — 3 values total |
 | `material_profiles_*.cfg` | Material-specific flow/temp targets |
 | **E3D Revo lookup table** (hardcoded) | Published flow limits by nozzle/variant/material |
 

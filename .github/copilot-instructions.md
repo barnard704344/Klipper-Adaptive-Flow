@@ -7,7 +7,6 @@ This repository provides **automatic temperature and pressure advance control** 
 ### Core Features
 - **Dynamic Temperature Control**: Flow/speed/acceleration-based temperature boost
 - **Dynamic Pressure Advance**: Automatically scales PA with temperature changes
-- **Smart Cooling**: Adjusts part cooling fan based on flow rate and layer time
 - **5-Second Lookahead**: Pre-heats nozzle before flow spikes
 - **Dynamic Z-Window (DynZ)**: Learns and adapts to challenging geometries (domes, spheres)
 - **Multi-Object Temperature Management**: Safe temperature transitions between sequential objects
@@ -30,7 +29,6 @@ This repository provides **automatic temperature and pressure advance control** 
 - `README.md` - Installation, setup, and usage guide
 - `docs/CONFIGURATION.md` - Detailed configuration reference
 - `docs/DYNZ.md` - Dynamic Z-Window documentation
-- `docs/SMART_COOLING.md` - Smart Cooling feature documentation
 - `docs/ANALYSIS.md` - Print analysis setup guide
 
 ### Examples

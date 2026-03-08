@@ -5,7 +5,7 @@ Complete reference for all Klipper Adaptive Flow commands.
 ## Table of Contents
 
 - [Core Commands](#core-commands) - `AT_START`, `AT_END`
-- [Status Commands](#status-commands) - `AT_STATUS`, `AT_THERMAL_STATUS`, `AT_DYNZ_STATUS`, `AT_SC_STATUS`
+- [Status Commands](#status-commands) - `AT_STATUS`, `AT_THERMAL_STATUS`, `AT_DYNZ_STATUS`
 - [Configuration Commands](#configuration-commands) - `AT_SET_PA`, `AT_GET_PA`, `AT_LIST_PA`, etc.
 - [Advanced Commands](#advanced-commands) - `AT_ENABLE`, `AT_DISABLE`, `AT_RESET_STATE`
 - [Quick Reference](#quick-reference) - Command summary table
@@ -122,32 +122,6 @@ Accel reduction: 30%
 - Use to monitor dome/sphere detection
 
 **See also:** [DYNZ.md](DYNZ.md) for full documentation
-
----
-
-### `AT_SC_STATUS`
-
-Display Smart Cooling status and fan adjustments.
-
-**Example output:**
-```
-Smart Cooling Status
---------------------
-Enabled: True
-Current fan: 35%
-Base fan: 80% (from slicer)
-Flow adjustment: -45% (high flow detected)
-Target fan: 35%
-Current flow: 18.5 mm³/s
-Layer time: 12.3s
-```
-
-**Notes:**
-- Shows real-time fan calculations
-- Displays flow-based and layer-time adjustments
-- Use to verify Smart Cooling behavior
-
-**See also:** [SMART_COOLING.md](SMART_COOLING.md) for full documentation
 
 ---
 
@@ -412,7 +386,6 @@ Available profiles:
 | `AT_END` | Disable system | In `PRINT_END` macro before `TURN_OFF_HEATERS` |
 | `AT_STATUS` | Show full status | During print to monitor behavior |
 | `AT_DYNZ_STATUS` | Show DynZ status | Check dome/sphere detection |
-| `AT_SC_STATUS` | Show fan status | Verify Smart Cooling behavior |
 | `AT_SET_PA` | Save PA value | After PA calibration |
 | `AT_LIST_PA` | List all PA values | Check saved calibrations |
 | `AT_SET_FLOW_K` | Adjust boost | Test different boost curves |
@@ -440,7 +413,6 @@ AT_LIST_PA  # Verify it was saved
 # During print, in console
 AT_STATUS        # Check overall behavior
 AT_DYNZ_STATUS   # Check if DynZ is learning
-AT_SC_STATUS     # Check fan adjustments
 ```
 
 ### Testing Material Profiles
@@ -499,5 +471,4 @@ AT_SET_PA MATERIAL=PLA PA=0.050  # Correct it
 - [README.md](../README.md) - Installation and quick start
 - [CONFIGURATION.md](CONFIGURATION.md) - Detailed configuration reference
 - [DYNZ.md](DYNZ.md) - Dynamic Z-Window documentation
-- [SMART_COOLING.md](SMART_COOLING.md) - Smart Cooling documentation
 - [ANALYSIS.md](ANALYSIS.md) - Print analysis and AI tuning

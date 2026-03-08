@@ -462,7 +462,6 @@ class ExtruderMonitor:
                 # Parse optional feature flags
                 at_enabled = gcmd.get_int('AT_ENABLED', 1)
                 dynz_enabled = gcmd.get_int('DYNZ_ENABLED', 1)
-                sc_enabled = gcmd.get_int('SC_ENABLED', 1)
                 pa_enabled = gcmd.get_int('PA_ENABLED', 1)
                 
                 self._log_stats = {
@@ -473,7 +472,6 @@ class ExtruderMonitor:
                     'features': {
                         'auto_temp': bool(at_enabled),
                         'dynamic_pa': bool(pa_enabled),
-                        'smart_cooling': bool(sc_enabled),
                         'dynamic_z': bool(dynz_enabled),
                     },
                     # Temp boost stats
@@ -503,7 +501,7 @@ class ExtruderMonitor:
                     # DynZ stats
                     'dynz_active_samples': 0,
                     'accel_min': 999999,
-                    # Fan/Smart Cooling stats
+                    # Fan stats
                     'fan_sum': 0.0,
                     'fan_min': 100,
                     'fan_max': 0,
@@ -688,7 +686,7 @@ class ExtruderMonitor:
                 if accel > 0:
                     self._log_stats['accel_min'] = min(self._log_stats['accel_min'], accel)
                 
-                # Fan/Smart Cooling stats
+                # Fan stats
                 self._log_stats['fan_sum'] += fan_pct
                 self._log_stats['fan_min'] = min(self._log_stats['fan_min'], fan_pct)
                 self._log_stats['fan_max'] = max(self._log_stats['fan_max'], fan_pct)
@@ -804,8 +802,8 @@ class ExtruderMonitor:
                             'accel_min': accel_min,
                         },
                         
-                        # Smart Cooling stats
-                        'smart_cooling': {
+                        # Fan stats
+                        'fan': {
                             'fan_avg': round(self._log_stats['fan_sum'] / samples, 1),
                             'fan_min': self._log_stats['fan_min'],
                             'fan_max': self._log_stats['fan_max'],
@@ -861,8 +859,8 @@ class ExtruderMonitor:
                     if dz['active_pct'] > 0:
                         gcmd.respond_info(f"AT_LOG: DynZ: active {dz['active_pct']}% of print, min accel {dz['accel_min']}")
                     
-                    sc = summary['smart_cooling']
-                    gcmd.respond_info(f"AT_LOG: Cooling: {sc['fan_min']}-{sc['fan_max']}% (avg {sc['fan_avg']:.0f}%), {sc['fan_adjustments']} adjustments")
+                    fn = summary['fan']
+                    gcmd.respond_info(f"AT_LOG: Fan: {fn['fan_min']}-{fn['fan_max']}% (avg {fn['fan_avg']:.0f}%), {fn['fan_adjustments']} adjustments")
                     
                     gcmd.respond_info(f"AT_LOG: Summary saved to {summary_path}")
                     logger.info(f"Print log summary: {summary}")

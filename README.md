@@ -22,7 +22,7 @@ Most people don't do any of this. They use slicer defaults and live with mediocr
 Tell it which Revo you have:
 ```ini
 variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
-variable_sc_heater_wattage: 40         # Revo heater: 40W (stock) or 60W (upgrade)
+variable_heater_wattage: 40            # Revo heater: 40W (stock) or 60W (upgrade)
 ```
 
 That's it. Adaptive Flow handles:
@@ -62,7 +62,7 @@ The script handles everything: copies files, configures `printer.cfg`, starts se
 Edit `~/printer_data/config/auto_flow_user.cfg`:
 ```ini
 variable_use_high_flow_nozzle: True    # True = Revo HF, False = Revo Standard/Micro
-variable_sc_heater_wattage: 40         # Revo heater wattage (40 = stock, 60 = upgrade)
+variable_heater_wattage: 40            # Revo heater wattage (40 = stock, 60 = upgrade)
 ```
 
 ### 3. Set Your Slicer Start G-code
@@ -108,7 +108,7 @@ Material profiles are tuned for the stock 40W Revo heater. If you've upgraded to
 
 Upgrading your heater? Change one number:
 ```ini
-variable_sc_heater_wattage: 60
+variable_heater_wattage: 60
 ```
 Restart Klipper. Every material automatically gets appropriate scaling.
 
@@ -192,7 +192,6 @@ Most users never need to touch these. They exist for edge cases and experimentat
 | `AT_END` | Disable (call in PRINT_END) |
 | `AT_STATUS` | Show current state |
 | `AT_DYNZ_STATUS` | Show DynZ learning state |
-| `AT_SC_STATUS` | Show Smart Cooling status |
 | `AT_SET_PA MATERIAL=X PA=Y` | Override PA for a material |
 | `AT_LIST_PA` | Show all PA values |
 
@@ -203,7 +202,6 @@ Most users never need to touch these. They exist for edge cases and experimentat
 
 - **Dynamic Temperature** — Flow, speed, and acceleration-based boost with soft gating
 - **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
-- **Smart Cooling** — Flow-based + layer-time + heater-adaptive fan control
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers
 - **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, recommends specific settings
@@ -211,7 +209,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
 - **First Layer Skip** — No boost on layer 1 for consistent squish
 
-[Full configuration reference →](docs/CONFIGURATION.md) · [Analysis dashboard →](docs/ANALYSIS.md) · [DynZ docs →](docs/DYNZ.md) · [Smart Cooling docs →](docs/SMART_COOLING.md)
+[Full configuration reference →](docs/CONFIGURATION.md) · [Analysis dashboard →](docs/ANALYSIS.md) · [DynZ docs →](docs/DYNZ.md)
 
 </details>
 

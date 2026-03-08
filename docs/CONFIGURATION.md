@@ -8,10 +8,10 @@ Most users only need to set two options in `auto_flow_user.cfg`:
 
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
-variable_sc_heater_wattage: 40         # 40W (stock) or 60W (upgrade)
+variable_heater_wattage: 40            # 40W (stock) or 60W (upgrade)
 ```
 
-Everything else auto-configures: PA values, smooth_time, thermal parameters, fan control, and HF melt zone compensation are all derived from your nozzle type and heater wattage.
+Everything else auto-configures: PA values, smooth_time, thermal parameters, and HF melt zone compensation are all derived from your nozzle type and heater wattage.
 
 ---
 
@@ -54,10 +54,6 @@ variable_pa_boost_k: 0.0008     # PA reduction per °C of boost
 variable_ramp_rise: 3.0         # Heat up rate (°C/s, auto-scaled)
 variable_ramp_fall: 1.5         # Cool down rate (°C/s)
 variable_default_pa: 0.040      # Default PA (Standard nozzle; HF auto-scales)
-variable_sc_flow_gate: 10.0     # Smart cooling flow threshold
-variable_sc_flow_k: 0.02        # Fan reduction per mm³/s above gate
-variable_sc_min_fan: 0.15       # Minimum fan speed
-variable_sc_max_fan: 0.40       # Maximum fan speed (absolute ceiling)
 gcode:
 ```
 
@@ -129,10 +125,6 @@ For PLA specifically, more granular temperature recommendations based on exact f
 | `ramp_rise` | How fast temp can increase (°C/s) |
 | `ramp_fall` | How fast temp can decrease (°C/s) |
 | `default_pa` | PA value if user hasn't calibrated (Std nozzle base) |
-| `sc_flow_gate` | Smart cooling: flow threshold for fan reduction |
-| `sc_flow_k` | Smart cooling: fan reduction per mm³/s above gate |
-| `sc_min_fan` | Smart cooling: minimum fan speed (0.0-1.0) |
-| `sc_max_fan` | Smart cooling: maximum fan speed — absolute ceiling |
 
 ### Adding Custom Materials
 

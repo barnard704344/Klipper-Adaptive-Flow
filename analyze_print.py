@@ -53,7 +53,7 @@ GCODES_DIR = os.path.expanduser('~/printer_data/gcodes')
 
 # Material-specific variables live in material_profiles_user.cfg;
 # everything else lives in auto_flow_user.cfg.
-_MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k', 'sc_flow_k', 'sc_max_fan', 'sc_min_fan'])
+_MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k'])
 
 
 def _parse_config_variables(filepath):
@@ -1408,8 +1408,7 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
         _add('part_cooling_fan', 'Hardware', f'{pct}% cap',
              'bad', '1.0 (100%)',
              f'Part cooling fan max_power is {fan_max_power} in firmware — '
-             f'fan can never exceed {pct}%. This limits cooling capacity '
-             f'and explains why Smart Cooling may not reach target speeds. '
+             f'fan can never exceed {pct}%. This limits cooling capacity. '
              f'Set max_power: 1.0 in your [fan] config (adjust voltage if needed).')
 
     # =====================================================================
@@ -4336,15 +4335,6 @@ def generate_recommendations(data):
             fan_correlated = avg_sat_fan > 20
 
             if fan_correlated:
-                current_sc_max = _get_config_value('sc_max_fan', material)
-                if current_sc_max is None:
-                    current_sc_max = 1.0
-
-                # Calculate reduction: larger temp drops need bigger cuts
-                reduction = min(0.35, max(0.10, avg_drop / 8.0))
-                suggested = round(current_sc_max * (1 - reduction), 2)
-                suggested = max(0.30, min(0.95, suggested))
-
                 severity = 'bad' if max_drop > 2.5 or sat_pct > 5 else 'warn'
 
                 rec = {
@@ -4363,20 +4353,12 @@ def generate_recommendations(data):
                         f'under-extrusion banding visible on walls.'
                     ),
                     'action': (
-                        f'Reduce sc_max_fan for {material or "this material"} '
+                        f'Reduce fan speed in your slicer for {material or "this material"} '
                         f'to limit part cooling to what the heater can sustain. '
                         f'Also verify PID was tuned with the fan running '
                         f'(run M106 S255 before PID_CALIBRATE).'
                     ),
                 }
-                chg = _suggest_change(
-                    'sc_max_fan', 'reduce',
-                    round(current_sc_max - suggested, 2),
-                    material=material,
-                    minimum=0.30, maximum=0.95,
-                )
-                if chg:
-                    rec['config_changes'] = [chg]
                 recs.append(rec)
 
     # --- PA stability ---
@@ -4530,7 +4512,7 @@ def generate_recommendations(data):
                     f'Temperature deviation directly changes melt viscosity — '
                     f'each °C off target alters extrusion width, causing visible banding on walls.'
                 ),
-                'action': 'Re-tune PID with fan running (M106 S255 before PID_CALIBRATE). Check sc_max_fan if using high fan speeds.',
+                'action': 'Re-tune PID with fan running (M106 S255 before PID_CALIBRATE). Reduce slicer fan speed if using high fan speeds.',
             }
             changes = []
             c = _suggest_change('flow_smoothing', 'increase', 0.1, minimum=0.3, maximum=0.8)
@@ -4577,12 +4559,9 @@ def generate_recommendations(data):
                     f'changes from flow variation or fan cooling — temp drops below target '
                     f'and extrusion becomes inconsistent.'
                 ),
-                'action': 'Reduce sc_max_fan to give the heater thermal headroom. Verify PID was tuned with fan on. Consider a 60W heater upgrade.',
+                'action': 'Reduce fan speed in slicer to give the heater thermal headroom. Verify PID was tuned with fan on. Consider a 60W heater upgrade.',
             }
             changes = []
-            c = _suggest_change('sc_max_fan', 'reduce', 0.10, material=material, minimum=0.30, maximum=0.95)
-            if c:
-                changes.append(c)
             c = _suggest_change('flow_k', 'reduce', 0.2, material=material, minimum=0.1)
             if c:
                 changes.append(c)
@@ -4789,31 +4768,18 @@ def generate_recommendations(data):
     # --- Hardware-aware recommendations ---
     printer_hw = data.get('printer_hw') or {}
 
-    # Fan cap warning — only flag if Smart Cooling isn't already managing the limit
+    # Fan cap warning
     fan_hw = printer_hw.get('part_fan', {})
     fan_max = fan_hw.get('max_power', 1.0)
     if fan_max < 1.0:
         pct = int(fan_max * 100)
-        sc_max = _get_config_value('sc_max_fan', material)
-        if sc_max is not None:
-            # Smart Cooling already caps below hardware limit — the cap is fine
-            recs.append({
-                'severity': 'info', 'category': 'Hardware',
-                'title': f'Part cooling fan hardware-limited to {pct}%',
-                'detail': f'Your [fan] config has max_power: {fan_max}. Smart Cooling sc_max_fan '
-                           f'({sc_max:.2f}) keeps the fan within this limit, so no action is needed.',
-                'action': 'No change required. The hardware cap matches your heater capacity and '
-                           'Smart Cooling is configured to respect it.',
-            })
-        else:
-            recs.append({
-                'severity': 'warn', 'category': 'Hardware',
-                'title': f'Part cooling fan capped at {pct}%',
-                'detail': f'Your [fan] config has max_power: {fan_max}. The fan can never exceed {pct}%, '
-                           f'which limits Smart Cooling and may cause overheating on PLA/PETG overhangs.',
-                'action': f'If this is intentional (e.g. powerful CPAP fan), set sc_max_fan to stay within '
-                           f'the heater\'s thermal capacity. Otherwise, raise max_power in your [fan] section.',
-            })
+        recs.append({
+            'severity': 'info', 'category': 'Hardware',
+            'title': f'Part cooling fan hardware-limited to {pct}%',
+            'detail': f'Your [fan] config has max_power: {fan_max}. The fan can never exceed {pct}%. '
+                       f'If this is intentional (e.g. powerful CPAP fan), no action is needed.',
+            'action': f'If this cap is unintentional, raise max_power in your [fan] section.',
+        })
 
     # Firmware max_accel vs slicer
     fw_max_accel = printer_hw.get('firmware_max_accel')
@@ -5578,7 +5544,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         max_safe = _af_val(f'max_safe_flow_{"hf" if is_hf else "std"}')
         if max_safe is None:
             max_safe = 25.0 if is_hf else 15.0
-        wattage = _af_val('sc_heater_wattage')
+        wattage = _af_val('heater_wattage')
         if wattage is None:
             wattage = 40
         if isinstance(wattage, str):
