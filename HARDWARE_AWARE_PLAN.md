@@ -58,7 +58,7 @@ All of these files exist in `~/printer_data/config/` and contain parseable hardw
 
 1. **Auto-detect nozzle diameter** from `[extruder]` instead of trusting the slicer G-code
 2. **Auto-detect direct drive vs bowden** from `rotation_distance` (4.5 = direct, 33.5 = bowden) → completely different retraction/PA advice
-3. **Flag the 40% fan cap** in btt.cfg — this has been a known issue and explains why smart cooling struggles
+3. **Flag the 40% fan cap** in btt.cfg — this has been a known issue and affects cooling capacity
 4. **Validate slicer accel against firmware `max_accel`** and input shaper limits
 5. **Detect kinematics** (corexy vs cartesian) → different accel/jerk recommendations
 6. **Build volume** from `position_max` → travel speed sanity
@@ -121,7 +121,7 @@ All of these files exist in `~/printer_data/config/` and contain parseable hardw
    - Call `collect_printer_hardware(CONFIG_DIR)`
    - Store as `data['printer_hw']`
    - Use `printer_hw['extruder']['nozzle_diameter']` as source of truth for nozzle dia (override slicer if available)
-   - Use `printer_hw['part_fan']['max_power']` to adjust smart cooling recommendations
+   - Use `printer_hw['part_fan']['max_power']` to adjust fan recommendations
 
 3. **Update `generate_slicer_profile_advice()` signature** (~line 718)
    - Add `printer_hw=None` parameter

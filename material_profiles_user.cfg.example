@@ -12,7 +12,7 @@
 #
 #  HEATER WATTAGE AUTO-SCALING:
 #  ----------------------------
-#  These defaults are tuned for 40W heaters. When sc_heater_wattage is
+#  These defaults are tuned for 40W heaters. When heater_wattage is
 #  set higher, flow_k, ramp_rise, max_boost, and speed_boost_k are
 #  automatically scaled at runtime. No manual overrides needed.
 #
@@ -34,10 +34,6 @@
 #  ramp_rise:      How fast temp can increase (°C/s)
 #  ramp_fall:      How fast temp can decrease (°C/s)
 #  default_pa:     Default PA if user hasn't calibrated (Standard nozzle base)
-#  sc_flow_gate:   Smart cooling flow threshold (mm³/s)
-#  sc_flow_k:      Fan reduction per mm³/s above sc_flow_gate
-#  sc_min_fan:     Minimum fan speed (0.0-1.0)
-#  sc_max_fan:     Maximum fan speed (0.0-1.0) — absolute ceiling
 # =========================================================
 
 # Example: Custom PLA variant
@@ -52,10 +48,6 @@
 # variable_ramp_rise: 2.5          # 40W base (auto-scaled by heater wattage)
 # variable_ramp_fall: 1.5
 # variable_default_pa: 0.032       # Standard nozzle base (HF auto-scales to 0.045)
-# variable_sc_flow_gate: 8.0
-# variable_sc_flow_k: 0.02
-# variable_sc_min_fan: 0.50
-# variable_sc_max_fan: 1.00
 # gcode:
 
 # Example: Custom PETG variant
@@ -70,8 +62,4 @@
 # variable_ramp_rise: 3.0          # 40W base (auto-scaled by heater wattage)
 # variable_ramp_fall: 1.5
 # variable_default_pa: 0.040       # Standard nozzle base (HF auto-scales to 0.056)
-# variable_sc_flow_gate: 10.0
-# variable_sc_flow_k: 0.02
-# variable_sc_min_fan: 0.15
-# variable_sc_max_fan: 0.40
 # gcode:

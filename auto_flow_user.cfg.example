@@ -15,7 +15,7 @@ variable_use_high_flow_nozzle: True
 
 # HEATER WATTAGE
 # 40 = stock Revo, 60 = upgrade. Material profiles auto-scale.
-# variable_sc_heater_wattage: 40
+# variable_heater_wattage: 40
 
 # HF MELT ZONE COMPENSATION (uncomment to override)
 # HF nozzles have ~2.3x more melt zone volume than Standard.
@@ -73,24 +73,6 @@ variable_use_high_flow_nozzle: True
 # variable_dynz_relief_method: 'temp_reduction'
 # variable_dynz_temp_reduction: 8.0
 # variable_dynz_base_accel: 0
-
-# SMART COOLING (uncomment to override)
-# SC takes full control of the fan. Set slicer min/max fan to 0%.
-# Bridge/overhang fan from slicer is still respected, but sc_max_fan
-# is the absolute ceiling — slicer cannot exceed it.
-# variable_sc_enable: True
-# variable_sc_flow_gate: 8.0
-# variable_sc_flow_k: 0.03
-# variable_sc_short_layer_time: 12.0
-# variable_sc_layer_time_k: 0.01
-# variable_sc_min_fan: 0.20
-# variable_sc_max_fan: 1.00
-# variable_sc_first_layer_fan: 0.0
-
-# HEATER-ADAPTIVE FAN CONTROL (uncomment to override)
-# variable_sc_heater_adaptive: True
-# variable_sc_heater_duty_threshold: 0.90
-# variable_sc_heater_duty_k: 1.0
 
 # IMPORTANT: Do NOT add a "gcode:" line here!
 # This section MERGES with the defaults. Adding "gcode:" would replace
