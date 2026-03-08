@@ -1642,6 +1642,98 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                 _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'good', None,
                      'Good speed for small features.')
 
+    # =====================================================================
+    # WALL SPEED BIFURCATION DETECTION — intra-layer flow swing analysis
+    # =====================================================================
+    outer_speed = slicer_settings.get('outer_wall_speed')
+    inner_speed = slicer_settings.get('inner_wall_speed')
+    infill_speed = slicer_settings.get('sparse_infill_speed')
+
+    # 1) Outer wall speed == infill speed is a red flag for quality
+    if outer_speed and infill_speed and outer_speed >= infill_speed * 0.95:
+        recommended_outer = min(int(infill_speed * 0.65), 150)
+        outer_flow = _flow(outer_speed, outer_w, layer_h)
+        recommended_flow = _flow(recommended_outer, outer_w, layer_h)
+        _add('_outer_wall_vs_infill', 'Quality', f'{int(outer_speed)} mm/s',
+             'bad', f'{recommended_outer} mm/s',
+             f'Outer wall speed ({int(outer_speed)} mm/s) equals infill speed '
+             f'({int(infill_speed)} mm/s). Outer walls are visible surfaces \u2014 '
+             f'running them at infill speed ({outer_flow} mm\u00b3/s) sacrifices '
+             f'surface quality for zero time savings on most prints. '
+             f'Reduce outer_wall_speed to {recommended_outer} mm/s '
+             f'({recommended_flow} mm\u00b3/s) for clean surfaces.',
+             outer_flow)
+
+    # 2) Wall speed bifurcation: small_perimeter_speed creates 2 distinct
+    #    flow rates on outer walls within the SAME layer.  Geometry that mixes
+    #    long and short perimeters (logos, text, variable-radius curves) gets
+    #    both speeds in one layer → the melt zone can't track the transition
+    #    → visible banding at those Z heights.
+    if outer_speed and small_peri is not None and outer_speed > 100:
+        sp_str = str(small_peri)
+        if '%' in sp_str:
+            sp_pct = float(sp_str.replace('%', ''))
+            sp_abs = outer_speed * sp_pct / 100.0
+        else:
+            sp_abs = float(small_peri)
+            sp_pct = sp_abs / outer_speed * 100 if outer_speed > 0 else 100
+
+        if sp_pct < 100 and outer_speed > 0:
+            full_flow = _flow(outer_speed, outer_w, layer_h)
+            small_flow = _flow(sp_abs, outer_w, layer_h)
+            flow_ratio = full_flow / small_flow if small_flow > 0 else 1
+            flow_swing = full_flow - small_flow
+
+            if flow_ratio >= 1.5 and flow_swing > 3:
+                # Severe bifurcation — this WILL cause banding on mixed-geometry layers
+                _add('_wall_speed_bifurcation', 'Quality',
+                     f'{int(outer_speed)} / {int(sp_abs)} mm/s',
+                     'bad', f'outer_wall_speed: {int(sp_abs * 1.2)} or small_perimeter_speed: 100%',
+                     f'BANDING ROOT CAUSE: outer walls run at two speeds \u2014 '
+                     f'{int(outer_speed)} mm/s ({full_flow} mm\u00b3/s) for long perimeters '
+                     f'and {int(sp_abs)} mm/s ({small_flow} mm\u00b3/s) for short ones '
+                     f'(small_perimeter_speed={sp_str}). '
+                     f'That\u2019s a {flow_ratio:.1f}\u00d7 flow swing ({flow_swing:.1f} mm\u00b3/s) '
+                     f'on the same visible surface. '
+                     f'Layers with mixed geometry (logos, text, curves) get BOTH speeds '
+                     f'\u2192 the melt zone can\u2019t track {flow_swing:.1f} mm\u00b3/s transitions '
+                     f'\u2192 visible bands at those Z heights. '
+                     f'Fix: either reduce outer_wall_speed to ~{int(sp_abs * 1.2)} mm/s '
+                     f'(eliminates the swing) or set small_perimeter_speed to 100% '
+                     f'(uniform speed everywhere).',
+                     full_flow)
+            elif flow_ratio >= 1.3:
+                _add('_wall_speed_bifurcation', 'Quality',
+                     f'{int(outer_speed)} / {int(sp_abs)} mm/s',
+                     'warn', f'outer_wall_speed: {int(sp_abs * 1.3)} or small_perimeter_speed: 80%',
+                     f'Outer walls have a {flow_ratio:.1f}\u00d7 speed split: '
+                     f'{int(outer_speed)} mm/s for long perimeters vs '
+                     f'{int(sp_abs)} mm/s for short ones. '
+                     f'Flow swings of {flow_swing:.1f} mm\u00b3/s on layers with mixed '
+                     f'geometry may cause subtle banding. '
+                     f'Narrow the gap by reducing outer_wall_speed or increasing '
+                     f'small_perimeter_speed.',
+                     full_flow)
+
+    # 3) Gap-fill chaos: gap_infill_speed much slower than wall speeds
+    #    creates additional flow transients at geometry transitions
+    gap_speed = slicer_settings.get('gap_infill_speed')
+    if gap_speed and outer_speed and gap_speed < outer_speed * 0.3:
+        gap_flow = _flow(gap_speed, outer_w, layer_h)
+        wall_flow = _flow(outer_speed, outer_w, layer_h)
+        _add('_gap_fill_transients', 'Quality',
+             f'{int(gap_speed)} mm/s',
+             'warn', f'{int(outer_speed * 0.4)}\u2013{int(outer_speed * 0.5)} mm/s',
+             f'Gap fill at {int(gap_speed)} mm/s ({gap_flow} mm\u00b3/s) is '
+             f'{outer_speed / gap_speed:.1f}\u00d7 slower than outer walls '
+             f'({int(outer_speed)} mm/s, {wall_flow} mm\u00b3/s). '
+             f'Each gap-fill segment creates a sharp flow transient the '
+             f'extruder must recover from. On layers with many small gaps '
+             f'(complex geometry), this adds pressure instability. '
+             f'Increase to {int(outer_speed * 0.4)}\u2013{int(outer_speed * 0.5)} mm/s '
+             f'to reduce the flow swing.',
+             gap_flow)
+
     fil_mvs = slicer_settings.get('filament_max_volumetric_speed')
     if fil_mvs is not None:
         fmvs = float(fil_mvs)
