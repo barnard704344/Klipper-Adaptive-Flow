@@ -35,7 +35,6 @@ That's it. Adaptive Flow handles:
 | **Fan speed** | Adapts to flow rate, layer time, and heater capacity |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
 | **Complex geometry** | Learns where domes and overhangs cause trouble, adapts on future prints |
-| **Vibration analysis** | Auto-samples ADXL accelerometer during prints — scores quality, identifies noisy features, recommends per-feature accel limits |
 | **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, recommends specific settings |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
@@ -143,8 +142,6 @@ The dashboard shows:
 - **Slicer diagnostics** — extracts settings from your G-code, cross-references acceleration values with banding data, and recommends specific slicer changes
 - **Banding analysis** — identifies what's causing print artifacts
 - **Thermal headroom** — shows if your heater is the bottleneck
-- **Vibration analysis** — ADXL auto-sampling with quality score, per-feature breakdown, banding correlation, and accel recommendations
-
 Every chart has tooltips explaining what you're looking at and what "good" looks like. The more you print, the smarter the recommendations get.
 
 ## How It Works
@@ -210,7 +207,6 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers
 - **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, recommends specific settings
-- **ADXL Vibration Analysis** — Auto-samples accelerometer every 5 minutes during prints. Computes a 0–100 quality score, maps vibration to slicer features, cross-references with banding events, and suggests per-feature accel limits with ready-to-use G-code
 - **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
 - **First Layer Skip** — No boost on layer 1 for consistent squish
@@ -241,8 +237,6 @@ The update script:
 - **Klipper firmware** — any recent version
 - **Stock or upgraded heater** — 40W (stock) or 60W upgrade cartridge
 - **Direct-drive extruder** — PA defaults are tuned for direct-drive (Bowden users may need to override PA values)
-- **ADXL345 accelerometer** *(optional)* — required only for vibration analysis. If no ADXL is connected, all other features work normally. Use `--no-adxl` to disable sampling if it causes issues on slower MCU boards
-
 ## License
 
 MIT

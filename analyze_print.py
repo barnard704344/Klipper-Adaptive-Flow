@@ -4956,100 +4956,12 @@ def generate_recommendations(data):
                 'action': 'No speed changes needed — the printer is close to optimal.',
             })
 
-    # --- Vibration-based recommendations ---
-    vib = data.get('vibration')
-    if vib and vib.get('summary'):
-        vs = vib['summary']
-        vib_score = vs.get('quality_score')
-        mag_avg = vs.get('mag_rms_avg', 0)
-
-        # Overall vibration quality score
-        if vib_score is not None:
-            if vib_score < 40:
-                recs.append({
-                    'severity': 'bad', 'category': 'Vibration',
-                    'title': f'Vibration quality score: {vib_score}/100',
-                    'detail': f'Overall vibration quality is poor (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
-                               f'This likely causes visible surface artifacts and reduced print quality.',
-                    'action': 'Check belt tension, tighten eccentric nuts, and verify all frame bolts. '
-                              'See the Vibration tab for per-feature breakdown and specific accel reductions.',
-                })
-            elif vib_score < 65:
-                recs.append({
-                    'severity': 'warn', 'category': 'Vibration',
-                    'title': f'Vibration quality score: {vib_score}/100',
-                    'detail': f'Moderate vibration detected (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
-                               f'May cause minor surface artifacts on smooth surfaces.',
-                    'action': 'Check the Vibration tab — features with high vibration can be improved '
-                              'by reducing their acceleration. Specific values are suggested per-feature.',
-                })
-            elif vib_score >= 80:
-                recs.append({
-                    'severity': 'good', 'category': 'Vibration',
-                    'title': f'Vibration quality score: {vib_score}/100',
-                    'detail': f'Low vibration across all features (avg magnitude RMS: {mag_avg} mm/s\u00b2). '
-                               f'The printer is mechanically well-tuned.',
-                    'action': 'No changes needed. Vibration levels are healthy.',
-                })
-
-        # Per-feature accel reduction recommendations
-        by_accel = vib.get('by_accel', {})
-        reduce_features = []
-        for accel_str, feat_data in by_accel.items():
-            rec_data = feat_data.get('recommendation', {})
-            if rec_data.get('action') == 'reduce':
-                reduce_features.append({
-                    'accel': accel_str,
-                    'suggested': rec_data['suggested_accel'],
-                    'reason': rec_data['reason'],
-                    'gcode': rec_data['gcode'],
-                })
-
-        if reduce_features:
-            gcode_lines = [f"{rf['gcode']}  ; was {rf['accel']}" for rf in reduce_features[:5]]
-            recs.append({
-                'severity': 'warn', 'category': 'Vibration',
-                'title': f'{len(reduce_features)} feature(s) would benefit from lower acceleration',
-                'detail': 'These features showed vibration significantly above the baseline. '
-                          'Reducing their acceleration will improve surface quality:\n' +
-                          '\n'.join(f"\u2022 Accel {rf['accel']}: {rf['reason']}" for rf in reduce_features[:5]),
-                'action': 'Apply these in your slicer or via gcode:\n' + '\n'.join(gcode_lines),
-            })
-
-    # Vibration-banding correlations
-    vib_banding = data.get('vibration_banding', [])
-    if vib_banding:
-        strong = [c for c in vib_banding if c['vibration_rms'] > 200]
-        if strong:
-            detail_lines = []
-            for c in strong[:5]:
-                detail_lines.append(
-                    f"\u2022 Z={c['z_height']}mm: banding risk {c['banding_risk']}, "
-                    f"vibration {c['vibration_rms']} RMS @ accel {c['vibration_accel']} \u2014 {c['probable_cause']}"
-                )
-            recs.append({
-                'severity': 'warn', 'category': 'Vibration',
-                'title': f'{len(strong)} banding event(s) confirmed by vibration data',
-                'detail': 'ADXL data correlates with banding events at these Z-heights, '
-                          'providing evidence for the mechanical cause:\n' + '\n'.join(detail_lines),
-                'action': 'Focus on the specific accels and heights listed above. '
-                          'Reducing accel for these features will address the root cause.',
-            })
-        elif vib_banding:
-            recs.append({
-                'severity': 'info', 'category': 'Vibration',
-                'title': f'{len(vib_banding)} banding event(s) cross-referenced with vibration data',
-                'detail': 'Banding events were found near ADXL sample points, but vibration was '
-                          'moderate — the banding may be thermal or PA-related rather than mechanical.',
-                'action': 'Check thermal lag and PA stability tabs for other causes.',
-            })
-
     # --- All good ---
     if not recs or all(r['severity'] == 'good' for r in recs):
         recs.append({
             'severity': 'good', 'category': 'Overall',
             'title': 'Print looks well-tuned',
-            'detail': 'No significant issues detected across heater, thermal lag, PA, banding, or vibration analysis.',
+            'detail': 'No significant issues detected across heater, thermal lag, PA, and banding analysis.',
             'action': 'Keep current settings. If you want to push speed/flow higher, do it incrementally and check the next print\u2019s dashboard.',
         })
 
@@ -5473,7 +5385,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         'thermal_lag': None, 'headroom': None, 'pa_stability': None,
         'dynz_zones': {}, 'speed_flow': None, 'trends': None,
         'sessions': [], 'selected_file': '', 'is_live': False,
-        'materials': [], 'adxl_mcu': _adxl_mcu_name,
+        'materials': [],
     }
 
     all_sessions = find_recent_sessions(log_dir, count=50, material=material)
@@ -5587,30 +5499,6 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             sm = s['summary']
             ba = sm.get('banding_analysis', {})
             ts = sm.get('start_time', '')
-                # Look for vibration score for this session
-            vib_score = None
-            try:
-                base_name = os.path.basename(s.get('summary_file', '')).replace('_summary.json', '')
-                vib_files = glob.glob(os.path.join(os.path.expanduser(log_dir), base_name + '*_vibration.json'))
-                if not vib_files:
-                    vib_files = glob.glob(os.path.join(os.path.expanduser(log_dir), '*_vibration.json'))
-                for vf in sorted(vib_files, reverse=True):
-                    if base_name and base_name in os.path.basename(vf):
-                        with open(vf, 'r') as fv:
-                            vd = json.load(fv)
-                            vib_score = (vd.get('summary') or {}).get('quality_score')
-                            # Retroactively compute score if missing
-                            if vib_score is None:
-                                vs = vd.get('summary') or {}
-                                ba = vd.get('by_accel') or {}
-                                if vs:
-                                    try:
-                                        vib_score, _ = _compute_vibration_score(vs, ba)
-                                    except Exception:
-                                        pass
-                        break
-            except Exception:
-                pass
 
             trend_data.append({
                 'date': ts[:10] if len(ts) >= 10 else ts,
@@ -5619,7 +5507,6 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
                 'max_boost': sm.get('max_boost', 0),
                 'avg_pwm': sm.get('avg_pwm', 0),
                 'max_pwm': sm.get('max_pwm', 0),
-                'vib_score': vib_score,
                 'eq_score': None,  # filled below
             })
 
@@ -5758,61 +5645,8 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         )
     data['slicer_profile_advice'] = profile_advice
 
-    # --- Vibration data from ADXL auto-sampler ---
-    vibration_data = None
-    try:
-        # Look for vibration JSON matching this print
-        if data.get('selected_file'):
-            base = data['selected_file'].replace('_summary.json', '').replace('.csv', '')
-            vib_candidates = glob.glob(os.path.join(os.path.expanduser(log_dir), '*_vibration.json'))
-            for vc in sorted(vib_candidates, reverse=True):
-                if base in os.path.basename(vc):
-                    with open(vc, 'r') as f:
-                        vibration_data = json.load(f)
-                    break
-            # Fall back to most recent vibration file
-            if vibration_data is None and vib_candidates:
-                with open(sorted(vib_candidates, reverse=True)[0], 'r') as f:
-                    vibration_data = json.load(f)
-    except Exception:
-        pass
-
-    # --- Retroactively compute vibration scores if missing ---
-    if vibration_data:
-        summary_v = vibration_data.get('summary') or {}
-        by_accel_v = vibration_data.get('by_accel') or {}
-        if summary_v.get('quality_score') is None and summary_v:
-            try:
-                score, breakdown = _compute_vibration_score(summary_v, by_accel_v)
-                summary_v['quality_score'] = score
-                summary_v['score_breakdown'] = breakdown
-                vibration_data['summary'] = summary_v
-            except Exception:
-                pass
-        # Retroactively compute per-accel recommendations if missing
-        has_recs = any(v.get('recommendation') not in (None, '') for v in by_accel_v.values()) if by_accel_v else True
-        if not has_recs and by_accel_v:
-            try:
-                samples_v = vibration_data.get('samples') or []
-                recs = _compute_accel_recommendations(by_accel_v, samples_v)
-                for accel_val in recs:
-                    if accel_val in by_accel_v:
-                        by_accel_v[accel_val]['recommendation'] = recs[accel_val]
-                vibration_data['by_accel'] = by_accel_v
-            except Exception:
-                pass
-
-    data['vibration'] = vibration_data
-
-    # --- Cross-reference vibration with banding ---
-    vib_banding_corr = []
-    if vibration_data:
-        banding_csv = data.get('banding_csv_analysis')
-        if not banding_csv and csv_path:
-            banding_csv = analyze_csv_for_banding(csv_path)
-        if banding_csv:
-            vib_banding_corr = _correlate_vibration_with_banding(vibration_data, banding_csv)
-    data['vibration_banding'] = vib_banding_corr
+    data['vibration'] = None
+    data['vibration_banding'] = []
 
     # Generate actionable recommendations based on all collected data
     data['recommendations'] = generate_recommendations(data)
@@ -6093,14 +5927,10 @@ d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behav
 d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
 {l:'Quality',v:qs!=null?'<span style="color:'+qc+'">'+qs+'/100</span>':'\u2014',s:qSub,w:qs!=null&&qs<60,
 d:'Extrusion quality score based on 4 physics metrics. \u2022 T = Thermal stability (temp on target) \u2022 F = Flow steadiness (flow jitter) \u2022 H = Heater reserve (PWM headroom) \u2022 P = Pressure stability (accel transients). \u2022 85+ = excellent \u2022 65\u201384 = acceptable \u2022 <65 = likely visible issues'}];
-var vb=D.vibration;if(vb&&vb.summary&&vb.summary.quality_score!=null){
-var vs=vb.summary.quality_score,vc=vs>=80?'#3fb950':vs>=50?'#d29922':'#f85149';
-items.push({l:'Vib Score',v:vs+'/100',s:'ADXL quality',w:vs<50,
-d:'Vibration quality score from ADXL auto-sampling. \u2022 80-100 = excellent \u2022 50-79 = moderate, some features noisy \u2022 <50 = poor, check belts and reduce accel'})}}
 c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
-'</div><div class="sb">'+x.s+'</div></div>'}).join('')}
+'</div><div class="sb">'+x.s+'</div></div>'}).join('')}}
 rc();
 
 var allTabs=[
@@ -6112,8 +5942,7 @@ var allTabs=[
 {id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
 {id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
 {id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
-{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and extrusion quality across multiple prints.'},
-{id:'vb',l:'Vibration',tip:'ADXL vibration analysis from auto-sampling during prints. Shows per-feature vibration, dominant frequencies, and quality recommendations.'}];
+{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and extrusion quality across multiple prints.'}];
 var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
@@ -6144,8 +5973,7 @@ else if(at==='ht')rHt();
 else if(at==='pa')rPA(tl);
 else if(at==='dz')rDZ();
 else if(at==='ds')rDist();
-else if(at==='tr')rTr()
-else if(at==='vb')rVib()}
+else if(at==='tr')rTr()}
 
 function rSlicer(){
 var ss=D.slicer_settings;
@@ -6608,7 +6436,6 @@ rows+='<tr><td>'+t.date+'</td><td>'+t.material+
 '</td><td>'+t.avg_boost.toFixed(1)+'\u00b0C</td><td class="'+
 (t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
 '%</td><td class="'+eqc+'">'+eqv+
-'</td><td>'+(t.vib_score!=null?t.vib_score:'\u2014')+
 '</td></tr>'});
 ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
 '<p class="box-desc">Each point is a completed print. Rising quality scores = the system is learning your setup. '+
@@ -6616,7 +6443,7 @@ ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
 '</div><div class="box"><h3>Details</h3>'+
 '<p class="box-desc">Quality = extrusion quality score (0\u2013100) based on thermal stability, flow steadiness, heater reserve, and pressure stability.</p>'+
 '<table><tr><th>Date</th><th>Material</th>'+
-'<th>Boost</th><th>Max PWM</th><th>Quality</th><th>Vib</th></tr>'+rows+'</table></div>';
+'<th>Boost</th><th>Max PWM</th><th>Quality</th></tr>'+rows+'</table></div>';
 CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
 labels:tr.map(function(t){return t.date}),
 datasets:[
@@ -6625,10 +6452,7 @@ borderColor:'#d29922',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
 {label:'Quality Score',data:tr.map(function(t){return t.eq_score}),
 borderColor:'#3fb950',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
 {label:'Avg PWM (%)',data:tr.map(function(t){return t.avg_pwm*100}),
-borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
-{label:'Vib Score',data:tr.map(function(t){return t.vib_score}),
-borderColor:'#58a6ff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1',
-borderDash:[5,3],pointStyle:'rectRot',hidden:!tr.some(function(t){return t.vib_score!=null})}]},
+borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'}]},
 options:{responsive:true,animation:false,
 interaction:{intersect:false,mode:'index'},
 scales:{x:{title:{display:true,text:'Print Date'}},
@@ -6722,142 +6546,6 @@ if(d.success){btn.textContent='\u2713 Applied';btn.classList.add('applied');show
 else{btn.textContent='Apply';btn.disabled=false;showToast('Error: '+d.message,false)}})
 .catch(function(e){btn.textContent='Apply';btn.disabled=false;showToast('Request failed: '+e,false)})}
 
-/* ── Vibration Analysis Panel ── */
-function rVib(){
-var vb=D.vibration;
-if(!vb||!vb.summary){
-var mcuN=D.adxl_mcu||'';
-var ml=mcuN.toLowerCase();
-var is8bit=(ml.indexOf('atmega')>=0||ml.indexOf('at90')>=0);
-var h='<div class="box"><div class="box-hd">📊 Vibration Analysis</div>';
-if(is8bit){
-h+='<p class="box-desc" style="color:#d29922">⚠️ Your main MCU (<b>'+mcuN+'</b>) is an 8-bit processor and does not support during-print ADXL sampling.</p>'+
-'<p style="color:#8b949e;margin-top:8px">8-bit AVR MCUs have limited step buffers &mdash; reading the ADXL345 over SPI during a print stalls motion planning and causes &ldquo;Timer too close&rdquo; errors. '+
-'Upgrading to a 32-bit board (STM32, RP2040, etc.) would allow live vibration monitoring.</p>';
-}else{
-h+='<p class="box-desc">No vibration data available yet. The ADXL345 auto-sampler will automatically collect vibration samples during your next print.</p>'+
-'<p style="color:#8b949e;margin-top:12px">Samples are taken every 5 minutes throughout the print. Each sample captures a short burst of accelerometer data at ~3200Hz and correlates it with what the printer is doing (speed, acceleration, layer height).</p>'+
-'<p style="color:#8b949e;margin-top:8px">After the print completes, the vibration data appears here with per-feature analysis and recommendations.</p>';}
-ca.innerHTML=h+'</div>';return}
-var sm=vb.summary;
-var ns=vb.n_samples||0;
-var qs=sm.quality_score;var qc=qs>=80?'#3fb950':qs>=50?'#d29922':'#f85149';
-var h='<div class="box"><div class="box-hd">📊 Print Vibration Summary</div>';
-h+='<p class="box-desc">'+ns+' ADXL samples collected during print'+(vb.filename?' of <b>'+vb.filename+'</b>':'')+'. Each sample = '+vb.sample_duration_s+'s burst at ~3200Hz.</p>';
-h+='<div style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap">';
-if(qs!=null){h+='<div class="score-box" style="min-width:140px;border:2px solid '+qc+'"><div class="score-label">Quality Score</div><div class="score-val" style="color:'+qc+';font-size:28px">'+qs+'<span style="font-size:14px;color:#8b949e">/100</span></div>';
-var sb=sm.score_breakdown;if(sb){h+='<div style="font-size:10px;color:#8b949e;margin-top:4px">';
-if(sb.mag_rms)h+='RMS:'+sb.mag_rms.score.toFixed(0)+' ';if(sb.axis_balance)h+='Bal:'+sb.axis_balance.score.toFixed(0)+' ';if(sb.peak_control)h+='Peak:'+sb.peak_control.score.toFixed(0)+' ';if(sb.feature_consistency)h+='Cons:'+sb.feature_consistency.score.toFixed(0);h+='</div>'}
-h+='</div>'}
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">X RMS</div><div class="score-val" style="color:#58a6ff">'+sm.x_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.x_rms_max+'</div></div>';
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">Y RMS</div><div class="score-val" style="color:#3fb950">'+sm.y_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.y_rms_max+'</div></div>';
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">Mag RMS</div><div class="score-val" style="color:#f0883e">'+sm.mag_rms_avg+'</div><div style="font-size:11px;color:#8b949e">peak: '+sm.mag_rms_max+'</div></div>';
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">Mag Peak</div><div class="score-val" style="color:#da3633">'+sm.mag_peak_max+'</div></div>';
-if(sm.dominant_freq_x_hz>0||sm.dominant_freq_y_hz>0){
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">Dom. Freq X</div><div class="score-val" style="color:#58a6ff;font-size:18px">'+sm.dominant_freq_x_hz+' Hz</div></div>';
-h+='<div class="score-box" style="min-width:120px"><div class="score-label">Dom. Freq Y</div><div class="score-val" style="color:#3fb950;font-size:18px">'+sm.dominant_freq_y_hz+' Hz</div></div>';
-}
-h+='</div></div>';
-/* Per-accel/feature breakdown */
-var ba=vb.by_accel;
-if(ba&&Object.keys(ba).length>0){
-var am=(D.slicer_diagnosis||{}).accel_map||{};
-h+='<div class="box"><div class="box-hd">🔧 Vibration by Feature / Acceleration</div>';
-h+='<p class="box-desc">How vibration varies across different print features (identified by acceleration value). Higher RMS = more vibration = lower quality.</p>';
-h+='<table class="tbl"><thead><tr><th>Accel (mm/s²)</th><th>Feature</th><th>Samples</th><th>X RMS</th><th>Y RMS</th><th>Mag RMS</th><th>Avg Speed</th><th>Z Range</th><th>Recommendation</th></tr></thead><tbody>';
-var keys=Object.keys(ba).sort(function(a,b){return Number(a)-Number(b)});
-for(var i=0;i<keys.length;i++){
-var k=keys[i],d2=ba[k];
-var feat=am[k]?am[k].features.join(', '):'—';
-var xc=d2.x_rms_avg>500?'color:#da3633':d2.x_rms_avg>200?'color:#d29922':'';
-var yc=d2.y_rms_avg>500?'color:#da3633':d2.y_rms_avg>200?'color:#d29922':'';
-var rec=d2.recommendation||{};
-var recHtml='';
-if(rec.action==='reduce'){recHtml='<span style="color:#d29922">↓ '+rec.suggested_accel+'</span><br><span style="font-size:10px;color:#8b949e">-'+rec.reduction_pct+'%</span>'}
-else if(rec.action==='keep'){recHtml='<span style="color:#3fb950">✓ OK</span>'}
-else{recHtml='<span style="color:#8b949e">—</span>'}
-h+='<tr><td>'+k+'</td><td>'+feat+'</td><td>'+d2.n_samples+'</td>';
-h+='<td style="'+xc+'">'+d2.x_rms_avg+'</td><td style="'+yc+'">'+d2.y_rms_avg+'</td>';
-h+='<td>'+d2.mag_rms_avg+'</td><td>'+d2.speed_avg+' mm/s</td>';
-h+='<td>'+d2.z_range[0]+' - '+d2.z_range[1]+' mm</td><td>'+recHtml+'</td></tr>';
-}
-h+='</tbody></table>';
-/* Show gcode commands for features that need reducing */
-var reduceKeys=keys.filter(function(k){return (ba[k].recommendation||{}).action==='reduce'});
-if(reduceKeys.length>0){
-h+='<div style="margin-top:12px;padding:10px;background:#0d1117;border-radius:6px;border:1px solid #30363d">';
-h+='<div style="font-size:11px;color:#8b949e;margin-bottom:6px">Suggested G-code (apply per-feature in slicer or macros):</div>';
-for(var ri=0;ri<reduceKeys.length;ri++){var rk=reduceKeys[ri],rr=ba[rk].recommendation;
-h+='<div style="font-family:monospace;font-size:12px;color:#d29922;margin:2px 0">'+rr.gcode+'  <span style="color:#484f58">; was '+rk+', '+rr.reason+'</span></div>'}
-h+='</div>'}
-h+='</div>';
-}
-/* Vibration over time chart */
-var samps=vb.samples||[];
-if(samps.length>=2){
-h+='<div class="box"><div class="box-hd">📈 Vibration Over Print Progress</div>';
-h+='<p class="box-desc">How vibration changed throughout the print. Spikes may indicate speed changes, feature transitions, or mechanical issues.</p>';
-h+='<div style="height:350px">'+mc('vib_time_chart')+'</div></div>';
-}
-/* Vibration ↔ Banding Correlation */
-var vbc=D.vibration_banding||[];
-if(vbc.length>0){
-h+='<div class="box"><div class="box-hd">🔗 Vibration × Banding Correlation</div>';
-h+='<p class="box-desc">Banding events cross-referenced with ADXL vibration data at matching Z-heights. <b>Strong correlations = mechanical cause confirmed.</b></p>';
-h+='<table class="tbl"><thead><tr><th>Z Height</th><th>Banding Risk</th><th>Vib RMS</th><th>Accel</th><th>Speed</th><th>Probable Cause</th></tr></thead><tbody>';
-for(var ci=0;ci<Math.min(vbc.length,15);ci++){var cv=vbc[ci];
-var rc2=cv.vibration_rms>500?'color:#da3633':cv.vibration_rms>200?'color:#d29922':'';
-h+='<tr><td>'+cv.z_height+' mm</td><td class="'+(cv.banding_risk>=8?'d':cv.banding_risk>=5?'w':'')+'">'+cv.banding_risk+'</td>';
-h+='<td style="'+rc2+'">'+cv.vibration_rms+'</td><td>'+cv.vibration_accel+'</td>';
-h+='<td>'+cv.vibration_speed+' mm/s</td><td>'+cv.probable_cause+'</td></tr>'}
-h+='</tbody></table></div>'}
-/* Recommendations */
-h+='<div class="box"><div class="box-hd">💡 Vibration Insights</div>';
-var recs=[];
-if(sm.x_rms_avg>500||sm.y_rms_avg>500)recs.push('<b>High overall vibration</b> — X or Y RMS above 500 mm/s². Consider reducing print speed or tightening belts.');
-if(sm.x_rms_avg>0&&sm.y_rms_avg>0&&Math.abs(sm.x_rms_avg-sm.y_rms_avg)/Math.max(sm.x_rms_avg,sm.y_rms_avg)>0.4)recs.push('<b>Axis imbalance</b> — X and Y vibration differ by >40%. Check belt tension balance, or one axis may have a mechanical issue.');
-if(sm.dominant_freq_x_hz>0&&sm.dominant_freq_y_hz>0){
-var is_x=D.slicer_settings&&D.slicer_settings.input_shaper_freq_x?parseFloat(D.slicer_settings.input_shaper_freq_x):0;
-var is_y=D.slicer_settings&&D.slicer_settings.input_shaper_freq_y?parseFloat(D.slicer_settings.input_shaper_freq_y):0;
-if(is_x>0&&Math.abs(sm.dominant_freq_x_hz-is_x)/is_x>0.2)recs.push('<b>X shaper frequency mismatch</b> — dominant vibration at '+sm.dominant_freq_x_hz+'Hz but input shaper set to '+is_x+'Hz. Consider re-running resonance test.');
-if(is_y>0&&Math.abs(sm.dominant_freq_y_hz-is_y)/is_y>0.2)recs.push('<b>Y shaper frequency mismatch</b> — dominant vibration at '+sm.dominant_freq_y_hz+'Hz but input shaper set to '+is_y+'Hz. Consider re-running resonance test.');
-}
-if(ba){
-var maxVibAccel='',maxVibVal=0;
-for(var k in ba){if(ba[k].mag_rms_avg>maxVibVal){maxVibVal=ba[k].mag_rms_avg;maxVibAccel=k}}
-var minVibAccel='',minVibVal=999999;
-for(var k in ba){if(ba[k].mag_rms_avg<minVibVal){minVibVal=ba[k].mag_rms_avg;minVibAccel=k}}
-if(maxVibVal>minVibVal*2&&maxVibAccel!==minVibAccel){
-var mfeat=am[maxVibAccel]?am[maxVibAccel].features.join('/'):'accel='+maxVibAccel;
-recs.push('<b>'+mfeat+' is the noisiest feature</b> — '+maxVibVal+' RMS vs '+minVibVal+' for quietest. Reducing speed/accel for this feature would have the biggest quality impact.');
-}
-}
-if(recs.length===0)recs.push('Vibration levels look healthy. No obvious issues detected.');
-for(var i=0;i<recs.length;i++)h+='<p style="margin:6px 0;padding:8px;background:#161b22;border-radius:6px;border-left:3px solid '+(i<3?'#d29922':'#3fb950')+'">'+recs[i]+'</p>';
-h+='</div>';
-ca.innerHTML=h;
-/* Render time chart */
-if(samps.length>=2&&typeof Chart!=='undefined'){
-var ctx=document.getElementById('vib_time_chart');
-if(ctx){
-var labels=[],xd=[],yd=[],md=[];
-for(var i=0;i<samps.length;i++){
-var pr=samps[i].printer||{};
-labels.push((pr.progress_pct||0).toFixed(0)+'%');
-xd.push(samps[i].vibration.x.rms);
-yd.push(samps[i].vibration.y.rms);
-md.push(samps[i].vibration.magnitude.rms);
-}
-CH['vib_time']=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
-{label:'X RMS',data:xd,borderColor:'#58a6ff',borderWidth:2,pointRadius:4,tension:0.3},
-{label:'Y RMS',data:yd,borderColor:'#3fb950',borderWidth:2,pointRadius:4,tension:0.3},
-{label:'Mag RMS',data:md,borderColor:'#f0883e',borderWidth:2,pointRadius:4,tension:0.3,borderDash:[4,2]}
-]},options:{responsive:true,maintainAspectRatio:false,
-scales:{x:{title:{display:true,text:'Print Progress'}},y:{title:{display:true,text:'Vibration RMS (mm/s²)'},beginAtZero:true}},
-plugins:{legend:{position:'top',labels:{boxWidth:12,font:{size:11}}}}}})
-}}
-}
-
 rCh();
 }catch(e){
 document.getElementById('_err').style.display='block';
@@ -6907,790 +6595,6 @@ def generate_dashboard_html(data):
     data_json = _safe_json_for_html(data)
     return DASHBOARD_TEMPLATE.replace('__DASHBOARD_DATA__', data_json)
 
-
-def _moonraker_gcode(script, timeout=8):
-    """Send a gcode script to Klipper via Moonraker. Returns True on success."""
-    encoded = urllib.parse.quote(script)
-    try:
-        r = subprocess.run(
-            ['curl', '-s', '-m', str(timeout),
-             'http://127.0.0.1:7125/printer/gcode/script?script=' + encoded],
-            capture_output=True, timeout=timeout + 2
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
-
-def _moonraker_query(endpoint, timeout=5):
-    """Query a Moonraker API endpoint. Returns parsed JSON dict or None."""
-    try:
-        r = subprocess.run(
-            ['curl', '-s', '-m', str(timeout),
-             'http://127.0.0.1:7125' + endpoint],
-            capture_output=True, timeout=timeout + 2
-        )
-        if r.returncode == 0 and r.stdout:
-            return json.loads(r.stdout.decode())
-    except Exception:
-        pass
-    return None
-
-
-# --------------- Background ADXL Print Sampler --------------------------------
-# Automatically samples ADXL345 vibration at strategic points during prints.
-# Each sample: 2-second burst → parse CSV → record vibration metrics + printer state.
-# Results saved as *_vibration.json alongside the existing print logs.
-
-_ADXL_SAMPLE_CSV = '/tmp/adxl345-autosample.csv'
-_ADXL_SAMPLE_INTERVAL = 300   # seconds between samples (5 minutes — reduced from 2min to ease MCU load)
-_ADXL_SAMPLE_DURATION = 0.5   # seconds of ADXL recording per sample (reduced from 2.0s to prevent timer-too-close)
-_ADXL_SPEED_THRESHOLD = 80    # mm/s — defer sampling when toolhead is moving faster than this
-_ADXL_MIN_BUFFER_TIME = 3.0   # seconds — defer sampling when MCU step buffer is below this
-_ADXL_MAX_BACKOFF = 1800      # max backoff interval in seconds (30 min)
-_adxl_sampler_active = False   # True while a print is being sampled
-_adxl_sampler_enabled = True   # Controlled at runtime by ATmega MCU detection
-_adxl_mcu_name = ''            # Populated by sampler thread on startup (e.g. 'atmega2560')
-
-
-def _parse_adxl_csv(csv_path):
-    """Parse an ADXL345 CSV file into vibration metrics.
-    
-    Returns dict with per-axis stats: mean, peak, RMS, dominant frequency estimate.
-    CSV format: #time,accel_x,accel_y,accel_z
-    """
-    samples = []
-    try:
-        with open(csv_path, 'r') as f:
-            for line in f:
-                if line.startswith('#') or not line.strip():
-                    continue
-                parts = line.strip().split(',')
-                if len(parts) >= 4:
-                    try:
-                        t = float(parts[0])
-                        x = float(parts[1])
-                        y = float(parts[2])
-                        z = float(parts[3])
-                        samples.append((t, x, y, z))
-                    except (ValueError, IndexError):
-                        pass
-    except Exception:
-        return None
-
-    n = len(samples)
-    if n < 10:
-        return None
-
-    xs = [s[1] for s in samples]
-    ys = [s[2] for s in samples]
-    zs = [s[3] for s in samples]
-
-    def _axis_stats(vals):
-        n = len(vals)
-        mean = sum(vals) / n
-        # Remove DC offset for vibration analysis
-        ac = [v - mean for v in vals]
-        rms = (sum(v * v for v in ac) / n) ** 0.5
-        peak = max(abs(v) for v in ac)
-        return {
-            'mean': round(mean, 1),
-            'rms': round(rms, 1),
-            'peak': round(peak, 1),
-        }
-
-    # Compute magnitude for each sample
-    mags = [(s[1]**2 + s[2]**2 + s[3]**2)**0.5 for s in samples]
-    mag_mean = sum(mags) / n
-    mag_ac = [m - mag_mean for m in mags]
-    mag_rms = (sum(v * v for v in mag_ac) / n) ** 0.5
-    mag_peak = max(abs(v) for v in mag_ac)
-
-    # Estimate sample rate
-    dt = samples[-1][0] - samples[0][0]
-    sample_rate = (n - 1) / dt if dt > 0 else 3200
-
-    # Simple dominant frequency estimate using zero-crossing rate
-    # (lightweight alternative to FFT for resource-constrained Pi)
-    def _zero_cross_freq(ac_vals, fs):
-        crossings = 0
-        for i in range(1, len(ac_vals)):
-            if ac_vals[i - 1] * ac_vals[i] < 0:
-                crossings += 1
-        # Zero-crossing rate ≈ 2 * frequency
-        return round(crossings / (2 * len(ac_vals) / fs), 1) if len(ac_vals) > 1 else 0
-
-    x_ac = [v - sum(xs) / n for v in xs]
-    y_ac = [v - sum(ys) / n for v in ys]
-
-    return {
-        'n_samples': n,
-        'duration_s': round(dt, 2),
-        'sample_rate_hz': round(sample_rate, 0),
-        'x': _axis_stats(xs),
-        'y': _axis_stats(ys),
-        'z': _axis_stats(zs),
-        'magnitude': {
-            'mean': round(mag_mean, 1),
-            'rms': round(mag_rms, 1),
-            'peak': round(mag_peak, 1),
-        },
-        'dominant_freq_x_hz': _zero_cross_freq(x_ac, sample_rate),
-        'dominant_freq_y_hz': _zero_cross_freq(y_ac, sample_rate),
-    }
-
-
-def _is_toolhead_busy():
-    """Check if the toolhead is actively moving or MCU buffer is low.
-    
-    Returns True if we should defer ADXL sampling — either because the
-    toolhead is moving fast, or because the MCU step buffer is too thin
-    to safely absorb the CPU load of an ADXL burst measurement.
-    """
-    data = _moonraker_query(
-        '/printer/objects/query?motion_report&toolhead', timeout=3
-    )
-    if not data:
-        return True  # assume busy if we can't query
-    status = data.get('result', {}).get('status', {})
-
-    # Check speed
-    mr = status.get('motion_report', {})
-    speed = mr.get('live_velocity', 0)
-    if speed > _ADXL_SPEED_THRESHOLD:
-        return True
-
-    # Check MCU step buffer: buffer_time = print_time - estimated_print_time
-    # When printing, print_time is the furthest scheduled time and
-    # estimated_print_time is the MCU's current clock time.  A thin buffer
-    # means the MCU will run out of queued steps if gcode feeding pauses
-    # (which ADXL SPI processing on the host will cause).
-    th = status.get('toolhead', {})
-    print_time = th.get('print_time', 0)
-    est_time = th.get('estimated_print_time', 0)
-    buffer_time = print_time - est_time
-    if 0 < buffer_time < _ADXL_MIN_BUFFER_TIME:
-        logging.getLogger('ADXLSampler').debug(
-            f"  Deferring ADXL sample — buffer_time={buffer_time:.2f}s "
-            f"< {_ADXL_MIN_BUFFER_TIME}s"
-        )
-        return True
-
-    return False
-
-
-def _take_adxl_sample():
-    """Take a single ADXL burst sample. Returns vibration metrics dict or None.
-
-    Sequence: drain orphan → start MEASURE → wait → stop MEASURE → wait for CSV → parse.
-
-    IMPORTANT: Klipper's ACCELEROMETER_MEASURE is a toggle.  If bg_client is
-    None it starts; if bg_client exists it stops and writes a CSV.  A previous
-    failed sample can leave the accelerometer running, which inverts the
-    start/stop semantics of the next attempt.  We therefore always send a
-    "drain" toggle-pair before the real sample to guarantee bg_client is None.
-
-    During active printing, gcode commands queue behind print moves, so we
-    use generous timeouts (30s) to avoid curl timing out while Klipper
-    catches up — a timed-out curl still leaves the command queued in Klipper,
-    which silently desynchronises the toggle state.
-    """
-    sampler_log = logging.getLogger('ADXLSampler')
-    _ADXL_CMD_TIMEOUT = 30   # generous for during-print gcode queue delays
-
-    # --- 0. Clean up any stale files from previous attempts -----------------
-    for p in glob.glob('/tmp/adxl345-_drain*.csv'):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-    if os.path.exists(_ADXL_SAMPLE_CSV):
-        try:
-            os.remove(_ADXL_SAMPLE_CSV)
-        except OSError:
-            pass
-
-    # --- 1. Drain any orphaned measurement ----------------------------------
-    # First toggle: if accel is running ⇒ stops it (writes _drain CSV);
-    #               if accel is idle   ⇒ starts it (no CSV yet).
-    drain_csv = '/tmp/adxl345-_drain.csv'
-    if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain',
-                            timeout=_ADXL_CMD_TIMEOUT):
-        sampler_log.warning("  Drain command timed out — aborting sample")
-        return None
-
-    # Give Klipper a moment to write the CSV if it stopped a measurement
-    time.sleep(0.5)
-
-    if not os.path.exists(drain_csv):
-        # No CSV → the drain *started* a measurement; second toggle stops it
-        if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=_drain',
-                                timeout=_ADXL_CMD_TIMEOUT):
-            sampler_log.warning("  Drain stop command timed out — aborting")
-            return None
-        time.sleep(0.5)
-
-    # Clean up drain artefacts
-    for p in glob.glob('/tmp/adxl345-_drain*.csv'):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
-
-    # --- 2. Start recording -------------------------------------------------
-    if not _moonraker_gcode('ACCELEROMETER_MEASURE',
-                            timeout=_ADXL_CMD_TIMEOUT):
-        sampler_log.warning("  ACCELEROMETER_MEASURE start command failed")
-        return None
-
-    # --- 3. Let it record for the sample duration ---------------------------
-    time.sleep(_ADXL_SAMPLE_DURATION)
-
-    # --- 4. Stop recording — Klipper writes CSV -----------------------------
-    if not _moonraker_gcode('ACCELEROMETER_MEASURE NAME=autosample',
-                            timeout=_ADXL_CMD_TIMEOUT):
-        sampler_log.warning("  ACCELEROMETER_MEASURE stop command failed")
-        return None
-
-    # --- 5. Wait for CSV to appear and have data (up to 5 seconds) ----------
-    for _ in range(50):
-        time.sleep(0.1)
-        if os.path.exists(_ADXL_SAMPLE_CSV):
-            try:
-                if os.path.getsize(_ADXL_SAMPLE_CSV) > 100:
-                    break
-            except OSError:
-                pass
-
-    if not os.path.exists(_ADXL_SAMPLE_CSV):
-        sampler_log.warning(
-            "  ADXL CSV not found at %s after stop command", _ADXL_SAMPLE_CSV
-        )
-        return None
-
-    result = _parse_adxl_csv(_ADXL_SAMPLE_CSV)
-    if result is None:
-        sampler_log.warning("  ADXL CSV existed but parsing returned no data")
-    return result
-
-
-def _get_printer_state():
-    """Query current printer state from Moonraker for annotation."""
-    data = _moonraker_query(
-        '/printer/objects/query?print_stats&toolhead&gcode_move&display_status'
-    )
-    if not data:
-        return {}
-
-    status = data.get('result', {}).get('status', {})
-    ps = status.get('print_stats', {})
-    th = status.get('toolhead', {})
-    gm = status.get('gcode_move', {})
-    ds = status.get('display_status', {})
-
-    # Current speed = gcode_move speed (mm/s), position for Z
-    speed = gm.get('speed', 0)  # in mm/s
-    pos = gm.get('gcode_position', [0, 0, 0, 0])
-    accel = th.get('max_accel', 0)
-    sq_corner = th.get('square_corner_velocity', 0)
-
-    return {
-        'progress_pct': round((ds.get('progress', 0)) * 100, 1),
-        'print_duration_s': round(ps.get('print_duration', 0), 1),
-        'filename': ps.get('filename', ''),
-        'speed_mm_s': round(speed, 1) if speed else 0,
-        'z_height': round(pos[2], 2) if len(pos) > 2 else 0,
-        'accel': int(accel),
-        'sq_corner_vel': round(sq_corner, 1),
-        'layer': ps.get('info', {}).get('current_layer'),
-        'total_layers': ps.get('info', {}).get('total_layer'),
-    }
-
-
-def _adxl_print_sampler_loop(log_dir):
-    """Background thread: monitor print state and take ADXL samples during prints.
-    
-    Strategy:
-    - Poll print_stats every 10 seconds
-    - On print start: wait 60s for first layer to stabilise, then sample every _ADXL_SAMPLE_INTERVAL
-    - Each sample: short ADXL burst (0.5s) + printer state snapshot
-    - Defers sampling when toolhead is in a fast move to avoid MCU overload
-    - Uses exponential backoff on consecutive failures (max 30 min)
-    - On print end: save all samples to *_vibration.json
-    """
-    logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s')
-    logger = logging.getLogger('ADXLSampler')
-    global _adxl_sampler_active, _adxl_mcu_name
-
-    # --- 8-bit AVR MCU check: disable during-print sampling ----------------
-    # 8-bit AVR MCUs (atmega, at90usb) have very limited step buffers.
-    # ADXL SPI communication stalls gcode processing on the host, draining
-    # the MCU step buffer and causing "Timer too close" shutdowns.
-    _8bit_mcu = False
-    for _attempt in range(6):
-        mcu_data = _moonraker_query('/printer/objects/query?mcu')
-        if mcu_data:
-            mcu_name = (mcu_data.get('result', {}).get('status', {})
-                        .get('mcu', {}).get('mcu_constants', {})
-                        .get('MCU', ''))
-            _adxl_mcu_name = mcu_name
-            ml = mcu_name.lower()
-            if 'atmega' in ml or 'at90' in ml:
-                _8bit_mcu = True
-                logger.info(
-                    f"Main MCU is {mcu_name} (8-bit AVR) — ADXL during-print "
-                    "sampling DISABLED (insufficient step buffer)"
-                )
-            break
-        time.sleep(5)
-
-    last_state = 'standby'
-    samples = []
-    print_filename = ''
-    sample_timer = 0
-    initial_delay_done = False
-    consecutive_failures = 0     # for exponential backoff
-    current_interval = _ADXL_SAMPLE_INTERVAL  # may grow on failures
-
-    logger.info("ADXL print sampler started — monitoring for prints "
-                f"(interval={_ADXL_SAMPLE_INTERVAL}s, burst={_ADXL_SAMPLE_DURATION}s)")
-
-    while True:
-        try:
-            time.sleep(10)
-
-            # Check print state
-            data = _moonraker_query('/printer/objects/query?print_stats')
-            if not data:
-                continue
-            ps = data.get('result', {}).get('status', {}).get('print_stats', {})
-            state = ps.get('state', 'standby')
-
-            # ---------- Print just started ----------
-            if state == 'printing' and last_state != 'printing':
-                print_filename = ps.get('filename', '')
-                samples = []
-                sample_timer = 0
-                initial_delay_done = False
-                consecutive_failures = 0
-                current_interval = _ADXL_SAMPLE_INTERVAL
-                _adxl_sampler_active = not _8bit_mcu
-                if _8bit_mcu:
-                    logger.info(f"Print started: {print_filename} — ADXL sampling SKIPPED (8-bit MCU)")
-                else:
-                    logger.info(f"Print started: {print_filename} — ADXL sampling enabled")
-
-            # ---------- Currently printing ----------
-            if state == 'printing' and _adxl_sampler_active:
-                sample_timer += 10  # we sleep 10s per loop
-
-                # Wait 60s after print starts before first sample (skip first-layer rattling)
-                if not initial_delay_done:
-                    if sample_timer >= 60:
-                        initial_delay_done = True
-                        sample_timer = current_interval  # trigger immediate sample
-                    else:
-                        last_state = state
-                        continue
-
-                # Time for a sample?
-                if sample_timer >= current_interval:
-                    # Defer if toolhead is doing a fast move — try again next loop
-                    if _is_toolhead_busy():
-                        logger.debug("  Deferring ADXL sample — toolhead moving fast")
-                        last_state = state
-                        continue
-
-                    sample_timer = 0
-
-                    printer_state = _get_printer_state()
-                    logger.info(
-                        f"Taking ADXL sample #{len(samples)+1} at "
-                        f"{printer_state.get('progress_pct', 0):.0f}% "
-                        f"(z={printer_state.get('z_height', 0)}, "
-                        f"accel={printer_state.get('accel', 0)})"
-                    )
-
-                    vibration = _take_adxl_sample()
-                    if vibration:
-                        sample_entry = {
-                            'sample_num': len(samples) + 1,
-                            'timestamp': time.time(),
-                            'printer': printer_state,
-                            'vibration': vibration,
-                        }
-                        samples.append(sample_entry)
-                        logger.info(
-                            f"  Sample OK: X_rms={vibration['x']['rms']}, "
-                            f"Y_rms={vibration['y']['rms']}, "
-                            f"mag_rms={vibration['magnitude']['rms']}"
-                        )
-                        # Reset backoff on success
-                        if consecutive_failures > 0:
-                            consecutive_failures = 0
-                            current_interval = _ADXL_SAMPLE_INTERVAL
-                            logger.info(f"  Backoff reset — interval back to {current_interval}s")
-                    else:
-                        consecutive_failures += 1
-                        # Exponential backoff: double the interval each failure, cap at _ADXL_MAX_BACKOFF
-                        current_interval = min(
-                            _ADXL_SAMPLE_INTERVAL * (2 ** consecutive_failures),
-                            _ADXL_MAX_BACKOFF
-                        )
-                        logger.warning(
-                            f"  ADXL sample failed (#{consecutive_failures}) — "
-                            f"next attempt in {current_interval}s"
-                        )
-
-            # ---------- Print just ended ----------
-            if state != 'printing' and last_state == 'printing' and samples:
-                _adxl_sampler_active = False
-                logger.info(
-                    f"Print ended — {len(samples)} ADXL samples collected"
-                )
-
-                # Save vibration data
-                try:
-                    vib_data = _build_vibration_summary(samples, print_filename)
-                    # Find matching log file to place vibration file alongside it
-                    vib_path = _save_vibration_data(vib_data, log_dir, print_filename)
-                    if vib_path:
-                        logger.info(f"Vibration data saved: {vib_path}")
-                except Exception as exc:
-                    logger.error(f"Failed to save vibration data: {exc}")
-
-                samples = []
-                print_filename = ''
-
-            last_state = state
-
-        except Exception as exc:
-            logger.error(f"ADXL sampler error: {exc}")
-            time.sleep(30)  # back off on errors
-
-
-def _build_vibration_summary(samples, filename):
-    """Aggregate per-sample vibration data into a print-level summary."""
-    if not samples:
-        return {}
-
-    # Group samples by accel value (proxy for feature type)
-    by_accel = {}
-    all_x_rms = []
-    all_y_rms = []
-    all_mag_rms = []
-    all_mag_peak = []
-
-    for s in samples:
-        vib = s['vibration']
-        pr = s['printer']
-        accel = pr.get('accel', 0)
-
-        all_x_rms.append(vib['x']['rms'])
-        all_y_rms.append(vib['y']['rms'])
-        all_mag_rms.append(vib['magnitude']['rms'])
-        all_mag_peak.append(vib['magnitude']['peak'])
-
-        key = str(accel)
-        if key not in by_accel:
-            by_accel[key] = {'x_rms': [], 'y_rms': [], 'mag_rms': [], 'speeds': [], 'z_heights': []}
-        by_accel[key]['x_rms'].append(vib['x']['rms'])
-        by_accel[key]['y_rms'].append(vib['y']['rms'])
-        by_accel[key]['mag_rms'].append(vib['magnitude']['rms'])
-        by_accel[key]['speeds'].append(pr.get('speed_mm_s', 0))
-        by_accel[key]['z_heights'].append(pr.get('z_height', 0))
-
-    # Build per-accel summary
-    accel_summary = {}
-    for accel_val, data in by_accel.items():
-        n = len(data['x_rms'])
-        accel_summary[accel_val] = {
-            'n_samples': n,
-            'x_rms_avg': round(sum(data['x_rms']) / n, 1),
-            'y_rms_avg': round(sum(data['y_rms']) / n, 1),
-            'mag_rms_avg': round(sum(data['mag_rms']) / n, 1),
-            'speed_avg': round(sum(data['speeds']) / n, 1),
-            'z_range': [round(min(data['z_heights']), 1), round(max(data['z_heights']), 1)],
-        }
-
-    # Dominant frequency analysis across all samples
-    freq_x = [s['vibration'].get('dominant_freq_x_hz', 0) for s in samples if s['vibration'].get('dominant_freq_x_hz')]
-    freq_y = [s['vibration'].get('dominant_freq_y_hz', 0) for s in samples if s['vibration'].get('dominant_freq_y_hz')]
-
-    n_all = len(all_x_rms)
-    summary = {
-        'x_rms_avg': round(sum(all_x_rms) / n_all, 1) if n_all else 0,
-        'x_rms_max': round(max(all_x_rms), 1) if all_x_rms else 0,
-        'y_rms_avg': round(sum(all_y_rms) / n_all, 1) if n_all else 0,
-        'y_rms_max': round(max(all_y_rms), 1) if all_y_rms else 0,
-        'mag_rms_avg': round(sum(all_mag_rms) / n_all, 1) if n_all else 0,
-        'mag_rms_max': round(max(all_mag_rms), 1) if all_mag_rms else 0,
-        'mag_peak_max': round(max(all_mag_peak), 1) if all_mag_peak else 0,
-        'dominant_freq_x_hz': round(sum(freq_x) / len(freq_x), 1) if freq_x else 0,
-        'dominant_freq_y_hz': round(sum(freq_y) / len(freq_y), 1) if freq_y else 0,
-    }
-
-    # Compute vibration quality score (0-100)
-    score, score_breakdown = _compute_vibration_score(summary, accel_summary)
-    summary['quality_score'] = score
-    summary['score_breakdown'] = score_breakdown
-
-    # Generate per-feature accel recommendations
-    accel_advice = _compute_accel_recommendations(accel_summary, samples)
-    for accel_val in accel_advice:
-        if accel_val in accel_summary:
-            accel_summary[accel_val]['recommendation'] = accel_advice[accel_val]
-
-    return {
-        'filename': filename,
-        'n_samples': len(samples),
-        'sample_interval_s': _ADXL_SAMPLE_INTERVAL,
-        'sample_duration_s': _ADXL_SAMPLE_DURATION,
-        'samples': samples,
-        'summary': summary,
-        'by_accel': accel_summary,
-    }
-
-
-def _compute_vibration_score(summary, by_accel):
-    """Compute a 0-100 vibration quality score from summary metrics.
-
-    Scoring breakdown (each sub-score is 0-100, weighted then averaged):
-      - Magnitude RMS (40%): lower average vibration = higher score
-      - Axis balance  (15%): X and Y RMS being similar = higher score
-      - Peak control  (20%): low peak-to-average ratio = higher score
-      - Feature consistency (25%): less variation between features = higher score
-
-    Returns (score, breakdown_dict).
-    """
-    breakdown = {}
-
-    # --- Magnitude RMS score (40%) ---
-    # Map mag_rms_avg onto 0-100: 0 mm/s² → 100, 1000+ → 0
-    mag_rms = summary.get('mag_rms_avg', 0)
-    mag_score = max(0, min(100, 100 - (mag_rms / 10.0)))
-    breakdown['mag_rms'] = {'score': round(mag_score, 1), 'weight': 40,
-                            'detail': f'Avg magnitude RMS: {mag_rms} mm/s²'}
-
-    # --- Axis balance score (15%) ---
-    x_rms = summary.get('x_rms_avg', 0)
-    y_rms = summary.get('y_rms_avg', 0)
-    if max(x_rms, y_rms) > 0:
-        imbalance = abs(x_rms - y_rms) / max(x_rms, y_rms)
-        balance_score = max(0, 100 - imbalance * 200)  # 50% diff → 0
-    else:
-        balance_score = 100
-    breakdown['axis_balance'] = {'score': round(balance_score, 1), 'weight': 15,
-                                  'detail': f'X={x_rms}, Y={y_rms} (imbalance {abs(x_rms-y_rms):.0f})'}
-
-    # --- Peak control score (20%) ---
-    # Crest factor: peak/RMS.  ≤2 is excellent, ≥5 is bad
-    mag_peak = summary.get('mag_peak_max', 0)
-    if mag_rms > 0:
-        crest = mag_peak / mag_rms
-        peak_score = max(0, min(100, 100 - (crest - 1.5) * 25))
-    else:
-        peak_score = 100
-    breakdown['peak_control'] = {'score': round(peak_score, 1), 'weight': 20,
-                                  'detail': f'Peak {mag_peak} vs avg {mag_rms} (crest {mag_peak/mag_rms:.1f}x)' if mag_rms > 0 else 'No data'}
-
-    # --- Feature consistency score (25%) ---
-    # How much does vibration vary between different accel/feature values
-    if by_accel and len(by_accel) >= 2:
-        mag_values = [v.get('mag_rms_avg', 0) for v in by_accel.values()]
-        mag_mean = sum(mag_values) / len(mag_values)
-        if mag_mean > 0:
-            cv = (max(mag_values) - min(mag_values)) / mag_mean  # coefficient of variation
-            consistency_score = max(0, min(100, 100 - cv * 100))
-        else:
-            consistency_score = 100
-        breakdown['feature_consistency'] = {
-            'score': round(consistency_score, 1), 'weight': 25,
-            'detail': f'{len(by_accel)} features, range {min(mag_values):.0f}-{max(mag_values):.0f}'}
-    else:
-        consistency_score = 80  # neutral when too few features
-        breakdown['feature_consistency'] = {'score': 80, 'weight': 25, 'detail': 'Insufficient feature data'}
-
-    # Weighted average
-    total = (mag_score * 40 + balance_score * 15 + peak_score * 20 + consistency_score * 25) / 100
-    return round(max(0, min(100, total)), 0), breakdown
-
-
-def _compute_accel_recommendations(by_accel, samples):
-    """Generate per-feature acceleration recommendations based on vibration data.
-
-    For each accel group, if vibration is high, suggest a reduced accel value.
-    The reduction is proportional to how far above the "healthy" threshold
-    the vibration is.
-
-    Returns: {accel_str: {action, suggested_accel, reason, gcode}} or empty dict.
-    """
-    if not by_accel:
-        return {}
-
-    # Establish healthy baseline: the feature with the LOWEST vibration
-    mag_values = {k: v.get('mag_rms_avg', 0) for k, v in by_accel.items()}
-    if not mag_values:
-        return {}
-    baseline = min(mag_values.values())
-    if baseline <= 0:
-        baseline = 100  # sane default
-
-    # Threshold: features above 1.5× baseline get a recommendation
-    VIBRATION_THRESHOLD = 1.5
-    recommendations = {}
-
-    for accel_str, data in by_accel.items():
-        mag = data.get('mag_rms_avg', 0)
-        if mag <= 0 or baseline <= 0:
-            continue
-        ratio = mag / baseline
-        if ratio < VIBRATION_THRESHOLD:
-            recommendations[accel_str] = {
-                'action': 'keep',
-                'reason': f'Vibration OK ({mag:.0f} RMS, {ratio:.1f}× baseline)',
-            }
-            continue
-
-        # Reduce accel proportionally: 1.5× → 25% reduction, 3× → 50% reduction
-        reduction_pct = min(0.50, (ratio - 1.0) * 0.25)
-        current_accel = int(accel_str)
-        suggested = int(current_accel * (1.0 - reduction_pct))
-        # Round to nearest 500
-        suggested = max(500, round(suggested / 500) * 500)
-
-        recommendations[accel_str] = {
-            'action': 'reduce',
-            'current_accel': current_accel,
-            'suggested_accel': suggested,
-            'reduction_pct': round(reduction_pct * 100),
-            'reason': f'High vibration ({mag:.0f} RMS, {ratio:.1f}× baseline) — reduce by {round(reduction_pct*100)}%',
-            'gcode': f'SET_VELOCITY_LIMIT ACCEL={suggested}',
-        }
-
-    return recommendations
-
-
-def _correlate_vibration_with_banding(vibration_data, banding_analysis):
-    """Cross-reference ADXL vibration samples with banding events by Z-height.
-
-    Looks for banding risk events that occurred at the same Z-height as
-    high-vibration ADXL samples, providing evidence for causal links.
-
-    Returns list of correlation entries or empty list.
-    """
-    if not vibration_data or not banding_analysis:
-        return []
-
-    samples = vibration_data.get('samples', [])
-    events = banding_analysis.get('events', {})
-    high_risk = events.get('high_risk_moments', [])
-    accel_spikes = events.get('accel_spikes', [])
-
-    if not samples or not (high_risk or accel_spikes):
-        return []
-
-    # Build vibration lookup by Z-height (±1mm tolerance)
-    vib_by_z = []
-    for s in samples:
-        pr = s.get('printer', {})
-        vib = s.get('vibration', {})
-        z = pr.get('z_height', 0)
-        mag = vib.get('magnitude', {}).get('rms', 0)
-        vib_by_z.append({'z': z, 'mag_rms': mag, 'accel': pr.get('accel', 0),
-                         'speed': pr.get('speed_mm_s', 0), 'sample': s})
-
-    correlations = []
-    Z_TOLERANCE = 1.5  # mm — match within this range
-
-    for event in high_risk:
-        ez = event.get('z', 0)
-        risk = event.get('risk', 0)
-        flags = event.get('flags', '')
-
-        # Find vibration sample closest to this Z
-        best = None
-        best_dist = Z_TOLERANCE + 1
-        for v in vib_by_z:
-            dist = abs(v['z'] - ez)
-            if dist < best_dist:
-                best_dist = dist
-                best = v
-
-        if best and best_dist <= Z_TOLERANCE:
-            correlations.append({
-                'z_height': round(ez, 2),
-                'banding_risk': risk,
-                'banding_flags': flags,
-                'vibration_rms': best['mag_rms'],
-                'vibration_accel': best['accel'],
-                'vibration_speed': best['speed'],
-                'z_distance': round(best_dist, 2),
-                'probable_cause': _classify_correlation(risk, best['mag_rms'], flags),
-            })
-
-    # De-duplicate by Z (keep strongest)
-    seen_z = {}
-    for c in correlations:
-        z_key = round(c['z_height'])
-        if z_key not in seen_z or c['banding_risk'] > seen_z[z_key]['banding_risk']:
-            seen_z[z_key] = c
-
-    return sorted(seen_z.values(), key=lambda x: x['banding_risk'], reverse=True)[:20]
-
-
-def _classify_correlation(risk, mag_rms, flags):
-    """Classify the probable cause of a banding+vibration correlation."""
-    causes = []
-    if mag_rms > 500:
-        causes.append('excessive vibration')
-    elif mag_rms > 200:
-        causes.append('elevated vibration')
-    if 'accel' in flags.lower():
-        causes.append('acceleration change')
-    if 'pa' in flags.lower():
-        causes.append('PA transition')
-    if 'temp' in flags.lower():
-        causes.append('temperature shift')
-    if not causes:
-        if mag_rms > 100:
-            causes.append('moderate vibration during accel event')
-        else:
-            causes.append('banding event (low vibration — likely non-mechanical)')
-    return ' + '.join(causes)
-
-
-def _save_vibration_data(vib_data, log_dir, print_filename):
-    """Save vibration data JSON alongside existing print logs."""
-    log_dir = os.path.expanduser(log_dir)
-    if not os.path.isdir(log_dir):
-        return None
-
-    # Find the most recent summary JSON that matches this print filename
-    safe_name = ''.join(c for c in print_filename if c.isalnum() or c in '._-')[:50]
-    candidates = sorted(glob.glob(os.path.join(log_dir, '*_summary.json')), reverse=True)
-
-    target_dir = log_dir
-    base_name = None
-
-    for cand in candidates:
-        if safe_name and safe_name in os.path.basename(cand):
-            base_name = os.path.basename(cand).replace('_summary.json', '')
-            break
-
-    if not base_name and candidates:
-        # Fall back to most recent
-        base_name = os.path.basename(candidates[0]).replace('_summary.json', '')
-
-    if not base_name:
-        # No existing logs — create standalone file
-        from datetime import datetime
-        base_name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + safe_name
-
-    vib_path = os.path.join(target_dir, base_name + '_vibration.json')
-    with open(vib_path, 'w') as f:
-        json.dump(vib_data, f, indent=2, default=str)
-
-    return vib_path
 
 
 class DashboardHandler(http.server.BaseHTTPRequestHandler):
@@ -7830,23 +6734,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         pass  # suppress default request logging
 
 
-def serve_dashboard(port, log_dir, material=None, enable_adxl=True):
+def serve_dashboard(port, log_dir, material=None):
     """Start the dashboard web server."""
     DashboardHandler.log_dir = log_dir
     DashboardHandler.material = material
-
-    # Start background ADXL print sampler thread (unless disabled)
-    if enable_adxl and _adxl_sampler_enabled:
-        import threading as _threading
-        sampler_thread = _threading.Thread(
-            target=_adxl_print_sampler_loop,
-            args=(log_dir,),
-            daemon=True,
-            name='ADXLPrintSampler'
-        )
-        sampler_thread.start()
-    else:
-        print("  ADXL auto-sampler: disabled")
 
     server = http.server.ThreadingHTTPServer(('0.0.0.0', port), DashboardHandler)
 
@@ -7967,9 +6858,6 @@ Examples:
     parser.add_argument(
         '--log-dir', '-d', default=LOG_DIR,
         help=f'Log directory (default: {LOG_DIR})')
-    parser.add_argument(
-        '--no-adxl', action='store_true',
-        help='Disable ADXL auto-sampling during prints (prevents timer-too-close errors on slower boards)')
     args = parser.parse_args()
 
     log_dir = os.path.expanduser(args.log_dir)
@@ -7982,8 +6870,7 @@ Examples:
             print(f"Log directory not found: {log_dir}")
             print("Run a print first to generate logs.")
             return 1
-        serve_dashboard(args.port, log_dir, material=args.material,
-                        enable_adxl=not args.no_adxl)
+        serve_dashboard(args.port, log_dir, material=args.material)
         return 0
 
     # ------------------------------------------------------------------
