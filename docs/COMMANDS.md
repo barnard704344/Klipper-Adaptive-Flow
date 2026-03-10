@@ -142,7 +142,7 @@ AT_SET_PA MATERIAL=PETG PA=0.065
 ```
 
 **Notes:**
-- Values are saved persistently in `~/printer_data/config/variables.cfg`
+- Values are saved persistently via Klipper's `[save_variables]` to `~/printer_data/config/sfs_auto_flow_vars.cfg`
 - Overrides default PA from material profile
 - Use after running PA calibration for your specific filament
 
@@ -333,6 +333,40 @@ Legacy G-code command for object labeling - handled natively by Klipper.
 
 ---
 
+## Logging Commands
+
+These commands are used internally by the control loop and monitoring modules to manage print session logging. You generally don't need to call these directly.
+
+### `AT_LOG_START`
+
+Start a new logging session. Called automatically by `AT_START`.
+
+**Parameters:**
+- `FILENAME=` - G-code filename for the session label
+
+---
+
+### `AT_LOG_DATA`
+
+Record a single data sample to the current CSV log. Called automatically by the control loop every ~0.5 seconds.
+
+**Parameters:**
+- `TEMP=` `TARGET=` `BOOST=` `FLOW=` `SPEED=` `PWM=` `PA=` `Z=` `PREDICTED=` `DYNZ=` `ACCEL=` `FAN=`
+
+---
+
+### `AT_LOG_END`
+
+End the current logging session and write summary JSON. Called automatically by `AT_END`.
+
+---
+
+### `AT_LOG_STATUS`
+
+Show logging statistics for the current session.
+
+---
+
 ## Python Module Commands
 
 These commands are provided by the Python modules (`extruder_monitor.py`, `gcode_interceptor.py`) and are used internally. You generally don't need to call these directly.
@@ -385,11 +419,23 @@ Available profiles:
 | `AT_START` | Enable system | In `PRINT_START` macro after heating |
 | `AT_END` | Disable system | In `PRINT_END` macro before `TURN_OFF_HEATERS` |
 | `AT_STATUS` | Show full status | During print to monitor behavior |
+| `AT_THERMAL_STATUS` | Show thermal status | Check heater performance |
 | `AT_DYNZ_STATUS` | Show DynZ status | Check dome/sphere detection |
 | `AT_SET_PA` | Save PA value | After PA calibration |
+| `AT_GET_PA` | Get PA value | Check a material's PA |
 | `AT_LIST_PA` | List all PA values | Check saved calibrations |
 | `AT_SET_FLOW_K` | Adjust boost | Test different boost curves |
 | `AT_SET_FLOW_GATE` | Adjust threshold | Test flow activation point |
+| `AT_SET_MAX` | Set max temp | Safety limit |
+| `AT_INIT_MATERIAL` | Load material | Test profile loading |
+| `AT_ENABLE` | Enable manually | Manual control |
+| `AT_DISABLE` | Disable manually | Manual control |
+| `AT_RESET_STATE` | Reset runtime state | Recovery from unexpected state |
+| `AT_WAIT_TEMP` | Wait for temp | Internal (multi-object) |
+| `AT_LOG_START` | Start log session | Internal (called by AT_START) |
+| `AT_LOG_DATA` | Record data sample | Internal (called by control loop) |
+| `AT_LOG_END` | End log session | Internal (called by AT_END) |
+| `AT_LOG_STATUS` | Show log stats | Check logging during print |
 
 ---
 
@@ -471,4 +517,4 @@ AT_SET_PA MATERIAL=PLA PA=0.050  # Correct it
 - [README.md](../README.md) - Installation and quick start
 - [CONFIGURATION.md](CONFIGURATION.md) - Detailed configuration reference
 - [DYNZ.md](DYNZ.md) - Dynamic Z-Window documentation
-- [ANALYSIS.md](ANALYSIS.md) - Print analysis and AI tuning
+- [ANALYSIS.md](ANALYSIS.md) - Print analysis and dashboard

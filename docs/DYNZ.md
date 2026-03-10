@@ -13,7 +13,7 @@ This combination can cause thermal lag, inconsistent extrusion, and surface arti
 
 ## How DynZ Works
 
-1. **Learning**: DynZ divides Z-height into bins (default 1mm) and tracks stress conditions in each
+1. **Learning**: DynZ divides Z-height into bins (default 2mm) and tracks stress conditions in each
 2. **Detection**: When speed is high, flow is low, and heater PWM is high simultaneously, it's flagged as stress
 3. **Scoring**: Each Z bin accumulates a stress score over time (scores decay when conditions improve)
 4. **Relief**: When a bin's score exceeds the threshold, DynZ reduces acceleration to ease thermal demand
@@ -72,6 +72,7 @@ variable_dynz_accel_relief: 3200      # mm/s² (lower = gentler moves)
 | `dynz_relief_method` | Relief strategy: `temp_reduction` or `accel_limit` | `temp_reduction` |
 | `dynz_temp_reduction` | °C to reduce boost by (temp_reduction method) | 8.0 |
 | `dynz_accel_relief` | Acceleration limit during stress (accel_limit method) | 3200 |
+| `dynz_base_accel` | Stored base accel before relief is applied (internal) | 0 |
 
 > **Note:** DynZ scores are only persisted to disk when the score changes by more than 0.5, reducing SD card wear while still maintaining the learning history.
 
@@ -90,11 +91,13 @@ Output:
 DynZ: ENABLED
 State: ACTIVE (accel relief applied)
 Z Height: 45.20 mm
-Z Bin: 45 (bin height 1.0 mm)
-Bin Score: 5.23
-Activate ≥ 4.0
+Z Bin: 22 (bin height 2.0 mm)
+Bin Score: 7.23
+Activate ≥ 6.0
 Deactivate ≤ 1.5
-Accel (current): 3200 mm/s²
+Relief Method: temp_reduction
+Temp Reduction: 8.0°C
+Accel (current): 5000 mm/s²
 Accel (base):    5000 mm/s²
 Accel (relief):  3200 mm/s²
 Mode: CLAMPING (convex stress detected)
@@ -175,5 +178,6 @@ gcode:
 When print logging is enabled, DynZ state is captured in the CSV:
 - `dynz_active`: 1 if relief is active, 0 if not
 - `accel`: Current acceleration value
+- `banding_risk`: Includes DynZ transitions in the risk score
 
-This allows post-print analysis to see when and where DynZ activated.
+The dashboard's DynZ tab visualises activation percentage and stress scores by Z-height across prints. See [ANALYSIS.md](ANALYSIS.md) for details.

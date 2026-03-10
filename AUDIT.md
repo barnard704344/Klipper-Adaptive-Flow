@@ -9,7 +9,7 @@
 
 Klipper Adaptive Flow is a Klipper firmware add-on for **E3D Revo hotends only**. It watches
 volumetric flow rate, print speed, and acceleration in real time and automatically adjusts nozzle
-temperature, Pressure Advance (PA), and fan speed to match. A 5-second lookahead lets it
+temperature and Pressure Advance (PA) to match. A 5-second lookahead lets it
 pre-heat before flow spikes arrive. After each print a browser dashboard (`analyze_print.py`) shows
 charts, detects banding culprits, reads your slicer G-code for setting errors, and offers one-click
 fixes. The whole thing is self-updating via `update.sh`.
@@ -42,17 +42,20 @@ fixes. The whole thing is self-updating via `update.sh`.
 - Tracks print state: relative vs absolute extrusion mode (M82/M83), current XYZ/E/F position.
 - Writes a **CSV log** for every print session to
   `~/printer_data/logs/adaptive_flow/<timestamp>.csv` with columns:
-  `timestamp, z_height, feed_rate, extrusion_rate, volumetric_flow, actual_temp, target_temp,
-  heater_pwm, pressure_advance, acceleration, speed`.
+  `elapsed_s, temp_actual, temp_target, boost, flow, speed, pwm, pa, z_height,
+  predicted_flow, dynz_active, accel, fan_pct, pa_delta, accel_delta,
+  temp_target_delta, temp_overshoot, dynz_transition, layer_transition,
+  banding_risk, event_flags`.
 - Keeps the last 20 CSV logs; older ones are deleted automatically.
 - Exposes two G-code commands: `EXTRUDER_MONITOR_STATUS` (live stats) and
   `EXTRUDER_MONITOR_RESET` (clear counters).
 
-### `analyze_print.py` (6,978 lines) — also the web dashboard server
+### `analyze_print.py` — web dashboard server and main entry point
 
-This is by far the largest file and does several distinct jobs:
+The main entry point, now supported by four sub-modules (`af_config.py`, `af_analysis.py`,
+`af_hardware.py`, `af_slicer.py`) that were split out for maintainability.
 
-**A. Config read/write helpers**
+**A. Config read/write helpers** (now in `af_config.py`)
 - Parses `auto_flow_user.cfg` and `material_profiles_*.cfg` in INI format.
 - `_get_config_value(variable, material)` — reads current live value (user file overrides
   defaults file).
@@ -62,7 +65,7 @@ This is by far the largest file and does several distinct jobs:
   `config_changes_log.json` so the dashboard can track which recommendations have been applied
   and how many prints have completed since.
 
-**B. Hardware-aware Klipper config parser**
+**B. Hardware-aware Klipper config parser** (now in `af_hardware.py`)
 - `collect_printer_hardware(config_dir)` — reads `printer.cfg` and follows all `[include]`
   directives one level deep.
 - Extracts: kinematics type, max accel/velocity, build volume, Z-stepper count (quad gantry
@@ -72,14 +75,14 @@ This is by far the largest file and does several distinct jobs:
 - This hardware dict is passed into all recommendation generators so advice is specific to your
   printer (e.g. "your fan is capped at 40%, your CoreXY input shaper limits accel to 6040 mm/s²").
 
-**C. Slicer G-code parser**
+**C. Slicer G-code parser** (now in `af_slicer.py`)
 - `extract_slicer_settings(gcode_path)` — reads the G-code footer comments written by
   OrcaSlicer/PrusaSlicer/SuperSlicer and extracts: default acceleration, outer wall accel/speed,
   bridge flow, max volumetric speed, layer height, line widths, fan settings, PA value.
 - `_find_gcode_for_summary(summary)` — matches a print summary to its G-code file on disk by
   filename, with fuzzy matching for time-estimate suffixes.
 
-**D. Single-print analysis functions** (~25 functions)
+**D. Single-print analysis functions** (now in `af_analysis.py`, ~25 functions)
 - `find_latest_summary` / `load_summary` — locate and load per-print JSON summary.
 - `compute_extrusion_quality(timeline)` — flow stability (std dev), PA consistency,
   temperature tracking error, heater headroom, DynZ activation percentage.
@@ -96,7 +99,7 @@ This is by far the largest file and does several distinct jobs:
 - `analyze_speed_flow_distribution` — speed and flow histograms showing where the printer
   spends its time.
 
-**E. Slicer diagnostics** (~1,250 lines)
+**E. Slicer diagnostics** (now in `af_slicer.py`, ~1,250 lines)
 - `analyze_slicer_vs_banding` — cross-references the acceleration fingerprint from the CSV
   against slicer settings to map observed accelerations to slicer features (infill, walls,
   supports etc.) and detect mismatches that cause banding.
@@ -104,21 +107,21 @@ This is by far the largest file and does several distinct jobs:
   vs hardware limits, wall speeds vs heater capacity, material-specific warnings (e.g. PETG
   stringing at high speed), bridge settings, and fan cooling adequacy.
 
-**F. Cross-print aggregate analysis**
+**F. Cross-print aggregate analysis** (remains in `analyze_print.py`)
 - `find_recent_sessions` — gather N most recent print sessions, optionally filtered by material.
 - `aggregate_banding_analysis` — merges banding data across multiple prints to surface
   recurring problem zones.
 - Per-tab aggregate generators for: thermal, PA stability, DynZ, speed/flow distribution, and
   cross-session trend lines.
 
-**G. Recommendation engine**
+**G. Recommendation engine** (remains in `analyze_print.py`)
 - `generate_recommendations(summary, csv_file, slicer_settings, printer_hw)` — runs all
   analyzers and collects their outputs into a ranked list of `{title, detail, action, variable,
   suggested_value, severity}` dicts.
 - `_suggest_change` — helper that applies `minimum`/`maximum` guards before recommending a
   delta change.
 
-**H. Web dashboard server**
+**H. Web dashboard server** (remains in `analyze_print.py`)
 - When run with `--serve --port 7127` (as the systemd service does), launches a lightweight
   HTTP server.
 - Serves a single-page HTML/JS dashboard generated entirely in Python (no external web
@@ -330,7 +333,11 @@ This is by far the largest file and does several distinct jobs:
 | File | Size | Role | Status |
 |------|------|------|--------|
 | `auto_flow_defaults.cfg` | 1,386 lines | Core control loop + all user commands | Active — central to the system |
-| `analyze_print.py` | 6,978 lines | Dashboard server + all analysis logic | Active — growing fast, consider splitting |
+| `analyze_print.py` | 3,157 lines | Dashboard server, recommendations, aggregation, CLI | Active — split into modules (see below) |
+| `af_analysis.py` | 1,951 lines | Per-print analysis (banding, thermal, PA, quality) | Active |
+| `af_config.py` | 307 lines | Config read/write helpers | Active |
+| `af_hardware.py` | 243 lines | Hardware-aware Klipper config parser | Active |
+| `af_slicer.py` | 1,440 lines | Slicer G-code parser + slicer diagnostics | Active |
 | `extruder_monitor.py` | 1,001 lines | Flow monitoring + CSV logging + lookahead | Active |
 | `gcode_interceptor.py` | 95 lines | G-code interception infrastructure | Active but unused — no subscribers wired up |
 | `material_profiles_defaults.cfg` | 261 lines | Material tuning library | Active |
@@ -355,9 +362,11 @@ This is by far the largest file and does several distinct jobs:
 
 ## Potential Concerns Worth Noting
 
-- **`analyze_print.py` is doing too much.** At 6,978 lines it is a config parser, analysis
-  engine, recommendation engine, web server, and HTML/JS generator all in one file. It works,
-  but is difficult to maintain or extend safely.
+- **`analyze_print.py` has been split into modules.** The former 6,978-line monolith is now
+  divided: `af_config.py` (config I/O), `af_analysis.py` (per-print analysis),
+  `af_hardware.py` (hardware detection), `af_slicer.py` (slicer parsing + diagnostics).
+  `analyze_print.py` (3,157 lines) still handles the web server, recommendation engine,
+  aggregation, and CLI.
 - **`gcode_interceptor.py` has no consumers.** The module is installed and loaded, adding a
   small overhead at boot, but nothing calls `register_gcode_callback`. It is either an unused
   foundation for a future feature or can be removed.

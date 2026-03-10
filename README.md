@@ -2,7 +2,7 @@
 
 **Stop calibrating. Start printing.**
 
-Automatic temperature, pressure advance, and fan control for **E3D Revo** hotends on Klipper. Tell it which Revo nozzle and heater you have, and it handles the rest. Every material, every print, automatically.
+Automatic temperature and pressure advance control for **E3D Revo** hotends on Klipper. Tell it which Revo nozzle and heater you have, and it handles the rest. Every material, every print, automatically.
 
 Think of it as Bambu Lab's auto-calibration, but for your Revo.
 
@@ -11,7 +11,6 @@ Think of it as Bambu Lab's auto-calibration, but for your Revo.
 Every time you switch materials or try a new filament brand, you're supposed to:
 - Print PA calibration patterns and squint at lines
 - Run flow tests and measure walls with calipers
-- Tune fan speeds per material, per feature, per layer time
 - Figure out what temperature to print at for your specific speed and flow rate
 - Redo everything when you change your nozzle or heater
 
@@ -32,18 +31,17 @@ That's it. Adaptive Flow handles:
 | **Temperature** | Dynamically boosts during high-flow moves, pre-heats 5 seconds ahead |
 | **Pressure Advance** | Sets correct PA for your material and nozzle, adjusts in real-time as temp changes |
 | **HF nozzle compensation** | Auto-detects HF melt zone, scales PA and smooth_time — no calibration needed |
-| **Fan speed** | Adapts to flow rate, layer time, and heater capacity |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
-| **Complex geometry** | Learns where domes and overhangs cause trouble, adapts on future prints |
+| **Complex geometry** | DynZ learns where domes and overhangs cause trouble, adapts on future layers |
 | **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, recommends specific settings |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
-- **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
+- **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
-- **Learns from every print.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the better it gets.
+- **Tracks and improves over time.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the more data it has to work with.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
 - **Scope:** Adaptive Flow solves *thermal* banding (temperature swings, PA drift with viscosity, flow spikes). It does not solve *mechanical* banding from Z-wobble, belt tension, or frame resonance — those require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
 
@@ -119,7 +117,7 @@ All materials work out of the box with hardware-appropriate defaults:
 
 | Material | Default PA (Std) | PA with HF | Base Temp | Notes |
 |----------|-----------------|------------|-----------|-------|
-| PLA | 0.024 | 0.034 | 210–215°C | Tuned for high-flow variants (PLA HF, PLA+). Verify PA for your specific Voron/CoreXY |
+| PLA | 0.024 | 0.034 | 210–215°C | Tuned for high-flow variants (PLA HF, PLA+). Verify PA for your specific setup |
 | PETG | 0.040 | 0.056 | 240–245°C | Conservative for 40W, scales up for 60W+ |
 | ABS | 0.040 | 0.056 | 245–250°C | Requires enclosure |
 | ASA | 0.040 | 0.056 | 250–255°C | Similar to ABS |
@@ -137,10 +135,12 @@ Custom materials: copy any profile to `material_profiles_user.cfg` and adjust.
 Open `http://<printer-ip>:7127` in your browser. No SSH, no terminal.
 
 The dashboard shows:
-- **Live print monitoring** — temperature, flow, PA, fan in real-time
+- **Live print monitoring** — temperature, flow, PA, and heater PWM in real-time
+- **Extrusion quality score** — physics-based 0–100 rating covering thermal stability, flow steadiness, heater reserve, and pressure consistency
 - **Per-material history** — track how each material performs across prints
 - **Recommendations** — actionable suggestions with one-click Apply buttons
 - **Slicer diagnostics** — extracts settings from your G-code, cross-references acceleration values with banding data, and recommends specific slicer changes
+- **Boost optimization** — analysis of whether you can print faster based on actual heater and flow headroom
 - **Banding analysis** — identifies what's causing print artifacts
 - **Thermal headroom** — shows if your heater is the bottleneck
 Every chart has tooltips explaining what you're looking at and what "good" looks like. The more you print, the smarter the recommendations get.
@@ -153,13 +153,15 @@ During a print, the system continuously:
 2. **Predicts** upcoming flow changes 5 seconds ahead (lookahead)
 3. **Adjusts** nozzle temperature proportional to flow demand
 4. **Scales** PA as temperature changes (hotter = less viscous = less PA needed)
-5. **Controls** fan speed based on flow, layer time, and heater duty cycle
-6. **Learns** problem zones (DynZ) and adapts on future layers
+5. **Monitors** heater duty cycle, capping boost when PWM exceeds 95%
+6. **Learns** problem zones (DynZ) and reduces thermal demand on future layers
 
 All adjustments stay within safe limits defined by your hardware.
 
 ## What You Don't Need To Do
 
+- ~~Print PA calibration patterns~~
+- ~~Run flow tests with calipers~~
 - ~~Create per-material fan profiles~~
 - ~~Calculate volumetric flow limits~~
 - ~~Tune temperature for different speeds~~
@@ -206,8 +208,10 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Dynamic Temperature** — Flow, speed, and acceleration-based boost with soft gating
 - **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
-- **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces demand on problem layers
+- **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces thermal demand on problem layers
 - **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, recommends specific settings
+- **Extrusion Quality Scoring** — Physics-based 0–100 score covering thermal, flow, heater, and pressure stability
+- **Boost Optimization** — Analyses actual heater and flow headroom, tells you how much faster you can print
 - **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
 - **First Layer Skip** — No boost on layer 1 for consistent squish

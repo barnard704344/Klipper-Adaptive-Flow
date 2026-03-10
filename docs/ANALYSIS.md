@@ -39,9 +39,10 @@ Six cards along the top give an at-a-glance health overview. Each card has a **?
 | Card | What It Shows |
 |------|---------------|
 | **Material** | Filament type and print duration (or "PRINTING" + elapsed time during a live print) |
+| **Extrusion Quality** | Physics-based 0–100 score covering thermal stability, flow steadiness, heater reserve, and pressure consistency |
 | **Temp Boost** | Average and max temperature boost applied by Adaptive Flow |
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
-| **DynZ** | Percentage of layers where acceleration was reduced for complex geometry |
+| **DynZ** | Percentage of layers where DynZ stress relief was active |
 | **Banding** | Number of high-risk events and the diagnosed culprit |
 
 In aggregate mode, cards display weighted averages across all prints of that material, with print count and total duration.
@@ -335,19 +336,65 @@ Thermal lag thresholds:
 
 An oscillation zone is a period where PA changed ≥4 times within 10 seconds. These zones often correlate with visible ribbing. If many zones are detected, increase `pa_deadband` (try 0.005+). If PA range is very wide (>0.02), lower `pa_boost_k`.
 
+### Extrusion Quality Score (0–100)
+
+A physics-based composite score evaluating four aspects of print health:
+
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| **Thermal** | 25% | How well actual temperature tracked target (deviation %, in-band %) |
+| **Flow** | 25% | Flow rate steadiness (jitter, big jumps as % of samples) |
+| **Heater** | 25% | Heater reserve capacity (PWM saturation %, avg PWM) |
+| **Pressure** | 25% | PA transient impact (frequency and severity of PA-related artifacts) |
+
+Each component scores 0–100 independently, then they're combined into the overall score. The weakest component is highlighted in the dashboard summary card. Scores above 80 indicate good print quality; below 60 suggests actionable problems.
+
+### Boost Optimization
+
+The dashboard analyses your actual print data to determine whether you can print faster. It checks five systems:
+
+| System | What It Checks |
+|--------|---------------|
+| **Heater capacity** | Average and peak PWM vs saturation threshold |
+| **Flow capacity** | Peak flow vs safe flow limit for your nozzle |
+| **Temperature boost** | Boost used vs available boost range |
+| **Acceleration** | Actual accel vs input shaper recommended max |
+| **Fan** | Fan utilisation (informational) |
+
+The verdict is one of:
+- **significant_headroom** — all systems have margin, with a suggested speed increase percentage
+- **moderate_headroom** — some margin exists, with specific limiting factors identified
+- **at_limit** — one or more systems are saturated, with the bottleneck identified
+- **over_limit** — actively exceeding safe limits
+
+When headroom exists, the dashboard shows specific suggestions (e.g. "Increase speeds by ~40%") and offers config changes like adjusting `flow_k` to better utilise available headroom.
+
 ### CSV Column Reference
 
-Enhanced logging records these columns for each sample:
+The extruder monitor logs these columns for each sample (one row per ~0.5 seconds):
 
 | Column | Description |
 |--------|-------------|
-| `pa_delta` | PA change from last sample |
-| `accel_delta` | Acceleration change from last sample |
-| `temp_target_delta` | Target temp change |
-| `temp_overshoot` | Actual − Target temp |
-| `dynz_transition` | DynZ state change (1=ON, −1=OFF) |
-| `layer_transition` | Layer change detected |
-| `banding_risk` | Risk score 0–10 |
+| `elapsed_s` | Seconds since print start |
+| `temp_actual` | Measured nozzle temperature (°C) |
+| `temp_target` | Current target temperature (°C) |
+| `boost` | Temperature boost applied (°C above base) |
+| `flow` | Measured volumetric flow rate (mm³/s) |
+| `speed` | Toolhead speed (mm/s) |
+| `pwm` | Heater PWM duty cycle (0.0–1.0) |
+| `pa` | Current Pressure Advance value |
+| `z_height` | Current Z position (mm) |
+| `predicted_flow` | Lookahead predicted flow rate (mm³/s) |
+| `dynz_active` | DynZ stress relief active (0 or 1) |
+| `accel` | Current acceleration (mm/s²) |
+| `fan_pct` | Part cooling fan percentage (0–100) |
+| `pa_delta` | PA change from previous sample |
+| `accel_delta` | Acceleration change from previous sample |
+| `temp_target_delta` | Target temp change from previous sample |
+| `temp_overshoot` | Actual − Target temperature |
+| `dynz_transition` | DynZ state change (1=ON, −1=OFF, 0=no change) |
+| `layer_transition` | Layer change detected (1 or 0) |
+| `banding_risk` | Composite risk score 0–10 |
 | `event_flags` | Human-readable events (e.g., `ACCEL_CHG:+1200`) |
 
 ---

@@ -39,7 +39,7 @@ Higher temperature = lower filament viscosity = less PA needed.
 
 ### User-Editable Profiles
 
-Material profiles are defined in `material_profiles.cfg`. Edit this file to customize boost curves for your filaments.
+Material profiles are defined in `material_profiles_user.cfg` (for your overrides) and `material_profiles_defaults.cfg` (system defaults). To customize, copy a profile from the defaults file into your user file and adjust the values.
 
 Each profile is a Klipper macro:
 ```ini
@@ -61,20 +61,20 @@ gcode:
 
 ### Default Profiles
 
-| Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA (Std) | PA with HF (auto) |
-|----------|--------|---------|-----------|----------|----------|------------------|--------------------|
-| **PLA** | 0.80 | 0.06 | 12°C | 245°C | 3.0/1.5 | 0.024 | 0.034 |
-| **PETG** | 0.50 | 0.06 | 15°C | 280°C | 3.0/1.5 | 0.040 | 0.056 |
-| **ABS** | 0.50 | 0.08 | 18°C | 290°C | 3.0/2.0 | 0.040 | 0.056 |
-| **ASA** | 0.50 | 0.08 | 18°C | 295°C | 3.0/2.0 | 0.040 | 0.056 |
-| **TPU** | 0.20 | 0.02 | 15°C | 240°C | 1.5/0.5 | 0.060 | 0.084 |
-| **Nylon** | 0.50 | 0.06 | 18°C | 275°C | 2.5/1.5 | 0.040 | 0.056 |
-| **PC** | 0.45 | 0.06 | 18°C | 310°C | 3.0/2.0 | 0.045 | 0.063 |
-| **HIPS** | 0.50 | 0.06 | 18°C | 250°C | 3.0/1.5 | 0.045 | 0.063 |
+| Material | Flow K | Speed K | Max Boost | Max Temp | Flow Gate (HF/Std) | Ramp ↑/↓ | Default PA (Std) | PA with HF (auto) |
+|----------|--------|---------|-----------|----------|-------------------|----------|------------------|--------------------|
+| **PLA** | 0.80 | 0.06 | 12°C | 245°C | 12.0/8.0 | 3.0/1.5 | 0.024 | 0.034 |
+| **PETG** | 0.50 | 0.06 | 15°C | 280°C | 12.0/8.0 | 3.0/1.5 | 0.040 | 0.056 |
+| **ABS** | 0.50 | 0.08 | 18°C | 290°C | 14.0/10.0 | 3.0/2.0 | 0.040 | 0.056 |
+| **ASA** | 0.50 | 0.08 | 18°C | 295°C | 14.0/10.0 | 3.0/2.0 | 0.040 | 0.056 |
+| **TPU** | 0.20 | 0.02 | 15°C | 240°C | 8.0/5.0 | 1.5/0.5 | 0.060 | 0.084 |
+| **Nylon** | 0.50 | 0.06 | 18°C | 275°C | 14.0/10.0 | 2.5/1.5 | 0.040 | 0.056 |
+| **PC** | 0.45 | 0.06 | 18°C | 310°C | 14.0/10.0 | 3.0/2.0 | 0.045 | 0.063 |
+| **HIPS** | 0.50 | 0.06 | 18°C | 250°C | 14.0/10.0 | 3.0/1.5 | 0.045 | 0.063 |
 
-> **Note:** Flow K, Ramp ↑, Max Boost, and Speed K are 40W base values — automatically scaled up for 60W+ heaters. PA with HF column shows the auto-computed value when `use_high_flow_nozzle: True` (hf_pa_scale × default_pa). The PLA profile is tuned for high-speed PLA variants (PLA HF, PLA+) with a higher flow_k (0.80) to compensate for the aggressive flow demands these formulations encounter.
+> **Note:** Flow K, Ramp ↑, Max Boost, and Speed K are 40W base values — automatically scaled up for 60W+ heaters. PA with HF column shows the auto-computed value when `use_high_flow_nozzle: True` (hf_pa_scale × default_pa). The PLA profile is tuned for high-flow variants (PLA HF, PLA+) with a higher flow_k (0.80); standard PLA may benefit from a lower `flow_k`.
 
-> **Important:** The PA defaults above are starting points based on E3D Revo specifications. Your specific printer — especially Voron and other CoreXY designs — may require a different base PA value. Use `AT_SET_PA MATERIAL=PLA PA=<your_value>` to store a calibrated value. This system adjusts PA dynamically *from* that base; an accurate base gives better results.
+> **Important:** The PA defaults above are starting points based on E3D Revo specifications. Your specific printer may require a different base PA value. Use `AT_SET_PA MATERIAL=PLA PA=<your_value>` to store a calibrated value. This system adjusts PA dynamically *from* that base; an accurate base gives better results.
 
 ### Recommended Base Temperatures
 
@@ -97,9 +97,9 @@ Set these start temperatures in your slicer. The system will automatically boost
 - **High flow** (15-20mm³/s): Speed-focused printing with high-flow filament and nozzles (150-300mm/s)
 
 **Temperature Boost Examples (40W heater):**
-- PLA at 16mm³/s: 215°C base + (16−12) × 0.80 = 218.2°C final
-- PETG at 16mm³/s: 240°C base + (16−12) × 0.50 = 242°C final
-- ABS at 18mm³/s: 245°C base + (18−14) × 0.50 = 247°C final
+- PLA at 16mm³/s with Std nozzle: 215°C base + (16−8) × 0.80 = 221.4°C final
+- PETG at 16mm³/s with HF nozzle: 240°C base + (16−12) × 0.50 = 242°C final
+- ABS at 18mm³/s with Std nozzle: 245°C base + (18−10) × 0.50 = 249°C final
 
 Boosts are modest by design for 40W heaters — only demanding what the heater can actually deliver. With a 60W heater, flow_k auto-scales to ~0.65, giving larger boosts.
 
@@ -130,7 +130,7 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ### Adding Custom Materials
 
-1. Copy any profile in `material_profiles.cfg`
+1. Copy any profile from `material_profiles_defaults.cfg` to `material_profiles_user.cfg`
 2. Rename to `[gcode_macro _AF_PROFILE_YOURMATERIAL]`
 3. Adjust the values
 4. Use: `AT_START MATERIAL=YOURMATERIAL`
@@ -430,4 +430,4 @@ Print the same calibration cube. If banding disappears, lower `pa_boost_k` or in
 
 ### Python Extras
 - `extruder_monitor.py` → 5-second lookahead buffer, predicted extrusion rate and volumetric flow, print session logging with banding risk analysis
-- `gcode_interceptor.py` → G-code stream interception and broadcast to subscribers
+- `gcode_interceptor.py` → G-code stream interception infrastructure (used internally)
