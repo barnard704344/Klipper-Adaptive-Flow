@@ -98,6 +98,12 @@ cp gcode_interceptor.py extruder_monitor.py "$KLIPPER_EXTRAS/"
 # Copy optional Python modules if they exist
 if [ -f "analyze_print.py" ]; then
     cp analyze_print.py "$KLIPPER_EXTRAS/"
+    # Copy the helper modules that analyze_print.py imports
+    for af_mod in af_config.py af_hardware.py af_slicer.py af_analysis.py; do
+        if [ -f "$af_mod" ]; then
+            cp "$af_mod" "$KLIPPER_EXTRAS/"
+        fi
+    done
 fi
 
 # Symlink system defaults (always safe to update, git pull auto-applies)
@@ -266,9 +272,35 @@ DASH_FILE="/etc/systemd/system/$DASH_SERVICE"
 echo ""
 echo "[>>] Setting up Adaptive Flow Dashboard service..."
 
-# Install/update the service file
-if [ -f "$REPO_DIR/adaptive_flow_dashboard.service" ]; then
-    sudo cp "$REPO_DIR/adaptive_flow_dashboard.service" "$DASH_FILE"
+# Generate the service file dynamically using the current user's name and
+# home directory so it works on any username (not just 'pi').
+CURRENT_USER="$(whoami)"
+CURRENT_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
+# Fall back to $HOME if getent is unavailable (e.g. on some minimal installs)
+CURRENT_HOME="${CURRENT_HOME:-$HOME}"
+
+sudo tee "$DASH_FILE" > /dev/null <<EOF
+[Unit]
+Description=Adaptive Flow Dashboard
+Documentation=https://github.com/barnard704344/Klipper-Adaptive-Flow
+After=network.target klipper.service
+Wants=klipper.service
+
+[Service]
+Type=simple
+User=${CURRENT_USER}
+WorkingDirectory=${CURRENT_HOME}/Klipper-Adaptive-Flow
+ExecStart=/usr/bin/python3 ${CURRENT_HOME}/Klipper-Adaptive-Flow/analyze_print.py --serve --port 7127
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+if [ $? -eq 0 ]; then
     sudo systemctl daemon-reload
     sudo systemctl enable "$DASH_SERVICE" 2>/dev/null
 
@@ -289,7 +321,7 @@ if [ -f "$REPO_DIR/adaptive_flow_dashboard.service" ]; then
         echo "[OK] Dashboard: http://localhost:7127"
     fi
 else
-    echo "[!] Dashboard service file not found, skipping"
+    echo "[!] Could not install dashboard service (sudo required)"
 fi
 
 echo ""

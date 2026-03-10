@@ -6,9 +6,13 @@ Wants=klipper.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/Klipper-Adaptive-Flow
-ExecStart=/usr/bin/python3 /home/pi/Klipper-Adaptive-Flow/analyze_print.py --serve --port 7127
+# NOTE: update.sh generates /etc/systemd/system/adaptive-flow-dashboard.service
+# automatically using the current username and home directory.  This file is a
+# reference template only — the User/WorkingDirectory/ExecStart values below
+# are placeholders that get replaced at install time.
+User=__USER__
+WorkingDirectory=__HOME__/Klipper-Adaptive-Flow
+ExecStart=/usr/bin/python3 __HOME__/Klipper-Adaptive-Flow/analyze_print.py --serve --port 7127
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
