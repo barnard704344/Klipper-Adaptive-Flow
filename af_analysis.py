@@ -11,6 +11,7 @@ Import from this module via analyze_print.py or af_slicer as needed.
 
 import os
 import csv
+import json
 import statistics
 import math
 import logging
