@@ -41,10 +41,11 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
-- **No calibration prints.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone means these values are consistent across every Revo hotend — including automatic HF compensation for the larger melt zone.
+- **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive CoreXY setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
 - **Learns from every print.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the better it gets.
-- **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything.
+- **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
+- **Scope:** Adaptive Flow solves *thermal* banding (temperature swings, PA drift with viscosity, flow spikes). It does not solve *mechanical* banding from Z-wobble, belt tension, or frame resonance — those require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
 
 ## Quick Start
 
@@ -118,7 +119,7 @@ All materials work out of the box with hardware-appropriate defaults:
 
 | Material | Default PA (Std) | PA with HF | Base Temp | Notes |
 |----------|-----------------|------------|-----------|-------|
-| PLA | 0.032 | 0.045 | 210–215°C | Tuned for high-flow variants |
+| PLA | 0.024 | 0.034 | 210–215°C | Tuned for high-flow variants (PLA HF, PLA+). Verify PA for your specific Voron/CoreXY |
 | PETG | 0.040 | 0.056 | 240–245°C | Conservative for 40W, scales up for 60W+ |
 | ABS | 0.040 | 0.056 | 245–250°C | Requires enclosure |
 | ASA | 0.040 | 0.056 | 250–255°C | Similar to ABS |
@@ -159,13 +160,15 @@ All adjustments stay within safe limits defined by your hardware.
 
 ## What You Don't Need To Do
 
-- ~~Print PA calibration patterns~~
-- ~~Run flow tests with calipers~~
 - ~~Create per-material fan profiles~~
 - ~~Calculate volumetric flow limits~~
 - ~~Tune temperature for different speeds~~
 - ~~Adjust settings when switching nozzles~~
 - ~~Manually override anything for heater upgrades~~
+
+For most users — especially those switching from a Standard to HF nozzle or changing filament brands — Adaptive Flow handles everything automatically. However, for best results on **Voron, CoreXY, and other precision builds**, you should still calibrate your extruder's `rotation_distance` and run a one-time PA baseline test to set your starting value with `AT_SET_PA MATERIAL=X PA=Y`.
+
+> **Banding troubleshooting:** If you're still seeing horizontal banding after enabling Adaptive Flow, many common causes (Z-axis wobble, input shaper resonance, belt tension) are mechanical and outside the scope of any software thermal tool. See the [Banding Troubleshooting section →](docs/CONFIGURATION.md#banding-troubleshooting) for a step-by-step diagnosis guide.
 
 ## Advanced (Optional)
 

@@ -63,7 +63,7 @@ gcode:
 
 | Material | Flow K | Speed K | Max Boost | Max Temp | Ramp ↑/↓ | Default PA (Std) | PA with HF (auto) |
 |----------|--------|---------|-----------|----------|----------|------------------|--------------------|
-| **PLA** | 0.50 | 0.06 | 12°C | 245°C | 2.5/1.5 | 0.032 | 0.045 |
+| **PLA** | 0.80 | 0.06 | 12°C | 245°C | 3.0/1.5 | 0.024 | 0.034 |
 | **PETG** | 0.50 | 0.06 | 15°C | 280°C | 3.0/1.5 | 0.040 | 0.056 |
 | **ABS** | 0.50 | 0.08 | 18°C | 290°C | 3.0/2.0 | 0.040 | 0.056 |
 | **ASA** | 0.50 | 0.08 | 18°C | 295°C | 3.0/2.0 | 0.040 | 0.056 |
@@ -72,7 +72,9 @@ gcode:
 | **PC** | 0.45 | 0.06 | 18°C | 310°C | 3.0/2.0 | 0.045 | 0.063 |
 | **HIPS** | 0.50 | 0.06 | 18°C | 250°C | 3.0/1.5 | 0.045 | 0.063 |
 
-> **Note:** Flow K, Ramp ↑, Max Boost, and Speed K are 40W base values — automatically scaled up for 60W+ heaters. PA with HF column shows the auto-computed value when `use_high_flow_nozzle: True` (hf_pa_scale × default_pa).
+> **Note:** Flow K, Ramp ↑, Max Boost, and Speed K are 40W base values — automatically scaled up for 60W+ heaters. PA with HF column shows the auto-computed value when `use_high_flow_nozzle: True` (hf_pa_scale × default_pa). The PLA profile is tuned for high-speed PLA variants (PLA HF, PLA+) with a higher flow_k (0.80) to compensate for the aggressive flow demands these formulations encounter.
+
+> **Important:** The PA defaults above are starting points based on E3D Revo specifications. Your specific printer — especially Voron and other CoreXY designs — may require a different base PA value. Use `AT_SET_PA MATERIAL=PLA PA=<your_value>` to store a calibrated value. This system adjusts PA dynamically *from* that base; an accurate base gives better results.
 
 ### Recommended Base Temperatures
 
@@ -95,7 +97,7 @@ Set these start temperatures in your slicer. The system will automatically boost
 - **High flow** (15-20mm³/s): Speed-focused printing with high-flow filament and nozzles (150-300mm/s)
 
 **Temperature Boost Examples (40W heater):**
-- PLA at 16mm³/s: 215°C base + (16−12) × 0.50 = 217°C final
+- PLA at 16mm³/s: 215°C base + (16−12) × 0.80 = 218.2°C final
 - PETG at 16mm³/s: 240°C base + (16−12) × 0.50 = 242°C final
 - ABS at 18mm³/s: 245°C base + (18−14) × 0.50 = 247°C final
 
@@ -333,6 +335,88 @@ The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base 
 
 ### Heaters stay on after print
 - Ensure `AT_END` is called before `TURN_OFF_HEATERS` in PRINT_END
+
+---
+
+## Banding Troubleshooting
+
+Banding — horizontal lines or ridges repeating at regular Z intervals — has many possible causes, and this system addresses only some of them. This section helps identify whether your banding is within the scope of Adaptive Flow to fix.
+
+### What Adaptive Flow Can Fix
+
+| Cause | How Adaptive Flow Helps |
+|-------|------------------------|
+| Temperature swings at feature transitions | Dynamic temp boost smooths out thermal lag |
+| PA overcorrection/undercorrection as temp changes | Dynamic PA compensation tracks viscosity changes |
+| Thermal lag during speed-up/slow-down moves | 5-second lookahead pre-heats before flow demand spikes |
+| Acceleration shock at layer changes (domes/spheres) | DynZ reduces acceleration at known problem zones |
+| Slicer inserting conflicting PA or accel G-code | Analysis dashboard diagnoses and recommends fixes |
+
+### What Adaptive Flow Cannot Fix
+
+These causes produce banding that no software thermal control can resolve:
+
+| Cause | Required Fix |
+|-------|-------------|
+| **Z-axis wobble** (bent lead screw, loose coupler) | Mechanical inspection, lead screw/coupler replacement |
+| **Lead screw resonance** (regular Z-banding at specific pitch) | Anti-backlash nut, coupler replacement, or Z belt drive |
+| **Frame resonance / input shaper needed** | Run `SHAPER_CALIBRATE` or manual `TEST_RESONANCES` |
+| **Belt tension issues** (Voron/CoreXY) | Re-tension belts to spec, verify equal A/B tension |
+| **E-step / rotation_distance miscalibration** | Calibrate extruder rotation_distance — the system measures flow from E-motor velocity, so wrong e-steps mean wrong boost timing |
+| **Incorrect base PA** | See below — this system adjusts from your base PA; if the base is far off, the adjustments may make things worse |
+| **Filament issues** | Try a known-good dry spool to rule out moisture or inconsistent diameter |
+
+### PLA HF on Voron / CoreXY — Specific Guidance
+
+Voron printers and other CoreXY designs have some distinct characteristics that affect banding:
+
+**1. Verify your PA base value first**
+
+The PLA default PA (`0.024`) is derived from E3D Revo specifications. Your specific Voron may need a significantly different value depending on:
+- Extruder type (CW2, Galileo, LGX, etc.)
+- Belt tension (under-tensioned belts increase effective PA)
+- Nozzle diameter
+
+Run at least one PA tower or line test to find your printer's actual PA value, then store it:
+```gcode
+AT_SET_PA MATERIAL=PLA PA=<your_calibrated_value>
+```
+
+This value becomes the base from which dynamic adjustments are made. If the base is wrong by 0.02 or more, the dynamic range won't compensate.
+
+**2. Check e-step calibration**
+
+This system measures flow rate from extruder motor velocity. If your `rotation_distance` is uncalibrated, boost triggers will be mis-timed. Mark 120mm of filament, extrude 100mm, and verify the measured distance is within ±1mm.
+
+**3. Check for Z-axis resonance (the most common cause of Voron banding)**
+
+Regular horizontal banding at fixed intervals (usually matching lead screw pitch or belt drive tooth pitch) is almost always mechanical. On a Voron 2.4:
+- Check all four lead screws for wobble
+- Check couplers for concentricity
+- Verify the gantry is not racking
+
+On a Trident, verify Z belt tension and pulleys.
+
+**4. Run resonance compensation**
+
+High-frequency banding (very fine lines) on Voron is often X/Y resonance amplified by speed. Run Klipper's `SHAPER_CALIBRATE` if you haven't recently. This is separate from and often more impactful than thermal tuning.
+
+**5. Then use the dashboard to diagnose software causes**
+
+After ruling out mechanical causes, open the dashboard at `http://<printer-ip>:7127` and check:
+- **Banding culprit** — which software factor triggered the most high-risk events
+- **PA tab** — is PA oscillating? If yes, increase `pa_deadband` or lower `pa_boost_k`
+- **Slicer tab** — are there many different acceleration values causing constant transitions?
+- **Z-Height tab** — does banding concentrate at specific heights that repeat on every print (mechanical) or vary randomly (software/thermal)?
+
+**6. Quick diagnostic: disable dynamic PA**
+
+If you suspect PA oscillation is causing banding, temporarily disable it:
+```gcode
+AT_DISABLE  # stops adaptive flow
+SET_PRESSURE_ADVANCE ADVANCE=<your_base_pa>  # set fixed PA
+```
+Print the same calibration cube. If banding disappears, lower `pa_boost_k` or increase `pa_deadband` in your material profile. If banding remains the same, PA dynamics are not the cause.
 
 ---
 
