@@ -2079,20 +2079,18 @@ x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 rc();
 
 var allTabs=[
-{id:'rx',l:'\u2699 Recommendations',tip:'Actionable suggestions to improve print quality. Start here.'},
 {id:'sl',l:'\u2702 Slicer',tip:'Shows slicer settings extracted from your G-code file. Cross-references acceleration values with banding data to identify specific settings causing issues.'},
 {id:'tl',l:'Timeline',tip:'Real-time temperature, flow rate and speed plotted over the entire print. See how your heater responds to flow demands.'},
 {id:'zh',l:'Z-Height',tip:'Shows which layers had the most thermal stress. Tall bars = layers where banding is most likely.'},
 {id:'ht',l:'Heater',tip:'Is your heater keeping up? Shows power usage at different flow rates. Bars near 100% mean the heater is maxed out.'},
 {id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
 {id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
-{id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'},
-{id:'tr',l:'Trends',tip:'Compare prints over time. Are things getting better or worse? Shows boost, PWM and extrusion quality across multiple prints.'}];
-var at='rx',tb=document.getElementById('tb'),ca=document.getElementById('ca');
+{id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'}];
+var at='sl',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
 if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'&&t.id!=='sl'});
-if(isAgg&&(at==='tl'||at==='sl'))at='rx';
+if(isAgg&&(at==='tl'||at==='sl'))at='zh';
 tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
 '" onclick="sTab(this.dataset.t)" data-t="'+t.id+'"><span class="tab-wrap">'+t.l+
@@ -2110,15 +2108,13 @@ function dCh(){for(var k in CH){if(CH[k]&&CH[k].destroy)CH[k].destroy()}CH={}}
 function mc(id){return '<canvas id="'+id+'"></canvas>'}
 
 function rCh(){dCh();var tl=D.timeline||[];
-if(at==='rx')rRec();
-else if(at==='sl')rSlicer();
+if(at==='sl')rSlicer();
 else if(at==='tl')rTimeline(tl);
 else if(at==='zh')rZH();
 else if(at==='ht')rHt();
 else if(at==='pa')rPA(tl);
 else if(at==='dz')rDZ();
-else if(at==='ds')rDist();
-else if(at==='tr')rTr()}
+else if(at==='ds')rDist()}
 
 function rSlicer(){
 var ss=D.slicer_settings;
@@ -2570,109 +2566,6 @@ backgroundColor:'#3fb950'}]},
 options:{responsive:true,animation:false,
 scales:{x:{title:{display:true,text:'Flow (mm\u00b3/s)'}},
 y:{title:{display:true,text:'% of Print'}}}}})}}
-
-function rTr(){
-var tr=D.trends;
-if(!tr||tr.length<2){ca.innerHTML='<p>Need at least 2 prints for trends.</p>';return}
-var rows='';tr.forEach(function(t){
-var eqv=t.eq_score!=null?t.eq_score:'\u2014';
-var eqc=t.eq_score!=null?(t.eq_score>=80?'g':t.eq_score>=60?'':' w'):''
-rows+='<tr><td>'+t.date+'</td><td>'+t.material+
-'</td><td>'+t.avg_boost.toFixed(1)+'\u00b0C</td><td class="'+
-(t.max_pwm>0.95?'d':'')+'">'+(t.max_pwm*100).toFixed(0)+
-'%</td><td class="'+eqc+'">'+eqv+
-'</td></tr>'});
-ca.innerHTML='<div class="box"><h3>Print-over-Print Trends</h3>'+
-'<p class="box-desc">Each point is a completed print. Rising quality scores = the system is learning your setup. '+
-'Falling scores may indicate a clog, worn nozzle, or changed slicer settings.</p>'+mc('c9')+
-'</div><div class="box"><h3>Details</h3>'+
-'<p class="box-desc">Quality = extrusion quality score (0\u2013100) based on thermal stability, flow steadiness, heater reserve, and pressure stability.</p>'+
-'<table><tr><th>Date</th><th>Material</th>'+
-'<th>Boost</th><th>Max PWM</th><th>Quality</th></tr>'+rows+'</table></div>';
-CH.c9=new Chart(document.getElementById('c9'),{type:'line',data:{
-labels:tr.map(function(t){return t.date}),
-datasets:[
-{label:'Avg Boost (\u00b0C)',data:tr.map(function(t){return t.avg_boost}),
-borderColor:'#d29922',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'},
-{label:'Quality Score',data:tr.map(function(t){return t.eq_score}),
-borderColor:'#3fb950',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y1'},
-{label:'Avg PWM (%)',data:tr.map(function(t){return t.avg_pwm*100}),
-borderColor:'#bc8cff',borderWidth:2,pointRadius:4,fill:false,yAxisID:'y'}]},
-options:{responsive:true,animation:false,
-interaction:{intersect:false,mode:'index'},
-scales:{x:{title:{display:true,text:'Print Date'}},
-y:{title:{display:true,text:'\u00b0C / %'},position:'left'},
-y1:{title:{display:true,text:'Score (0\u2013100)'},position:'right',min:0,max:100,
-grid:{drawOnChartArea:false}}}}})}
-
-function rRec(){
-var recs=D.recommendations||[];
-var hw=D.printer_hw||{};
-var hwHtml='';
-if(hw.kinematics||hw.extruder||hw.input_shaper||hw.part_fan){
-hwHtml='<div class="box" style="margin-bottom:16px;border:1px solid #30363d;padding:14px;border-radius:8px">'+
-'<h3 style="color:#58a6ff;font-size:15px;margin-bottom:10px">\ud83d\udee0 Detected Printer Hardware</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;font-size:13px">';
-if(hw.kinematics)hwHtml+='<div><span style="color:#8b949e">Kinematics:</span> '+hw.kinematics+'</div>';
-if(hw.build_volume)hwHtml+='<div><span style="color:#8b949e">Build:</span> '+hw.build_volume[0]+'\u00d7'+hw.build_volume[1]+'\u00d7'+hw.build_volume[2]+' mm</div>';
-var is_=hw.input_shaper||{};
-var rMinAcc=Math.min((is_.x||{}).recommended_max_accel||99999,(is_.y||{}).recommended_max_accel||99999);
-var rHasShaper=rMinAcc<99999;
-if(rHasShaper)hwHtml+='<div><span style="color:#8b949e">Quality Max Accel:</span> <b style="color:#3fb950">'+rMinAcc+'</b> <span style="color:#484f58">(Y limit)</span></div>';
-if(hw.firmware_max_accel)hwHtml+='<div><span style="color:#8b949e">Firmware Ceiling:</span> <span style="color:#484f58">'+hw.firmware_max_accel+' accel / '+(hw.firmware_max_velocity||'?')+' mm/s</span></div>';
-var ext=hw.extruder||{};
-if(ext.drive_type)hwHtml+='<div><span style="color:#8b949e">Extruder:</span> '+ext.drive_type+(ext.motor?' ('+ext.motor+')':'')+'</div>';
-if(ext.nozzle_diameter)hwHtml+='<div><span style="color:#8b949e">Nozzle:</span> '+ext.nozzle_diameter+' mm</div>';
-if(ext.tmc_driver)hwHtml+='<div><span style="color:#8b949e">Extruder TMC:</span> '+ext.tmc_driver+(ext.run_current?' @ '+ext.run_current+'A':'')+'</div>';
-var fan=hw.part_fan||{};
-if(fan.max_power!=null){var fp=Math.round(fan.max_power*100);hwHtml+='<div><span style="color:#8b949e">Fan Cap:</span> <span style="color:'+(fan.max_power<1?"#f85149":"#3fb950")+'">'+fp+'%</span></div>'}
-if(is_.x||is_.y){hwHtml+='<div style="grid-column:span 2"><span style="color:#8b949e">Input Shaper:</span>'+
-'<div style="display:inline-grid;grid-template-columns:auto auto auto;gap:0 6px;vertical-align:middle;margin-left:6px;font-size:12px">';
-if(is_.x)hwHtml+='<b style="color:#58a6ff">X:</b><b>'+(is_.x.type||'?').toUpperCase()+' @ '+(is_.x.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+is_.x.recommended_max_accel+')</span>';
-if(is_.y)hwHtml+='<b style="color:#3fb950">Y:</b><b>'+(is_.y.type||'?').toUpperCase()+' @ '+(is_.y.freq||'?')+' Hz</b><span style="color:#484f58">(max accel '+is_.y.recommended_max_accel+')</span>';
-hwHtml+='</div></div>'}
-if(hw.z_steppers)hwHtml+='<div><span style="color:#8b949e">Z Steppers:</span> '+hw.z_steppers+(hw.z_steppers>=4?' (Quad Gantry)':'')+'</div>';
-if(hw.probe_type)hwHtml+='<div><span style="color:#8b949e">Probe:</span> '+hw.probe_type+'</div>';
-if(hw.mmu_present)hwHtml+='<div><span style="color:#8b949e">MMU:</span> \u2713 Detected</div>';
-var tmc=hw.xy_tmc||{};
-if(tmc.driver)hwHtml+='<div><span style="color:#8b949e">XY TMC:</span> '+tmc.driver+(tmc.run_current?' @ '+tmc.run_current+'A':'')+(tmc.stealthchop?' (StealthChop)':' (SpreadCycle)')+'</div>';
-hwHtml+='</div></div>'}
-if(!recs.length){ca.innerHTML=hwHtml+'<div class="box"><p>No data available for recommendations yet.</p></div>';return}
-var sevLabel={bad:'Issue',warn:'Warning',info:'Note',good:'Good'};
-var badCount=recs.filter(function(r){return r.severity==='bad'}).length;
-var warnCount=recs.filter(function(r){return r.severity==='warn'}).length;
-var h='<div style="margin-bottom:16px"><h3 style="color:#c9d1d9;font-size:16px;margin-bottom:4px">';
-if(badCount>0)h+='<span style="color:#f85149">'+badCount+' issue'+(badCount>1?'s':'')+'</span> found';
-else if(warnCount>0)h+='<span style="color:#d29922">'+warnCount+' warning'+(warnCount>1?'s':'')+'</span> to review';
-else h+='<span style="color:#3fb950">All looking good</span>';
-h+='</h3><p style="font-size:12px;color:#484f58">Based on extrusion quality, heater, thermal, PA, and slicer analysis</p></div>';
-h+=recs.map(function(r,ri){
-var html='<div class="rec sev-'+r.severity+'">'+
-'<div class="rec-hd">'+
-'<span class="rec-badge">'+(sevLabel[r.severity]||r.severity)+'</span>'+
-'<span class="rec-cat">'+r.category+'</span>'+
-'</div>'+
-'<div class="rec-title">'+r.title+'</div>'+
-'<div class="rec-detail">'+r.detail+'</div>';
-html+='<div class="rec-action">'+r.action+'</div>';
-
-if(r.config_changes&&r.config_changes.length){
-html+='<div class="cfg-changes"><div class="cfg-hd">Suggested config changes</div>';
-r.config_changes.forEach(function(c,ci){
-var id='cfg_'+ri+'_'+ci;
-html+='<div class="cfg-row">';
-html+='<span class="cfg-desc">'+c.description+'</span>';
-if(c.applied){
-html+='<span class="cfg-applied-badge">\\u2713 Applied</span>';
-if(c.prints_since>0){
-html+='<span class="cfg-monitor">'+c.prints_since+' print'+(c.prints_since>1?'s':'')+' since change</span>'}
-else{html+='<span class="cfg-monitor">Awaiting new prints</span>'}}
-else{html+='<button class="cfg-btn" id="'+id+'" onclick="applyChange(\\''+id+'\\',\\''+
-c.variable+'\\','+c.suggested+',\\''+(c.material||'')+'\\')">Apply</button>'}
-html+='</div>'});
-html+='<div style="font-size:11px;color:#484f58;margin-top:6px">' +
-'Saves to your user config. Restart Klipper to activate.</div></div>'}
-html+='</div>';return html}).join('');
-ca.innerHTML=hwHtml+h}
 
 function showToast(msg,ok){
 var t=document.createElement('div');t.className='cfg-toast '+(ok?'ok':'err');
