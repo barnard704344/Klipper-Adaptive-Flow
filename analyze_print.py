@@ -1908,15 +1908,7 @@ opacity:0;transition:opacity .3s}
 .cfg-toast.show{opacity:1}
 .cfg-toast.ok{border-color:#3fb950}.cfg-toast.err{border-color:#f85149}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.mat-sel{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
-.mat-btn{background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:6px;
-padding:4px 12px;font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
-.mat-btn:hover{color:#c9d1d9;border-color:#58a6ff}
-.mat-btn.active{background:#1f6feb;color:#fff;border-color:#1f6feb}
-.mat-btn.agg{background:#0d419d;color:#58a6ff;border-color:#1f6feb}
-.agg-badge{display:inline-block;background:rgba(88,166,255,.15);color:#58a6ff;
-font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;
-letter-spacing:.5px;margin-left:6px;text-transform:uppercase}
+
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -1925,7 +1917,6 @@ letter-spacing:.5px;margin-left:6px;text-transform:uppercase}
 <div class="hdr">
 <h1>\u26a1 Adaptive Flow Dashboard</h1>
 <div class="ctrls">
-<div class="mat-sel" id="matsel"></div>
 <span id="lv" style="display:none;font-size:12px;color:#3fb950">
 <span class="pulse">\u25cf</span> LIVE</span>
 <label><input type="checkbox" id="ar"> Auto-refresh</label>
@@ -1966,48 +1957,13 @@ var el=e.target.closest('[data-tip]');if(el){clearTimeout(_tipT);showTip(el);}})
 document.addEventListener('mouseout',function(e){
 var el=e.target.closest('[data-tip]');if(el){_tipT=setTimeout(hideTip,80);}});
 var isLive=D.is_live||false;
-var isAgg=D.is_aggregate||false;
+
 var sel=document.getElementById('ss');
 var lvi=document.getElementById('lv');
 var ftel=document.getElementById('ft');
-var matSelEl=document.getElementById('matsel');
-var activeMat=null;
 
 // Show LIVE indicator
 if(isLive)lvi.style.display='inline';
-
-// --- Material buttons ---
-function renderMatBtns(){
-var mats=D.materials||[];
-if(mats.length<2){matSelEl.style.display='none';return}
-matSelEl.style.display='';
-var h='<span style="font-size:11px;color:#484f58;margin-right:4px">View:</span>';
-h+='<button class="mat-btn'+(activeMat?'':' active')+'" onclick="setMat(null)">Per-Print</button>';
-mats.forEach(function(m){
-h+='<button class="mat-btn'+(activeMat===m?' active agg':'')+'" onclick="setMat(\\''+m+'\\')">'+m+' Aggregate</button>'});
-matSelEl.innerHTML=h}
-renderMatBtns();
-
-function setMat(m){
-if(m===activeMat)return;
-activeMat=m;
-renderMatBtns();
-if(m){
-sel.style.display='none';
-fetchAgg(m)}
-else{
-sel.style.display='';
-window.location.href='/'}}
-
-function fetchAgg(m){
-ftel.textContent='Loading '+m+' aggregate...';
-fetch('/api/material-data?material='+encodeURIComponent(m))
-.then(function(r){return r.json()}).then(function(nd){
-D=nd;isLive=false;isAgg=true;
-sel.style.display='none';
-ftel.textContent=m+ ' \u2014 Aggregated across '+nd.aggregate_sessions+' prints';
-rc();buildTabs();rCh()})
-.catch(function(e){ftel.textContent='Error loading: '+e})}
 
 // Populate session selector
 if(!isLive){
@@ -2041,15 +1997,14 @@ var iv=isLive?5000:30000;
 rt=setInterval(pollData,iv);
 ftel.textContent='Auto-refresh '+(iv/1000)+'s'}
 function stopPoll(){if(rt)clearInterval(rt);rt=null;
-ftel.textContent=isAgg?(D.aggregate_material+' aggregate'):'Adaptive Flow Dashboard'}
+ftel.textContent='Adaptive Flow Dashboard'}
 
 function pollData(){
-if(isAgg&&activeMat){fetchAgg(activeMat);return}
 var url='/api/data';
 var cur=sel.value;
 if(cur&&cur!=='__live__')url+='?session='+encodeURIComponent(cur);
 fetch(url).then(function(r){return r.json()}).then(function(nd){
-D=nd;isLive=D.is_live||false;isAgg=D.is_aggregate||false;
+D=nd;isLive=D.is_live||false;
 if(isLive)lvi.style.display='inline'; else lvi.style.display='none';
 rc();rCh();
 }).catch(function(){})}
@@ -2058,19 +2013,8 @@ function rc(){var c=document.getElementById('cds'),s=D.summary;
 if(!s){c.innerHTML='<div class="cd"><div class="vl d">No data</div></div>';return}
 var eq=D.extrusion_quality||{},dp=s.dynz_active_pct||0;
 var liveBadge=s._live?'<span style="color:#3fb950;font-size:11px"> \u25cf PRINTING</span>':'';
-var aggBadge=isAgg?'<span class="agg-badge">'+s.session_count+' prints</span>':'';
 var items;
-if(isAgg){
-items=[
-{l:'Material',v:(s.material||'?')+aggBadge,s:s.session_count+' prints, '+(s.duration_min||0).toFixed(0)+' min total',
-d:'Aggregated data across all prints with this material.'},
-{l:'Avg Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C across all prints',
-d:'Weighted average temp boost across all prints of this material.'},
-{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,
-d:'Weighted average heater duty across all prints.'},
-{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'averaged':'inactive across prints',
-d:'Weighted average DynZ activation across prints.'}]}
-else{
+{
 var qs=eq.score!=null?eq.score:null;
 var qc=qs!=null?(qs>=80?'#3fb950':qs>=60?'#d29922':'#f85149'):'#8b949e';
 var qSub=qs!=null?'T:'+eq.thermal+' F:'+eq.flow+' H:'+eq.heater+' P:'+eq.pressure:'no data';
@@ -2102,8 +2046,7 @@ var allTabs=[
 var at='sl',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
 var tabs=allTabs;
-if(isAgg)tabs=allTabs.filter(function(t){return t.id!=='tl'&&t.id!=='sl'});
-if(isAgg&&(at==='tl'||at==='sl'))at='zh';
+
 tb.innerHTML=tabs.map(function(t){
 return '<div class="tab'+(t.id===at?' active':'')+
 '" onclick="sTab(this.dataset.t)" data-t="'+t.id+'"><span class="tab-wrap">'+t.l+
