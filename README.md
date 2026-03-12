@@ -167,7 +167,7 @@ All adjustments stay within safe limits defined by your hardware.
 - ~~Adjust settings when switching nozzles~~
 - ~~Manually override anything for heater upgrades~~
 
-For most users — especially those switching from a Standard to HF nozzle or changing filament brands — Adaptive Flow handles everything automatically. However, for best results on **Voron, CoreXY, and other precision builds**, you should still calibrate your extruder's `rotation_distance` and run a one-time PA baseline test to set your starting value with `AT_SET_PA MATERIAL=X PA=Y`.
+For most users — especially those switching from a Standard to HF nozzle or changing filament brands — Adaptive Flow handles everything automatically.
 
 ## Advanced (Optional)
 
