@@ -1,79 +1,105 @@
 # =========================================================
-#  ADAPTIVE FLOW - USER CONFIGURATION OVERRIDES
+#  ADAPTIVE FLOW — USER CONFIGURATION
 # =========================================================
-#  Copy this file to auto_flow_user.cfg to customize settings.
-#  Your auto_flow_user.cfg will NEVER be overwritten by updates.
-#
-#  Uncomment and edit any variables you want to override.
-#  All other values come from auto_flow_defaults.cfg automatically.
+#  This file is YOURS — it is never overwritten by updates.
+#  All values come from auto_flow_defaults.cfg unless you
+#  override them here. Uncomment any line to activate it.
 # =========================================================
 
 [gcode_macro _AUTO_TEMP_CORE]
-# HOTEND TYPE (Revo Only)
-# Set to True for Revo HF, False for Revo Standard/Micro
+
+# ---------------------------------------------------------
+#  YOUR HARDWARE  (set these two, everything else auto-tunes)
+# ---------------------------------------------------------
+# Nozzle type: True = Revo HF, False = Revo Standard/Micro
 variable_use_high_flow_nozzle: True
+# Heater cartridge wattage: 40 = stock Revo, 60 = upgrade
+variable_heater_wattage: 40
 
-# HEATER WATTAGE
-# 40 = stock Revo, 60 = upgrade. Material profiles auto-scale.
-# variable_heater_wattage: 40
+# ---------------------------------------------------------
+#  HF NOZZLE COMPENSATION  (auto-applied when HF = True)
+# ---------------------------------------------------------
+# HF nozzles have ~2.3× more melt zone than Standard.
+# PA, smooth_time, and temp offset are set automatically.
+# Only override if you've done your own characterisation.
+# variable_hf_pa_scale: 1.40       # PA multiplier for HF
+# variable_hf_smooth_time: 0.060   # smooth_time for HF (s)
+# variable_sf_smooth_time: 0.040   # smooth_time for Std (s)
+# variable_hf_temp_offset: 5.0     # Extra temp for HF (°C)
 
-# HF MELT ZONE COMPENSATION (uncomment to override)
-# HF nozzles have ~2.3x more melt zone volume than Standard.
-# PA is auto-scaled and smooth_time auto-set based on nozzle type.
-# variable_hf_pa_scale: 1.40       # PA multiplier for HF nozzles
-# variable_hf_smooth_time: 0.060   # PA smooth_time for HF (seconds)
-# variable_sf_smooth_time: 0.040   # PA smooth_time for Standard (seconds)
-# variable_hf_temp_offset: 5.0     # Extra temp offset for HF nozzles (°C)
-
-# FLOW SMOOTHING (uncomment to override)
-# 0.35 = quality-focused (less jitter), 0.15 = faster response
+# ---------------------------------------------------------
+#  TEMPERATURE BOOST
+# ---------------------------------------------------------
+# Flow smoothing: 0.35 = quality (less jitter), 0.15 = responsive
 # variable_flow_smoothing: 0.35
 
-# DYNAMIC PRESSURE ADVANCE (uncomment to override)
+# Speed-based boost for fast thin walls
+# variable_speed_boost_threshold: 100.0  # mm/s to start boost
+# variable_speed_boost_k: 0.08           # °C per mm/s above threshold
+
+# Ramp rates (°C/s). Defaults come from material profile.
+# variable_ramp_rate_rise: 4.0
+# variable_ramp_rate_fall: 1.0
+
+# Global max boost cap (material profiles have their own caps)
+# variable_max_boost_limit: 50.0
+
+# ---------------------------------------------------------
+#  DYNAMIC PRESSURE ADVANCE
+# ---------------------------------------------------------
 # variable_pa_enable: True
-# variable_pa_deadband: 0.003      # Min PA change before issuing command
-# variable_pa_min_value: 0.010     # Absolute minimum PA allowed
-# variable_pa_max_reduction: 0.020 # Max PA reduction from base value
+# variable_pa_deadband: 0.003      # Min change before issuing cmd
+# variable_pa_min_value: 0.010     # Absolute minimum PA
+# variable_pa_max_reduction: 0.020 # Max PA reduction from base
 
-# SPEED-BASED BOOST (uncomment to override)
-# variable_speed_boost_threshold: 100.0
-# variable_speed_boost_k: 0.08
-
-# THERMAL SAFETY (uncomment to override)
-# variable_thermal_runaway_threshold: 15.0
-# variable_thermal_undertemp_threshold: 10.0
-
-# FIRST LAYER MODE (uncomment to override)
-# variable_first_layer_skip: True
-# variable_first_layer_height: 0.3
-
-# FILAMENT CROSS-SECTION (uncomment to override)
-# Default 2.405 mm² for 1.75mm filament. Change for 2.85mm (6.382)
-# variable_filament_cross_section: 2.405
-
-# MULTI-OBJECT TEMPERATURE MANAGEMENT (uncomment to override)
-# variable_multi_object_temp_wait: True
-# variable_temp_wait_tolerance: 5.0
-
-# FLOW RATE SAFETY LIMITS (uncomment to override)
-# variable_max_safe_flow_hf: 25.0   # Max flow for Revo HF nozzles (mm³/s)
-# variable_max_safe_flow_std: 15.0  # Max flow for Revo Std nozzles (mm³/s)
-
-# DYNAMIC Z-WINDOW LEARNING (uncomment to override)
+# ---------------------------------------------------------
+#  DYNAMIC Z-WINDOW (DynZ)
+# ---------------------------------------------------------
+# Detects convex surfaces and reduces thermal demand.
+# Scores persist across prints via save_variables.
 # variable_dynz_enable: True
-# variable_dynz_bin_height: 2.0
-# variable_dynz_speed_thresh: 80.0
-# variable_dynz_flow_max: 8.0
-# variable_dynz_pwm_thresh: 0.70
+# variable_dynz_bin_height: 2.0          # Z bin size (mm)
+# variable_dynz_speed_thresh: 80.0       # Speed above = stress
+# variable_dynz_flow_max: 8.0            # Flow below = stress
+# variable_dynz_pwm_thresh: 0.70         # PWM above = stress
 # variable_dynz_score_inc: 1.0
 # variable_dynz_score_decay: 0.90
 # variable_dynz_activate_score: 6.0
 # variable_dynz_deactivate_score: 1.5
-# variable_dynz_accel_relief: 3200
 # variable_dynz_relief_method: 'temp_reduction'
-# variable_dynz_temp_reduction: 8.0
+# variable_dynz_temp_reduction: 8.0      # °C to reduce boost by
+# variable_dynz_accel_relief: 3200       # mm/s² (accel_limit method)
 # variable_dynz_base_accel: 0
 
-# IMPORTANT: Do NOT add a "gcode:" line here!
-# This section MERGES with the defaults. Adding "gcode:" would replace
-# the entire core logic with nothing, breaking adaptive flow.
+# ---------------------------------------------------------
+#  SAFETY & LIMITS
+# ---------------------------------------------------------
+# variable_thermal_runaway_threshold: 15.0   # Max overshoot (°C)
+# variable_thermal_undertemp_threshold: 10.0 # Max undershoot (°C)
+# variable_max_safe_flow_hf: 25.0    # Max flow for HF (mm³/s)
+# variable_max_safe_flow_std: 15.0   # Max flow for Std (mm³/s)
+
+# ---------------------------------------------------------
+#  FIRST LAYER
+# ---------------------------------------------------------
+# variable_first_layer_skip: True    # No boost on layer 1
+# variable_first_layer_height: 0.3   # Z height = "first layer"
+
+# ---------------------------------------------------------
+#  MULTI-OBJECT TEMP MANAGEMENT
+# ---------------------------------------------------------
+# Prevents thermal runaway when switching between objects.
+# variable_multi_object_temp_wait: True
+# variable_temp_wait_tolerance: 5.0  # °C tolerance band
+
+# ---------------------------------------------------------
+#  FILAMENT
+# ---------------------------------------------------------
+# 2.405 mm² = 1.75mm filament (π × 0.875²). Use 6.382 for 2.85mm.
+# variable_filament_cross_section: 2.405
+
+# =========================================================
+#  ⚠ Do NOT add a "gcode:" line here!
+#  This macro merges with auto_flow_defaults.cfg.
+#  Adding "gcode:" would replace the entire control loop.
+# =========================================================
