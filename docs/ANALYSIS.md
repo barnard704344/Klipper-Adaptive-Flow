@@ -1,6 +1,6 @@
 # Adaptive Flow Dashboard
 
-A browser-based dashboard for analyzing your Klipper Adaptive Flow prints. View print health, detect banding culprits, track recommendation lifecycle, and compare materials — all from any device on your network. **No SSH required.**
+A browser-based dashboard for analyzing your Klipper Adaptive Flow prints. View print health, detect banding culprits, diagnose slicer settings, and compare materials — all from any device on your network. **No SSH required.**
 
 ```
 http://<printer-ip>:7127
@@ -53,15 +53,13 @@ Below the cards, tabs switch between analysis views. Each tab has a **?** toolti
 
 | Tab | Contents |
 |-----|----------|
-| **⚙ Recommendations** | Actionable tuning suggestions with one-click Apply buttons |
-| **✂ Slicer** | Slicer settings extracted from G-code, acceleration fingerprint chart, and specific setting recommendations |
+| **✂ Slicer** | The most useful tab. Extracts slicer settings from G-code, shows acceleration fingerprint chart, and tells you exactly which settings to change |
 | **Timeline** | Temperature and flow/speed/PWM charts over time |
 | **Z-Height** | Banding risk bar chart by Z-layer + problem zone breakdown |
 | **Heater** | PWM vs flow-rate brackets + thermal lag episodes |
 | **PA** | Pressure Advance value over time + oscillation zone table |
 | **DynZ** | DynZ activation percentage and stress by Z-height |
 | **Distribution** | Speed and flow rate histograms — where your printer spends its time |
-| **Trends** | Print-over-print line charts tracking metrics across sessions |
 
 Every chart includes a description paragraph explaining what you're looking at — colour coding, what "good" looks like, and what to watch for. No prior knowledge required.
 
@@ -85,46 +83,6 @@ The dashboard detects active prints automatically:
 
 For completed prints, optional auto-refresh runs at 30-second intervals.
 
-### Recommendations Panel
-
-Each analysis view can generate recommendations displayed in a panel below the charts. Recommendations are color-coded by severity:
-
-| Badge | Meaning |
-|-------|---------|
-| **bad** (red) | Critical issue — should be fixed before printing more |
-| **warn** (amber) | Notable concern — consider adjusting |
-| **info** (blue) | Informational — no action needed right now |
-| **good** (green) | Healthy — no problems detected |
-
-Each recommendation includes:
-- A title describing the issue
-- A detailed explanation of the cause
-- An **action** — the specific config change to make
-- An **Apply** button to apply the change directly from the dashboard
-
-### One-Click Config Apply
-
-Clicking **Apply** on a recommendation:
-
-1. Writes the suggested value to your Klipper macro config via `SAVE_VARIABLE`
-2. Logs the change (variable, old value, new value, timestamp) to `config_changes_log.json`
-3. The button changes to **"Applied ✓"** with a confirmation message
-
-This lets you tune your config iteratively without SSH — apply a recommendation, print again, and check whether the metrics improved.
-
-### Applied Recommendation Tracking
-
-The dashboard tracks which recommendations you've already applied and how many prints have completed since:
-
-| Status | Badge | What It Means |
-|--------|-------|---------------|
-| **Not applied** | Normal severity badge | Recommendation is new, not yet acted on |
-| **Applied, awaiting prints** | ✓ green | Config was changed but no prints have completed since |
-| **Monitoring (N of ~5 prints)** | ⏳ info | N prints completed since the change — still collecting data |
-| **Verified** | No longer shown | After ~5 prints, the recommendation disappears if metrics improved |
-
-This prevents the dashboard from repeatedly suggesting a change you've already made. The lifecycle automatically advances as you complete prints.
-
 ### Material Aggregate Analysis
 
 Aggregate views combine data from all sessions of a given material type. This surfaces patterns that may not be obvious in any single print:
@@ -136,9 +94,6 @@ Aggregate views combine data from all sessions of a given material type. This su
 - **PA stability overview** — aggregate PA range, oscillation zone count
 - **DynZ combined map** — activation patterns merged from all sessions
 - **Speed/flow distribution** — how you typically print with this material
-- **Cross-print trend** — metrics plotted session-over-session
-
-Aggregate recommendations reflect the material's overall behavior rather than a single print's anomalies.
 
 ---
 
@@ -216,13 +171,6 @@ Side-by-side histograms:
 1. **Speed distribution** — percentage of print time in each speed bracket, with average boost and PWM
 2. **Flow distribution** — percentage of print time in each flow bracket, with average boost and PWM
 
-### Trends Tab
-
-Line charts tracking key metrics across your last N prints (oldest → newest):
-
-- Average boost, heater duty, banding events, and culprit for each session
-- Trend direction arrows (↑ worsening / ↓ improving) with percentage change
-
 ---
 
 ## API Endpoints
@@ -234,9 +182,9 @@ The dashboard exposes a JSON API:
 | `/api/data` | GET | Latest print data (or live print if active) |
 | `/api/data?session=<file>` | GET | Data for a specific completed print |
 | `/api/material-data?material=PLA` | GET | Aggregate analysis for a given material |
-| `/api/apply-config` | POST | Apply a config recommendation (JSON body: `{variable, value}`) |
+| `/api/apply-config` | POST | Apply a config change (JSON body: `{variable, value}`) |
 
-The `/api/data` response includes `slicer_settings` (dict of all extracted G-code settings), `slicer_diagnosis` (accel fingerprint, issues, suggestions), and `recommendations` (including Slicer-category items when issues are found).
+The `/api/data` response includes `slicer_settings` (dict of all extracted G-code settings) and `slicer_diagnosis` (accel fingerprint, issues, suggestions).
 
 Responses are cached with a 15-second TTL. Applying a config change via `/api/apply-config` invalidates the cache so subsequent reads reflect the updated state.
 
@@ -309,7 +257,7 @@ Samples are grouped by flow rate (mm³/s) and the average, P95, and max PWM are 
 
 > **Important:** Max PWM hitting 100% in the graphs is **normal PID behavior**, not heater saturation. Klipper's PID briefly goes full power on every temperature transition. The dashboard distinguishes between transient PID ramp-up (harmless) and sustained saturation (problematic) by checking average PWM and thermal lag — not just peak PWM. A 40W heater showing 100% max in the charts but 70% average with low thermal lag is working perfectly.
 
-### Heater Recommendation Intelligence
+### Heater Analysis Intelligence
 
 The dashboard uses a multi-signal approach to avoid false alarms about heater performance:
 
@@ -419,9 +367,6 @@ python3 analyze_print.py --count 10 --material PLA
 # Z-height banding heatmap
 python3 analyze_print.py --z-map
 python3 analyze_print.py --z-map --z-bin 1.0
-
-# Print-over-print trends
-python3 analyze_print.py --trend 10
 
 # Thermal lag report
 python3 analyze_print.py --lag

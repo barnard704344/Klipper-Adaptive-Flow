@@ -33,7 +33,7 @@ That's it. Adaptive Flow handles:
 | **HF nozzle compensation** | Auto-detects HF melt zone, scales PA and smooth_time — no calibration needed |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
 | **Complex geometry** | DynZ learns where domes and overhangs cause trouble, adapts on future layers |
-| **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, recommends specific settings |
+| **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, shows exactly what to change |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
@@ -41,7 +41,7 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 - **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
-- **Tracks and improves over time.** The analysis dashboard tracks trends across prints, diagnoses slicer settings from your G-code, and recommends improvements. The more you print, the more data it has to work with.
+- **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change. No guesswork — it tells you which slicer setting is causing banding and what value to use instead.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
 - **Scope:** Adaptive Flow solves *thermal* banding (temperature swings, PA drift with viscosity, flow spikes). It does not solve *mechanical* banding from Z-wobble, belt tension, or frame resonance — those require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
 
@@ -135,15 +135,14 @@ Custom materials: copy any profile to `material_profiles_user.cfg` and adjust.
 Open `http://<printer-ip>:7127` in your browser. No SSH, no terminal.
 
 The dashboard shows:
-- **Live print monitoring** — temperature, flow, PA, and heater PWM in real-time
+- **Slicer diagnostics** — the most useful tab. Extracts settings directly from your G-code, cross-references acceleration values with banding data, and tells you exactly which slicer setting to change and what value to use. This is the fastest way to fix print quality issues.
+- **Live print monitoring** — temperature, flow, PA, and heater PWM plotted over the entire print timeline
 - **Extrusion quality score** — physics-based 0–100 rating covering thermal stability, flow steadiness, heater reserve, and pressure consistency
-- **Per-material history** — track how each material performs across prints
-- **Recommendations** — actionable suggestions with one-click Apply buttons
-- **Slicer diagnostics** — extracts settings from your G-code, cross-references acceleration values with banding data, and recommends specific slicer changes
-- **Boost optimization** — analysis of whether you can print faster based on actual heater and flow headroom
-- **Banding analysis** — identifies what's causing print artifacts
-- **Thermal headroom** — shows if your heater is the bottleneck
-Every chart has tooltips explaining what you're looking at and what "good" looks like. The more you print, the smarter the recommendations get.
+- **Heater analysis** — shows power usage at different flow rates, so you can see if your heater is the bottleneck
+- **Distribution** — how your print spent its time across speeds and flow rates
+- **Z-Height analysis** — identifies which layers had the most thermal stress
+
+Every chart has tooltips explaining what you're looking at and what "good" looks like.
 
 ## How It Works
 
@@ -209,7 +208,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Dynamic Z-Window (DynZ)** — Learns convex surfaces, reduces thermal demand on problem layers
-- **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, recommends specific settings
+- **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, shows exactly what to change
 - **Extrusion Quality Scoring** — Physics-based 0–100 score covering thermal, flow, heater, and pressure stability
 - **Boost Optimization** — Analyses actual heater and flow headroom, tells you how much faster you can print
 - **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
