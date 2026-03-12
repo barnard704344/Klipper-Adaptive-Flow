@@ -175,7 +175,7 @@ if [ -f "$OLD_AUTO" ] && [ ! -L "$OLD_AUTO" ]; then
     echo "Please review your backup and manually copy any custom"
     echo "settings to $USER_CFG"
     echo ""
-    read -p "Press Enter to continue..."
+    if [ -t 0 ]; then read -p "Press Enter to continue..."; fi
 fi
 
 if [ -f "$OLD_MAT" ] && [ ! -L "$OLD_MAT" ]; then
@@ -191,7 +191,7 @@ if [ -f "$OLD_MAT" ] && [ ! -L "$OLD_MAT" ]; then
     echo "Please review your backup and manually copy any custom"
     echo "materials to $USER_MAT"
     echo ""
-    read -p "Press Enter to continue..."
+    if [ -t 0 ]; then read -p "Press Enter to continue..."; fi
 fi
 
 # Clean up old moonraker auto-analysis service if it exists

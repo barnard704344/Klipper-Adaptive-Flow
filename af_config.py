@@ -27,6 +27,60 @@ GCODES_DIR = os.path.expanduser('~/printer_data/gcodes')
 # everything else lives in auto_flow_user.cfg.
 _MATERIAL_VARS = frozenset(['flow_k', 'pa_boost_k'])
 
+# Allowlist of variables the dashboard API may write, with (min, max) bounds.
+# Variables not in this dict are rejected by _apply_config_change.
+_ALLOWED_VARIABLES = {
+    # Material profile vars
+    'flow_k':                   (0.0, 5.0),
+    'pa_boost_k':               (0.0, 0.01),
+    # Hardware
+    'use_high_flow_nozzle':     (0, 1),       # bool treated as int
+    'heater_wattage':           (20, 120),
+    # HF compensation
+    'hf_pa_scale':              (0.5, 3.0),
+    'hf_smooth_time':           (0.01, 0.2),
+    'sf_smooth_time':           (0.01, 0.2),
+    'hf_temp_offset':           (0.0, 20.0),
+    # Temperature boost
+    'flow_smoothing':           (0.0, 1.0),
+    'speed_boost_threshold':    (0.0, 500.0),
+    'speed_boost_k':            (0.0, 1.0),
+    'ramp_rate_rise':           (0.1, 20.0),
+    'ramp_rate_fall':           (0.1, 20.0),
+    'max_boost_limit':          (0.0, 60.0),
+    # PA
+    'pa_enable':                (0, 1),
+    'pa_deadband':              (0.0, 0.05),
+    'pa_min_value':             (0.0, 0.2),
+    'pa_max_reduction':         (0.0, 0.1),
+    # DynZ
+    'dynz_enable':              (0, 1),
+    'dynz_bin_height':          (0.1, 20.0),
+    'dynz_speed_thresh':        (1.0, 500.0),
+    'dynz_flow_max':            (0.1, 50.0),
+    'dynz_pwm_thresh':          (0.1, 1.0),
+    'dynz_score_inc':           (0.1, 10.0),
+    'dynz_score_decay':         (0.0, 1.0),
+    'dynz_activate_score':      (0.5, 50.0),
+    'dynz_deactivate_score':    (0.0, 50.0),
+    'dynz_relief_method':       None,          # string, no numeric bounds
+    'dynz_temp_reduction':      (0.0, 30.0),
+    'dynz_accel_relief':        (100, 50000),
+    # Safety
+    'thermal_runaway_threshold':    (3.0, 30.0),
+    'thermal_undertemp_threshold':  (3.0, 30.0),
+    'max_safe_flow_hf':         (5.0, 60.0),
+    'max_safe_flow_std':        (3.0, 40.0),
+    # First layer
+    'first_layer_skip':         (0, 1),
+    'first_layer_height':       (0.05, 2.0),
+    # Multi-object
+    'multi_object_temp_wait':   (0, 1),
+    'temp_wait_tolerance':      (1.0, 20.0),
+    # Filament
+    'filament_cross_section':   (1.0, 10.0),
+}
+
 
 def _parse_config_variables(filepath):
     """Parse a Klipper config file into {section: {variable: value_str}}.
@@ -183,6 +237,20 @@ def _apply_config_change(variable, new_value, material=None):
     Creates the file / section if they don't exist.
     Returns ``(success, message)``.
     """
+    # ---- Validate against allowlist ----------------------------------------
+    if variable not in _ALLOWED_VARIABLES:
+        return False, f'Variable "{variable}" is not an allowed config parameter.'
+
+    bounds = _ALLOWED_VARIABLES[variable]
+    if bounds is not None:
+        try:
+            numeric = float(new_value)
+        except (TypeError, ValueError):
+            return False, f'Variable "{variable}" requires a numeric value.'
+        lo, hi = bounds
+        if numeric < lo or numeric > hi:
+            return False, f'Value {numeric} for "{variable}" is out of range ({lo}–{hi}).'
+
     user_file, _defaults, section = _config_paths_for(variable, material)
     if section is None:
         return False, 'Material name is required for this parameter.'

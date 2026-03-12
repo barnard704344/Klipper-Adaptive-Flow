@@ -26,6 +26,18 @@ class GCodeInterceptor:
         # Wrap the gcode script runner to intercept commands
         self._wrap_gcode_dispatch()
         self.logger.info("GCodeInterceptor: Ready and intercepting G-code")
+        # Schedule a deferred health check to verify the hook is intact
+        reactor = self.printer.get_reactor()
+        reactor.register_timer(self._health_check, reactor.monotonic() + 5.)
+
+    def _health_check(self, eventtime):
+        """One-shot check that our hook is still installed."""
+        current = getattr(self.gcode, 'run_script_from_command', None)
+        if current is None or getattr(current, '__name__', '') != 'wrapped_run_script':
+            self.logger.warning(
+                "GCodeInterceptor: G-code hook appears overwritten! "
+                "Lookahead data may be unavailable.")
+        return self.printer.get_reactor().NEVER
 
     def _wrap_gcode_dispatch(self):
         """Wrap the gcode run_script_from_command to intercept all commands."""
@@ -39,7 +51,7 @@ class GCodeInterceptor:
             """Intercept script before processing."""
             for line in script.split('\n'):
                 line = line.strip()
-                if line and not line.startswith(';'):
+                if line and (not line.startswith(';') or line.upper().startswith(';TYPE:')):
                     interceptor._notify_subscribers(line)
             return original_run_script(script)
 
@@ -51,7 +63,7 @@ class GCodeInterceptor:
             def wrapped_run_script_async(script):
                 for line in script.split('\n'):
                     line = line.strip()
-                    if line and not line.startswith(';'):
+                    if line and (not line.startswith(';') or line.upper().startswith(';TYPE:')):
                         interceptor._notify_subscribers(line)
                 return original_run_script_async(script)
             self.gcode.run_script = wrapped_run_script_async

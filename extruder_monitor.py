@@ -40,6 +40,7 @@ class ExtruderMonitor:
         self._gcode_last_e = None
         self._gcode_last_f = None
         self._relative_extrusion = False  # M83 sets True, M82 sets False
+        self._current_feature = ""  # Slicer feature type from ;TYPE: comments
         
         # Pre-compile regex for performance
         import re
@@ -52,6 +53,7 @@ class ExtruderMonitor:
         self._log_start_time = None
         self._log_sample_count = 0
         self._log_stats = {}  # Running stats for summary
+        self._log_error_count = 0  # Circuit breaker for logging errors
         
         # State tracking for deltas (banding detection)
         self._last_pa = None
@@ -125,6 +127,10 @@ class ExtruderMonitor:
         if not line:
             return
         up = line.upper().strip()
+        # Track slicer feature type from ;TYPE: comments
+        if up.startswith(';TYPE:'):
+            self._current_feature = line.strip()[6:].strip()
+            return
         # Handle G0/G1 moves and M82/M83 extrusion mode commands
         if up.startswith('G0') or up.startswith('G1') or up.startswith('M82') or up.startswith('M83'):
             self._parse_gcode_move(line)
@@ -719,9 +725,13 @@ class ExtruderMonitor:
                     os.fsync(self._log_file.fileno())
                     
             except Exception as e:
-                logger = logging.getLogger('ExtruderMonitor')
-                logger.error(f"Log data error: {e}")
-                gcmd.respond_info(f"AT_LOG: Error writing data: {e}")
+                self._log_error_count += 1
+                if self._log_error_count <= 5:
+                    logger = logging.getLogger('ExtruderMonitor')
+                    logger.error(f"Log data error: {e}")
+                    gcmd.respond_info(f"AT_LOG: Error writing data: {e}")
+                if self._log_error_count == 5:
+                    gcmd.respond_info("AT_LOG: Too many errors, suppressing further messages")
 
     def cmd_AT_LOG_END(self, gcmd):
         """End logging session and write summary."""
@@ -1008,6 +1018,8 @@ class ExtruderMonitor:
         pf = pred_rate * FILAMENT_CROSS_SECTION
         status['high_flow_duration_50pct'] = self._high_flow_duration(pf * 0.5) if pf > 0 else 0.0
         status['high_flow_duration_75pct'] = self._high_flow_duration(pf * 0.75) if pf > 0 else 0.0
+
+        status['current_feature'] = self._current_feature
 
         return status
 

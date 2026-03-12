@@ -2284,7 +2284,9 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
         """Resolve session file from query params to summary path."""
         session_file = params.get('session', [None])[0]
         if session_file:
-            candidate = os.path.join(self.log_dir, session_file)
+            # Sanitise: use only the basename to prevent path traversal
+            safe_name = os.path.basename(session_file)
+            candidate = os.path.join(self.log_dir, safe_name)
             if os.path.exists(candidate):
                 return candidate
         return None
@@ -2355,6 +2357,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
         if parsed.path == '/api/apply-config':
             length = int(self.headers.get('Content-Length', 0))
+            if length > 4096:
+                self.send_response(413)
+                self.end_headers()
+                return
             try:
                 body = json.loads(self.rfile.read(length)) if length else {}
             except (json.JSONDecodeError, ValueError):
