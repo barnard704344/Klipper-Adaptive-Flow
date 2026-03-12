@@ -312,14 +312,16 @@ The system normalizes common variations (`PLA+` → `PLA`, `PETG-CF` → `PETG`,
 
 ### Disable Slicer Pressure Advance
 
-**Important:** This system handles Pressure Advance dynamically. Disable PA in your slicer to avoid conflicts:
+Adaptive Flow manages PA dynamically based on temperature and viscosity. If your slicer also sets PA, the two will conflict. You need to disable PA in your slicer **and** remove any `SET_PRESSURE_ADVANCE` commands from your start G-code.
 
-| Slicer | Setting |
-|--------|---------|
-| OrcaSlicer | Printer Settings → Advanced → Enable pressure advance = OFF |
-| PrusaSlicer | Not applicable (PA is in firmware) |
-| Cura | Disable any PA plugin |
-| SuperSlicer | Printer Settings → Extruder → Pressure Advance = 0 |
+| Slicer | What to do |
+|--------|-----------|
+| **OrcaSlicer** | **1.** Printer Settings → Advanced → **Enable pressure advance** = OFF. **2.** Printer Settings → Custom G-code → remove any `SET_PRESSURE_ADVANCE` lines from start/end G-code. |
+| **PrusaSlicer** | Printer Settings → Custom G-code → check start G-code and end G-code for any `SET_PRESSURE_ADVANCE` lines and remove them. PrusaSlicer doesn't set PA by default. |
+| **SuperSlicer** | **1.** Printer Settings → Extruder 1 → **Pressure advance** = 0. **2.** Printer Settings → Custom G-code → remove any `SET_PRESSURE_ADVANCE` lines. |
+| **Cura** | **1.** Settings → Printer → Manage Printers → Machine Settings → Start G-code → remove any `SET_PRESSURE_ADVANCE` lines. **2.** Disable any Linear/Pressure Advance plugin. |
+
+> **Also check `printer.cfg`:** If you have `pressure_advance:` set under `[extruder]` in your Klipper config, that value is the initial default. Adaptive Flow overrides it at runtime via `AT_START`, so there's no conflict — but setting it to `0` avoids confusion.
 
 The system uses `default_pa` from the material profile (or your calibrated value via `AT_SET_PA`).
 

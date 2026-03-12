@@ -107,11 +107,20 @@ AT_START MATERIAL={params.MATERIAL|default("PLA")}
 AT_END
 ```
 
-### 5. Print
+### 5. Disable Slicer Pressure Advance
+
+Adaptive Flow manages PA dynamically. If your slicer also sets PA, they'll conflict. Remove any `SET_PRESSURE_ADVANCE` lines and disable slicer-side PA:
+
+| Slicer | Where to disable PA |
+|--------|-------------------|
+| **OrcaSlicer** | Printer Settings → Advanced → **Enable pressure advance** = OFF. Also check Printer Settings → Custom G-code and remove any `SET_PRESSURE_ADVANCE` lines. |
+| **PrusaSlicer** | Printer Settings → Custom G-code → remove any `SET_PRESSURE_ADVANCE` lines from start/end G-code. PrusaSlicer doesn't set PA by default. |
+| **SuperSlicer** | Printer Settings → Extruder 1 → **Pressure advance** = 0. Also remove any `SET_PRESSURE_ADVANCE` from Custom G-code. |
+| **Cura** | Remove any `SET_PRESSURE_ADVANCE` from Start G-code (Settings → Printer → Manage Printers → Machine Settings). Disable any PA plugin. |
+
+### 6. Print
 
 Set your slicer temperature to the filament's recommended base temp, slice, and print. The system handles dynamic adjustments during the print.
-
-**Important:** Disable Pressure Advance in your slicer — this system handles PA dynamically.
 
 ## Heater Auto-Scaling
 
