@@ -1,6 +1,6 @@
 # Dynamic Z-Window (DynZ)
 
-DynZ is an intelligent learning system that detects and adapts to challenging print geometries like convex surfaces, domes, and spheres.
+DynZ is an adaptive system that detects and responds to challenging print geometries like convex surfaces, domes, and spheres.
 
 ## The Problem
 
@@ -13,7 +13,7 @@ This combination can cause thermal lag, inconsistent extrusion, and surface arti
 
 ## How DynZ Works
 
-1. **Learning**: DynZ divides Z-height into bins (default 2mm) and tracks stress conditions in each
+1. **Tracking**: DynZ divides Z-height into bins (default 2mm) and tracks stress conditions in each
 2. **Detection**: When speed is high, flow is low, and heater PWM is high simultaneously, it's flagged as stress
 3. **Scoring**: Each Z bin accumulates a stress score over time (scores decay when conditions improve)
 4. **Relief**: When a bin's score exceeds the threshold, DynZ reduces acceleration to ease thermal demand
@@ -74,7 +74,7 @@ variable_dynz_accel_relief: 3200      # mm/s² (lower = gentler moves)
 | `dynz_accel_relief` | Acceleration limit during stress (accel_limit method) | 3200 |
 | `dynz_base_accel` | Stored base accel before relief is applied (internal) | 0 |
 
-> **Note:** DynZ scores are only persisted to disk when the score changes by more than 0.5, reducing SD card wear while still maintaining the learning history.
+> **Note:** DynZ scores are only persisted to disk when the score changes by more than 0.5, reducing SD card wear while still maintaining the stress history.
 
 ## Monitoring
 
@@ -109,7 +109,7 @@ Mode: CLAMPING (convex stress detected)
 | Mode | Description |
 |------|-------------|
 | **IDLE** | No stress detected, bin score is 0 |
-| **LEARNING** | Stress detected, accumulating score (not yet at threshold) |
+| **TRACKING** | Stress detected, accumulating score (not yet at threshold) |
 | **CLAMPING** | Score exceeded threshold, acceleration relief active |
 
 ## How Stress Detection Works
@@ -180,4 +180,4 @@ When print logging is enabled, DynZ state is captured in the CSV:
 - `accel`: Current acceleration value
 - `banding_risk`: Includes DynZ transitions in the risk score
 
-The dashboard's DynZ tab visualises activation percentage and stress scores by Z-height across prints. See [ANALYSIS.md](ANALYSIS.md) for details.
+The dashboard's DynZ tab visualises activation percentage and stress scores by Z-height. See [ANALYSIS.md](ANALYSIS.md) for details.

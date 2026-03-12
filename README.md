@@ -39,7 +39,7 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
-- **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
+- **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
 - **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change for better print quality.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
@@ -193,7 +193,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 | `AT_START MATERIAL=X` | Enable (call in PRINT_START) |
 | `AT_END` | Disable (call in PRINT_END) |
 | `AT_STATUS` | Show current state |
-| `AT_DYNZ_STATUS` | Show DynZ learning state |
+| `AT_DYNZ_STATUS` | Show DynZ stress zone status |
 | `AT_SET_PA MATERIAL=X PA=Y` | Override PA for a material |
 | `AT_LIST_PA` | Show all PA values |
 

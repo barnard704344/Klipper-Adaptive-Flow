@@ -102,7 +102,7 @@ Thermal faults: 0
 
 ### `AT_DYNZ_STATUS`
 
-Display Dynamic Z-Window (DynZ) learning status.
+Display Dynamic Z-Window (DynZ) stress zone status.
 
 **Example output:**
 ```
@@ -117,7 +117,7 @@ Accel reduction: 30%
 ```
 
 **Notes:**
-- Shows learned stress zones
+- Shows detected stress zones
 - Displays current acceleration reduction
 - Use to monitor dome/sphere detection
 
@@ -292,7 +292,7 @@ Manually disable adaptive temperature control.
 Reset all runtime state variables to defaults.
 
 **Notes:**
-- Clears DynZ learning data for current print
+- Clears DynZ stress data for current print
 - Resets thermal fault counters
 - Does **not** clear saved PA values
 - Use if the system gets into an unexpected state
@@ -458,7 +458,7 @@ AT_LIST_PA  # Verify it was saved
 ```gcode
 # During print, in console
 AT_STATUS        # Check overall behavior
-AT_DYNZ_STATUS   # Check if DynZ is learning
+AT_DYNZ_STATUS   # Check DynZ stress zones
 ```
 
 ### Testing Material Profiles

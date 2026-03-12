@@ -1,6 +1,6 @@
 # Adaptive Flow Dashboard
 
-A browser-based dashboard for analyzing your Klipper Adaptive Flow prints. View print health, detect banding culprits, diagnose slicer settings, and compare materials — all from any device on your network. **No SSH required.**
+A browser-based dashboard for analyzing your Klipper Adaptive Flow prints. View print health, detect banding culprits, and diagnose slicer settings — all from any device on your network. **No SSH required.**
 
 ```
 http://<printer-ip>:7127
@@ -20,21 +20,9 @@ The page loads with your most recent print selected. If a print is currently in 
 
 ## Dashboard Layout
 
-### Material Selector
-
-At the top of the page, buttons let you switch views:
-
-| Button | What It Shows |
-|--------|---------------|
-| **Per-Print** | Analysis of a single selected print session (default) |
-| **PLA Aggregate** | Cross-print analysis aggregated across all PLA sessions |
-| **PETG Aggregate** | Cross-print analysis aggregated across all PETG sessions |
-
-Material buttons appear dynamically based on the materials found in your log directory. Aggregate views combine data from every session of that material to surface patterns that aren't visible in a single print.
-
 ### Summary Cards
 
-Six cards along the top give an at-a-glance health overview. Each card has a **?** tooltip explaining the metric, what "good" looks like, and when to worry:
+Five cards along the top give an at-a-glance health overview. Each card has a **?** tooltip explaining the metric, what "good" looks like, and when to worry:
 
 | Card | What It Shows |
 |------|---------------|
@@ -44,8 +32,6 @@ Six cards along the top give an at-a-glance health overview. Each card has a **?
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
 | **DynZ** | Percentage of layers where DynZ stress relief was active |
 | **Banding** | Number of high-risk events and the diagnosed culprit |
-
-In aggregate mode, cards display weighted averages across all prints of that material, with print count and total duration.
 
 ### Tab Navigation
 
@@ -82,20 +68,6 @@ The dashboard detects active prints automatically:
 - Once the print finishes, the view seamlessly switches to the completed summary
 
 For completed prints, optional auto-refresh runs at 30-second intervals.
-
-### Material Aggregate Analysis
-
-Aggregate views combine data from all sessions of a given material type. This surfaces patterns that may not be obvious in any single print:
-
-- **Weighted averages** — boost, heater duty, and other metrics weighted by sample count per session
-- **Combined banding analysis** — total high-risk events, accel changes, PA changes, and DynZ transitions across all prints
-- **Merged Z-height heatmap** — Z-banding data pooled from every session
-- **Heater headroom across prints** — flow-vs-PWM brackets for the full material history
-- **PA stability overview** — aggregate PA range, oscillation zone count
-- **DynZ combined map** — activation patterns merged from all sessions
-- **Speed/flow distribution** — how you typically print with this material
-
----
 
 ## Interactive Charts
 
@@ -134,8 +106,6 @@ Fewer distinct values = fewer banding-causing transitions.
 | Too many distinct accels | 5+ different values causing constant transitions | Informational — review settings |
 
 **Settings Tables** — all acceleration, speed, and other quality-related settings extracted from the G-code, organised into Acceleration, Speed, and Other categories.
-
-> **Note:** The Slicer tab is hidden in aggregate mode since each print has its own G-code file. It only appears when viewing an individual print session.
 
 ### Timeline Tab
 
@@ -181,7 +151,6 @@ The dashboard exposes a JSON API:
 |----------|--------|-------------|
 | `/api/data` | GET | Latest print data (or live print if active) |
 | `/api/data?session=<file>` | GET | Data for a specific completed print |
-| `/api/material-data?material=PLA` | GET | Aggregate analysis for a given material |
 | `/api/apply-config` | POST | Apply a config change (JSON body: `{variable, value}`) |
 
 The `/api/data` response includes `slicer_settings` (dict of all extracted G-code settings) and `slicer_diagnosis` (accel fingerprint, issues, suggestions).
@@ -237,7 +206,7 @@ Score ≥5 = high-risk event (likely visible artifact on the part).
 
 ### Banding Culprits
 
-When enough prints are analyzed, the dashboard diagnoses the most common banding cause:
+When banding events are detected, the dashboard diagnoses the most likely cause:
 
 | Culprit | Cause | Suggested Fix |
 |---------|-------|---------------|
@@ -360,7 +329,7 @@ python3 analyze_print.py
 # Analyze a specific print
 python3 analyze_print.py /path/to/print_summary.json
 
-# Multi-print banding analysis (last N prints)
+# Banding analysis (last N prints)
 python3 analyze_print.py --count 10
 python3 analyze_print.py --count 10 --material PLA
 
