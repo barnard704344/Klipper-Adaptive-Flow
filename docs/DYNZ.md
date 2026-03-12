@@ -17,7 +17,7 @@ This combination can cause thermal lag, inconsistent extrusion, and surface arti
 2. **Detection**: When speed is high, flow is low, and heater PWM is high simultaneously, it's flagged as stress
 3. **Scoring**: Each Z bin accumulates a stress score over time (scores decay when conditions improve)
 4. **Relief**: When a bin's score exceeds the threshold, DynZ reduces acceleration to ease thermal demand
-5. **Memory**: Stress patterns persist across layers, so the system "remembers" where domes start
+5. **Memory**: Stress scores persist across prints via Klipper's `[save_variables]`, so the system remembers where domes start — even between separate print jobs
 
 ## Configuration
 

@@ -177,7 +177,9 @@ variable_speed_boost_threshold: 100.0  # Linear speed (mm/s) to trigger boost
 variable_speed_boost_k: 0.08           # Default °C per mm/s above threshold
 ```
 
-Example at 300mm/s: `(300-100) × 0.08 = +16°C` boost
+Speed boost is a secondary component weighted at 50% (like lookahead boost), since the primary flow boost usually dominates:
+
+Example at 300mm/s: `(300-100) × 0.08 × 0.5 = +8°C` boost
 
 ### Flow Smoothing
 

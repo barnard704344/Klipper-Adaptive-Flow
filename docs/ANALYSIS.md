@@ -27,11 +27,10 @@ Five cards along the top give an at-a-glance health overview. Each card has a **
 | Card | What It Shows |
 |------|---------------|
 | **Material** | Filament type and print duration (or "PRINTING" + elapsed time during a live print) |
-| **Extrusion Quality** | Physics-based 0–100 score covering thermal stability, flow steadiness, heater reserve, and pressure consistency |
+| **Extrusion Quality** | Weighted 0–100 composite score covering thermal stability, flow steadiness, heater reserve, and pressure consistency |
 | **Temp Boost** | Average and max temperature boost applied by Adaptive Flow |
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
 | **DynZ** | Percentage of layers where DynZ stress relief was active |
-| **Banding** | Number of high-risk events and the diagnosed culprit |
 
 ### Tab Navigation
 
@@ -255,14 +254,14 @@ An oscillation zone is a period where PA changed ≥4 times within 10 seconds. T
 
 ### Extrusion Quality Score (0–100)
 
-A physics-based composite score evaluating four aspects of print health:
+A weighted composite score evaluating four aspects of print health:
 
 | Component | Weight | What It Measures |
 |-----------|--------|------------------|
-| **Thermal** | 25% | How well actual temperature tracked target (deviation %, in-band %) |
-| **Flow** | 25% | Flow rate steadiness (jitter, big jumps as % of samples) |
-| **Heater** | 25% | Heater reserve capacity (PWM saturation %, avg PWM) |
-| **Pressure** | 25% | PA transient impact (frequency and severity of PA-related artifacts) |
+| **Thermal** | 35% | How well actual temperature tracked target (deviation %, in-band %) |
+| **Flow** | 30% | Flow rate steadiness (jitter, big jumps as % of samples) |
+| **Heater** | 20% | Heater reserve capacity (PWM saturation %, avg PWM) |
+| **Pressure** | 15% | PA transient impact (frequency and severity of PA-related artifacts) |
 
 Each component scores 0–100 independently, then they're combined into the overall score. The weakest component is highlighted in the dashboard summary card. Scores above 80 indicate good print quality; below 60 suggests actionable problems.
 
