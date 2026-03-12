@@ -1,61 +1,93 @@
 # =============================================================================
-# SLICER SETUP (required)
+# PRINT_START / PRINT_END — Ready-to-use template for Adaptive Flow
 # =============================================================================
-# In your slicer's "Start G-code", add:
-#   PRINT_START BED=[first_layer_bed_temperature] EXTRUDER=[first_layer_temperature] MATERIAL={filament_type[0]}
 #
-# IMPORTANT: Disable Pressure Advance in your slicer - Adaptive Flow handles it.
-#   PrusaSlicer/OrcaSlicer: Printer Settings → Custom G-code → clear PA commands
+# HOW TO USE
+# ----------
+# 1. Copy the macros below into your printer.cfg (or a [include] file).
+# 2. Search for "# >>> EDIT" — those are the ONLY lines you need to change.
+# 3. Set your slicer's Start G-code to:
+#      PRINT_START BED=[first_layer_bed_temperature] EXTRUDER=[first_layer_temperature] MATERIAL={filament_type[0]}
+#    (Cura users: use {material_bed_temperature_layer_0} and {material_print_temperature_layer_0})
+# 4. Set your slicer's End G-code to:
+#      PRINT_END
+#
+# IMPORTANT: Disable Pressure Advance in your slicer — Adaptive Flow handles it.
+#   PrusaSlicer/OrcaSlicer: Printer Settings → Custom G-code → remove any SET_PRESSURE_ADVANCE
 #   Cura: Remove any SET_PRESSURE_ADVANCE from start g-code
 #   SuperSlicer: Printer Settings → Firmware → disable "use firmware PA"
+#
 # =============================================================================
 
+
+# ─────────────────────────────────────────────────────────────
+#  PRINT_START
+# ─────────────────────────────────────────────────────────────
 [gcode_macro PRINT_START]
 gcode:
-    # Get params from slicer
     {% set BED = params.BED|default(60)|int %}
     {% set EXTRUDER = params.EXTRUDER|default(200)|int %}
-    
-    # Home
-    G28
-    G90
-    
-    # Heat bed
-    M140 S{BED}
-    M190 S{BED}
-    
-    # Optional: Bed mesh
+
+    # ── Stage 1: Home & heat bed ──────────────────────────────
+    G28                          # Home all axes
+    G90                          # Absolute positioning
+    M140 S{BED}                  # Start heating bed (non-blocking)
+    M104 S150                    # Preheat nozzle to 150 °C to soften ooze
+    M190 S{BED}                  # Wait for bed to reach temperature
+
+    # ── Stage 2: Bed levelling & mesh ─────────────────────────
+    # >>> EDIT: Uncomment ONE levelling method that matches your printer.
+    #           Delete or leave commented the ones you don't use.
+    #
+    # QUAD_GANTRY_LEVEL           # Voron 2.4 / Trident quad-gantry
+    # Z_TILT_ADJUST               # V-Core, Switchwire, multi-Z printers
+    # G28 Z                       # Re-home Z after levelling (recommended)
+
+    # >>> EDIT: Uncomment if you use a bed mesh.
+    # BED_MESH_CLEAR
     # BED_MESH_CALIBRATE ADAPTIVE=1
-    
-    # Heat nozzle
-    M109 S{EXTRUDER}
-    
-    # Optional: Purge line
-    # G1 X10 Y10 Z0.3 F3000
-    # G1 X100 E10 F1500
-    # G92 E0
-    
-    # Enable Adaptive Flow (pass MATERIAL from slicer)
+
+    # ── Stage 3: Heat nozzle ──────────────────────────────────
+    M109 S{EXTRUDER}             # Wait for nozzle to reach temperature
+
+    # ── Stage 4: Purge ────────────────────────────────────────
+    # >>> EDIT: Adjust the purge line coordinates for your bed size,
+    #           or replace with your preferred purge routine (KAMP, bucket, etc.).
+    G90
+    G92 E0
+    G1 X10 Y10 Z0.3 F3000       # Move to purge start position
+    G1 X100 E10 F1500            # Draw purge line
+    G92 E0                       # Reset extruder
+
+    # ── Stage 5: Adaptive Flow ────────────────────────────────
+    # Do NOT edit this line — it activates the system using your slicer's material.
     AT_START MATERIAL={params.MATERIAL}
 
 
+# ─────────────────────────────────────────────────────────────
+#  PRINT_END
+# ─────────────────────────────────────────────────────────────
 [gcode_macro PRINT_END]
 gcode:
-    # Disable Adaptive Flow first (saves learned values)
+    # Save learned DynZ values and disable Adaptive Flow
     AT_END
-    
-    # Turn off heaters
+
+    # Turn off heaters and fan
     TURN_OFF_HEATERS
     M107
-    
-    # Retract and raise
+
+    # Safe retract & Z raise
+    {% set max_z = printer.toolhead.axis_maximum.z|float %}
+    {% set cur_z = printer.toolhead.position.z|float %}
+    {% set z_hop = [10.0, max_z - cur_z]|min %}
     G91
-    G1 E-2 F2700
-    G1 Z10 F3000
+    G1 E-2 F2700                 # Retract filament
+    G1 Z{z_hop} F3000            # Raise Z safely
     G90
-    
-    # Present print
+
+    # >>> EDIT: Set the park position for your bed size.
+    #           X near 0 keeps the nozzle accessible; Y at max presents the print.
     G1 X10 Y200 F6000
-    
+
     # Motors off
     M84
