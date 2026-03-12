@@ -1829,14 +1829,13 @@ display:flex;align-items:center;gap:4px}
 .cd .tip{position:relative;display:inline-flex;align-items:center;justify-content:center;
 width:14px;height:14px;border-radius:50%;background:#30363d;color:#8b949e;
 font-size:9px;cursor:help;flex-shrink:0}
-.cd .tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);
-left:50%;transform:translateX(-50%);background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
-border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.4;white-space:normal;
-width:240px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
-box-shadow:0 4px 12px rgba(0,0,0,.4)}
-.cd .tip:hover::before{content:'';position:absolute;bottom:calc(100% + 2px);
-left:50%;transform:translateX(-50%);border:4px solid transparent;
-border-top-color:#30363d;z-index:11}
+.fly-tip{position:fixed;background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
+border-radius:6px;padding:8px 12px;font-size:11px;line-height:1.4;white-space:normal;
+width:260px;z-index:99999;text-transform:none;letter-spacing:0;font-weight:400;
+box-shadow:0 4px 12px rgba(0,0,0,.4);pointer-events:none;
+transition:opacity .15s;opacity:0}
+.fly-tip.show{opacity:1}
+.fly-tip::after{content:'';position:absolute;border:5px solid transparent}
 .tabs{display:flex;gap:0;padding:0 24px;border-bottom:1px solid #30363d;
 background:#161b22;overflow-x:auto}
 .tab{padding:10px 16px;font-size:13px;color:#8b949e;cursor:pointer;
@@ -1854,14 +1853,6 @@ padding:16px;margin-bottom:16px}
 .tab-tip{display:inline-flex;align-items:center;justify-content:center;
 width:13px;height:13px;border-radius:50%;background:#30363d;color:#484f58;
 font-size:8px;cursor:help;flex-shrink:0}
-.tab-tip:hover::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);
-left:50%;transform:translateX(-50%);background:#1c2128;color:#c9d1d9;border:1px solid #30363d;
-border-radius:6px;padding:8px 12px;font-size:11px;line-height:1.4;white-space:normal;
-width:260px;z-index:10;text-transform:none;letter-spacing:0;font-weight:400;
-box-shadow:0 4px 12px rgba(0,0,0,.4)}
-.tab-tip:hover::before{content:'';position:absolute;top:calc(100% + 4px);
-left:50%;transform:translateX(-50%);border:4px solid transparent;
-border-bottom-color:#30363d;z-index:11}
 canvas{max-height:350px}
 .w{color:#d29922}.d{color:#f85149}.g{color:#3fb950}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -1952,6 +1943,28 @@ try{D=__DASHBOARD_DATA__}catch(e){
 document.getElementById('_err').style.display='block';
 document.getElementById('_err').textContent='Data parse error: '+e;throw e}
 try{
+// --- Fly-out tooltip system ---
+var _tip=document.createElement('div');_tip.className='fly-tip';document.body.appendChild(_tip);
+var _tipT=null;
+function showTip(el){
+var t=el.getAttribute('data-tip');if(!t)return;
+_tip.textContent=t;
+var r=el.getBoundingClientRect();
+var above=r.top>180;
+_tip.style.left='0';_tip.style.top='0';_tip.classList.add('show');
+var tw=_tip.offsetWidth,th=_tip.offsetHeight;
+var lx=r.left+r.width/2-tw/2;
+if(lx<4)lx=4;if(lx+tw>window.innerWidth-4)lx=window.innerWidth-tw-4;
+if(above){_tip.style.top=(r.top-th-8)+'px';_tip.style.setProperty('--arr','bottom');
+_tip.style.cssText+='';}
+else{_tip.style.top=(r.bottom+8)+'px';}
+_tip.style.left=lx+'px';
+}
+function hideTip(){_tip.classList.remove('show');}
+document.addEventListener('mouseover',function(e){
+var el=e.target.closest('[data-tip]');if(el){clearTimeout(_tipT);showTip(el);}});
+document.addEventListener('mouseout',function(e){
+var el=e.target.closest('[data-tip]');if(el){_tipT=setTimeout(hideTip,80);}});
 var isLive=D.is_live||false;
 var isAgg=D.is_aggregate||false;
 var sel=document.getElementById('ss');
@@ -2117,6 +2130,14 @@ else if(at==='dz')rDZ();
 else if(at==='ds')rDist()}
 
 function rSlicer(){
+if(isLive&&!D.slicer_settings){
+ca.innerHTML='<div class="box" style="text-align:center;padding:32px 16px">'+
+'<div style="font-size:28px;margin-bottom:12px">\u2702\ufe0f</div>'+
+'<div style="font-size:15px;font-weight:600;color:#c9d1d9;margin-bottom:8px">Slicer analysis available after the print finishes</div>'+
+'<div style="font-size:12px;color:#8b949e;max-width:440px;margin:0 auto;line-height:1.5">'+
+'Slicer settings are read from the end of the G-code file once the print completes. '+
+'Check back when the print is done for a full profile breakdown and recommendations.</div></div>';
+return}
 var ss=D.slicer_settings;
 if(!ss){
 ca.innerHTML='<div class="box"><p>No slicer settings found. The G-code file may have been deleted, or this slicer does not embed settings in the footer.</p>'+
