@@ -41,9 +41,9 @@ Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 - **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications and validated across direct-drive setups. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
-- **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change. No guesswork — it tells you which slicer setting is causing banding and what value to use instead.
+- **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change for better print quality.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
-- **Scope:** Adaptive Flow solves *thermal* banding (temperature swings, PA drift with viscosity, flow spikes). It does not solve *mechanical* banding from Z-wobble, belt tension, or frame resonance — those require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
+- **Scope:** Adaptive Flow solves *thermal* print quality issues (temperature swings, PA drift with viscosity, flow spikes). Mechanical issues like Z-wobble, belt tension, or frame resonance require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
 
 ## Quick Start
 
@@ -135,7 +135,7 @@ Custom materials: copy any profile to `material_profiles_user.cfg` and adjust.
 Open `http://<printer-ip>:7127` in your browser. No SSH, no terminal.
 
 The dashboard shows:
-- **Slicer diagnostics** — the most useful tab. Extracts settings directly from your G-code, cross-references acceleration values with banding data, and tells you exactly which slicer setting to change and what value to use. This is the fastest way to fix print quality issues.
+- **Slicer diagnostics** — the most useful tab. Extracts settings directly from your G-code, cross-references acceleration values with print data, and tells you exactly which slicer setting to change and what value to use. This is the fastest way to fix print quality issues.
 - **Live print monitoring** — temperature, flow, PA, and heater PWM plotted over the entire print timeline
 - **Extrusion quality score** — physics-based 0–100 rating covering thermal stability, flow steadiness, heater reserve, and pressure consistency
 - **Heater analysis** — shows power usage at different flow rates, so you can see if your heater is the bottleneck
@@ -168,8 +168,6 @@ All adjustments stay within safe limits defined by your hardware.
 - ~~Manually override anything for heater upgrades~~
 
 For most users — especially those switching from a Standard to HF nozzle or changing filament brands — Adaptive Flow handles everything automatically. However, for best results on **Voron, CoreXY, and other precision builds**, you should still calibrate your extruder's `rotation_distance` and run a one-time PA baseline test to set your starting value with `AT_SET_PA MATERIAL=X PA=Y`.
-
-> **Banding troubleshooting:** If you're still seeing horizontal banding after enabling Adaptive Flow, many common causes (Z-axis wobble, input shaper resonance, belt tension) are mechanical and outside the scope of any software thermal tool. See the [Banding Troubleshooting section →](docs/CONFIGURATION.md#banding-troubleshooting) for a step-by-step diagnosis guide.
 
 ## Advanced (Optional)
 
