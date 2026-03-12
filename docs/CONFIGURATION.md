@@ -4,7 +4,7 @@ Detailed configuration options for Klipper Adaptive Flow.
 
 ## Quick Start
 
-Most users only need to set two options in `auto_flow_user.cfg`:
+Most users only need to set two options in `~/printer_data/config/auto_flow_user.cfg`:
 
 ```ini
 variable_use_high_flow_nozzle: True   # False for standard Revo nozzles
@@ -139,7 +139,7 @@ For PLA specifically, more granular temperature recommendations based on exact f
 
 ## Advanced Configuration
 
-Edit these variables in `auto_flow_user.cfg` if needed.
+Edit these variables in `~/printer_data/config/auto_flow_user.cfg` if needed.
 
 ### HF Melt Zone Compensation
 
