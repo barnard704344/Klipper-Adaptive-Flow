@@ -243,6 +243,26 @@ if [ -f "$USER_CFG" ]; then
     fi
 fi
 
+# Ensure heater_wattage is present and uncommented in user config
+# Older templates had it commented out, so existing users may be missing it.
+# The default (40W) is used if absent, but having it visible encourages
+# users to set it correctly for their hardware.
+if [ -f "$USER_CFG" ]; then
+    if grep -q "^variable_heater_wattage:" "$USER_CFG" 2>/dev/null; then
+        : # already uncommented — nothing to do
+    elif grep -q "^# *variable_heater_wattage:" "$USER_CFG" 2>/dev/null; then
+        # Present but commented — uncomment it
+        sed -i 's/^# *variable_heater_wattage:/variable_heater_wattage:/' "$USER_CFG"
+        echo "[OK] Uncommented heater_wattage in auto_flow_user.cfg (was commented)"
+    else
+        # Missing entirely — add it after the nozzle type line
+        if grep -q "^variable_use_high_flow_nozzle:" "$USER_CFG" 2>/dev/null; then
+            sed -i '/^variable_use_high_flow_nozzle:/a\# Heater cartridge wattage: 40 = stock Revo, 60 = upgrade\nvariable_heater_wattage: 40' "$USER_CFG"
+            echo "[OK] Added heater_wattage to auto_flow_user.cfg (default: 40W)"
+        fi
+    fi
+fi
+
 # Update printer.cfg automatically
 echo ""
 echo "[>>] Checking printer.cfg configuration..."
