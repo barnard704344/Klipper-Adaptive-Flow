@@ -75,20 +75,23 @@ PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperat
 
 ### 4. Add Macros to printer.cfg
 
+Copy one of the ready-to-use templates into your `printer.cfg` (or a `[include]` file):
+
+| Template | For |
+|----------|-----|
+| [PRINT_START.example](PRINT_START.example) | **Any printer** — generic, minimal |
+| [PRINT_START_VORON24.example](PRINT_START_VORON24.example) | **Voron 2.4 / Trident** — QGL, rapid_scan mesh, filament sensor |
+
+Both templates have `# >>> EDIT` markers on every line you need to customise. Everything else works as-is.
+
+The only required integration points are:
 ```ini
-[gcode_macro PRINT_START]
-gcode:
-    # ... your heating, homing, leveling ...
-    AT_START MATERIAL={params.MATERIAL|default("PLA")}
+# At the end of PRINT_START, after heating:
+AT_START MATERIAL={params.MATERIAL|default("PLA")}
 
-[gcode_macro PRINT_END]
-gcode:
-    AT_END
-    TURN_OFF_HEATERS
-    # ... your cooldown, park, etc ...
+# At the start of PRINT_END, before anything else:
+AT_END
 ```
-
-See [PRINT_START.example](PRINT_START.example) for a complete example.
 
 ### 5. Print
 
