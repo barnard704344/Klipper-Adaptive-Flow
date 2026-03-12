@@ -21,7 +21,7 @@ Complete reference for all Klipper Adaptive Flow commands.
 Start adaptive temperature control. Call this after heating in your `PRINT_START` macro.
 
 **Parameters:**
-- `MATERIAL=` - Material type (e.g., PLA, PETG, ABS). If omitted, auto-detects from extruder temperature.
+- `MATERIAL=` - **Required.** Material type (e.g., PLA, PETG, ABS). The print will error if omitted.
 
 **Example:**
 ```gcode

@@ -281,9 +281,9 @@ variable_temp_wait_tolerance: 5.0          # Temperature tolerance (°C)
 
 ## Slicer Setup
 
-### Material Parameter (Optional)
+### Material Parameter (Required)
 
-Pass the material from your slicer for accurate profile selection. If omitted, the system auto-detects from extruder temperature.
+Pass the material from your slicer so the correct profile is loaded. The print will error if `MATERIAL=` is missing — temperature-based auto-detection was removed because temperature ranges overlap (PETG/ABS/ASA all print near 240–250°C).
 
 **OrcaSlicer / PrusaSlicer / SuperSlicer:**
 ```gcode
