@@ -75,7 +75,7 @@ from af_analysis import (
     find_latest_summary, load_summary, print_single_summary,
     find_recent_sessions,
     compute_extrusion_quality,
-    analyze_csv_for_banding, aggregate_banding_analysis,
+    analyze_csv_for_banding,
     _diagnose_fix, print_banding_report,
     analyze_z_banding, _bar, print_z_map,
     print_trends,
@@ -474,7 +474,7 @@ def generate_recommendations(data):
     # Detect when part cooling fan overwhelms the heater: PWM maxes out
     # and temp drops below target specifically when fan speed is high.
     timeline = data.get('timeline') or []
-    if timeline and not data.get('is_aggregate'):
+    if timeline:
         sat_fan = []      # fan % during saturation samples
         sat_drops = []     # temp drop (°C) during saturation
         normal_fan = []    # fan % when heater is coping fine
@@ -1208,321 +1208,6 @@ def annotate_recommendations(recs, log_dir, material=None):
     return recs
 
 
-# =========================================================================
-# MATERIAL-AGGREGATED ANALYSIS
-# =========================================================================
-
-def _weighted_avg(values, weights):
-    """Return weighted average, or 0 if no data."""
-    total_w = sum(weights)
-    if total_w == 0:
-        return 0
-    return sum(v * w for v, w in zip(values, weights)) / total_w
-
-
-def _merge_headroom(all_headroom):
-    """Merge heater headroom dicts from multiple prints."""
-    merged = {}
-    for hr in all_headroom:
-        for bracket, data in hr.items():
-            if bracket not in merged:
-                merged[bracket] = {'count': 0, 'sum_avg_pwm': 0, 'sum_p95': 0,
-                                   'sum_max': 0, 'total_count': 0}
-            n = data.get('count', 0)
-            merged[bracket]['total_count'] += n
-            merged[bracket]['count'] += 1
-            merged[bracket]['sum_avg_pwm'] += data.get('avg_pwm', 0) * n
-            merged[bracket]['sum_p95'] += data.get('p95_pwm', 0) * n
-            merged[bracket]['sum_max'] = max(merged[bracket]['sum_max'],
-                                             data.get('max_pwm', 0))
-    result = {}
-    for bracket, m in merged.items():
-        tc = m['total_count']
-        if tc == 0:
-            continue
-        result[bracket] = {
-            'count': tc,
-            'avg_pwm': round(m['sum_avg_pwm'] / tc, 4),
-            'p95_pwm': round(m['sum_p95'] / tc, 4),
-            'max_pwm': m['sum_max'],
-        }
-    return result
-
-
-def _merge_z_banding(all_zb):
-    """Merge z-banding dicts from multiple prints."""
-    merged = {}
-    for zb in all_zb:
-        for zkey, data in zb.items():
-            if zkey not in merged:
-                merged[zkey] = {'samples': 0, 'risk_sum': 0, 'high_risk': 0,
-                                'accel_changes': 0, 'pa_changes': 0,
-                                'dynz_transitions': 0, 'events': []}
-            merged[zkey]['samples'] += data.get('samples', 0)
-            merged[zkey]['risk_sum'] += data.get('risk_sum', 0)
-            merged[zkey]['high_risk'] += data.get('high_risk', 0)
-            merged[zkey]['accel_changes'] += data.get('accel_changes', 0)
-            merged[zkey]['pa_changes'] += data.get('pa_changes', 0)
-            merged[zkey]['dynz_transitions'] += data.get('dynz_transitions', 0)
-            # Keep a capped list of events
-            merged[zkey]['events'].extend(data.get('events', [])[:5])
-    return merged
-
-
-def _merge_speed_flow(all_sf):
-    """Merge speed/flow distribution dicts from multiple prints."""
-    merged = {'speed': {}, 'flow': {}}
-    for sf in all_sf:
-        for kind in ('speed', 'flow'):
-            for bracket, data in sf.get(kind, {}).items():
-                if bracket not in merged[kind]:
-                    merged[kind][bracket] = {'count': 0, 'pct_sum': 0,
-                                             'boost_sum': 0, 'pa_sum': 0,
-                                             'pwm_sum': 0, 'n': 0}
-                n = data.get('count', 0)
-                merged[kind][bracket]['count'] += n
-                merged[kind][bracket]['n'] += 1
-                merged[kind][bracket]['pct_sum'] += data.get('pct', 0)
-                merged[kind][bracket]['boost_sum'] += data.get('avg_boost', 0) * n
-                merged[kind][bracket]['pa_sum'] += data.get('avg_pa', 0) * n
-                merged[kind][bracket]['pwm_sum'] += data.get('avg_pwm', 0) * n
-    result = {'speed': {}, 'flow': {}}
-    for kind in ('speed', 'flow'):
-        for bracket, m in merged[kind].items():
-            tc = m['count']
-            if tc == 0:
-                continue
-            result[kind][bracket] = {
-                'count': tc,
-                'pct': round(m['pct_sum'] / m['n'], 1) if m['n'] else 0,
-                'avg_boost': round(m['boost_sum'] / tc, 1),
-                'avg_pa': round(m['pa_sum'] / tc, 4),
-                'avg_pwm': round(m['pwm_sum'] / tc, 3),
-            }
-    return result
-
-
-def collect_material_overview(log_dir, material):
-    """Aggregate analysis data across all prints of a given material.
-
-    Returns a dict with the same shape as collect_dashboard_data() but with
-    merged/averaged values across all sessions of *material*.
-    """
-    sessions = find_recent_sessions(log_dir, count=50, material=material)
-    if not sessions:
-        return {'error': f'No sessions found for {material}',
-                'material': material, 'session_count': 0}
-
-    n = len(sessions)
-    summaries = [s['summary'] for s in sessions]
-    csv_files = [s['csv_file'] for s in sessions]
-
-    # --- Aggregated summary stats (weighted by sample count) ---
-    samples_list = [s.get('samples', 1) for s in summaries]
-    total_samples = sum(samples_list)
-    total_duration = sum(s.get('duration_min', 0) for s in summaries)
-
-    agg_summary = {
-        'material': material,
-        'session_count': n,
-        'duration_min': round(total_duration, 1),
-        'samples': total_samples,
-        'avg_boost': round(_weighted_avg(
-            [s.get('avg_boost', 0) for s in summaries], samples_list), 1),
-        'max_boost': round(max((s.get('max_boost', 0) for s in summaries), default=0), 1),
-        'avg_pwm': round(_weighted_avg(
-            [s.get('avg_pwm', 0) for s in summaries], samples_list), 3),
-        'max_pwm': round(max((s.get('max_pwm', 0) for s in summaries), default=0), 2),
-        'avg_flow': round(_weighted_avg(
-            [s.get('avg_flow', 0) for s in summaries], samples_list), 1),
-        'max_flow': round(max((s.get('max_flow', 0) for s in summaries), default=0), 1),
-        'max_speed': round(max((s.get('max_speed', 0) for s in summaries), default=0), 1),
-        'avg_thermal_lag': round(_weighted_avg(
-            [s.get('avg_thermal_lag', 0) for s in summaries], samples_list), 2),
-        'dynz_active_pct': round(_weighted_avg(
-            [s.get('dynz_active_pct', 0) for s in summaries], samples_list), 1),
-        'banding_analysis': {
-            'high_risk_events': sum(
-                s.get('banding_analysis', {}).get('high_risk_events', 0)
-                for s in summaries),
-            'avg_high_risk_per_print': round(sum(
-                s.get('banding_analysis', {}).get('high_risk_events', 0)
-                for s in summaries) / n, 1),
-            'likely_culprit': _agg_most_common_culprit(summaries),
-        },
-    }
-
-    # --- Per-CSV deep analysis (heavier — only latest N) ---
-    MAX_CSVS = 5  # cap to avoid very slow aggregation on low-power hardware
-    recent_csvs = csv_files[:MAX_CSVS]
-
-    # Pre-load each CSV once (single I/O per file)
-    csv_row_cache = {c: load_csv_rows(c) for c in recent_csvs}
-
-    # Thermal lag
-    all_lag = [analyze_thermal_lag(c, rows=csv_row_cache[c]) for c in recent_csvs]
-    all_lag = [l for l in all_lag if l]
-    if all_lag:
-        lag_samples = [l.get('total_samples', 1) for l in all_lag]
-        agg_lag = {
-            'avg_lag': round(_weighted_avg(
-                [l['avg_lag'] for l in all_lag], lag_samples), 2),
-            'max_lag': round(max(l['max_lag'] for l in all_lag), 1),
-            'lag_pct': round(_weighted_avg(
-                [l['lag_pct'] for l in all_lag], lag_samples), 1),
-            'total_samples': sum(lag_samples),
-            'episodes': [],  # flatten top episodes
-        }
-        all_eps = []
-        for l in all_lag:
-            all_eps.extend(l.get('episodes', [])[:5])
-        all_eps.sort(key=lambda e: e.get('max_lag', 0), reverse=True)
-        agg_lag['episodes'] = all_eps[:10]
-    else:
-        agg_lag = None
-
-    # Heater headroom
-    all_hr = [analyze_heater_headroom(c, rows=csv_row_cache[c]) for c in recent_csvs]
-    all_hr_fmt = []
-    for hr in all_hr:
-        if hr:
-            all_hr_fmt.append({f"{k[0]}-{k[1]}": v for k, v in hr.items()})
-    agg_headroom = _merge_headroom(all_hr_fmt) if all_hr_fmt else None
-
-    # PA stability
-    all_pa = [analyze_pa_stability(c, rows=csv_row_cache[c]) for c in recent_csvs]
-    all_pa = [p for p in all_pa if p and 'pa_min' in p]
-    if all_pa:
-        pa_samples = [p.get('samples', 1) for p in all_pa]
-        agg_pa = {
-            'samples': sum(pa_samples),
-            'pa_min': round(min(p['pa_min'] for p in all_pa), 4),
-            'pa_max': round(max(p['pa_max'] for p in all_pa), 4),
-            'pa_range': round(max(p['pa_max'] for p in all_pa) -
-                              min(p['pa_min'] for p in all_pa), 4),
-            'pa_stdev': round(_weighted_avg(
-                [p['pa_stdev'] for p in all_pa], pa_samples), 5),
-            'change_count': sum(p.get('change_count', 0) for p in all_pa),
-            'oscillation_zones': [],
-        }
-        all_zones = []
-        for p in all_pa:
-            all_zones.extend(p.get('oscillation_zones', [])[:5])
-        all_zones.sort(key=lambda z: z.get('changes', 0), reverse=True)
-        agg_pa['oscillation_zones'] = all_zones[:15]
-    else:
-        agg_pa = None
-
-    # Z-banding
-    all_zb = []
-    for c in recent_csvs:
-        raw = analyze_z_banding(c, bin_size=0.5, rows=csv_row_cache[c])
-        all_zb.append({str(k): v for k, v in raw.items()})
-    agg_zb = _merge_z_banding(all_zb) if all_zb else {}
-
-    # DynZ zones
-    all_dz = []
-    for c in recent_csvs:
-        raw = analyze_dynz_zones(c, bin_size=0.5, rows=csv_row_cache[c])
-        all_dz.append({str(k): v for k, v in raw.items()})
-    agg_dynz = {}
-    for dz in all_dz:
-        for zk, data in dz.items():
-            if zk not in agg_dynz:
-                agg_dynz[zk] = {'samples': 0, 'active_sum': 0, 'transitions': 0,
-                                'accel_sum': 0, 'stress_sum': 0}
-            n_s = data.get('samples', 0)
-            agg_dynz[zk]['samples'] += n_s
-            agg_dynz[zk]['active_sum'] += data.get('active_pct', 0) * n_s
-            agg_dynz[zk]['transitions'] += data.get('transitions', 0)
-            agg_dynz[zk]['accel_sum'] += data.get('avg_accel', 0) * n_s
-            agg_dynz[zk]['stress_sum'] += data.get('avg_stress', 0) * n_s
-    for zk in agg_dynz:
-        s_n = agg_dynz[zk]['samples']
-        if s_n:
-            agg_dynz[zk] = {
-                'samples': s_n,
-                'active_pct': round(agg_dynz[zk]['active_sum'] / s_n, 1),
-                'transitions': agg_dynz[zk]['transitions'],
-                'avg_accel': round(agg_dynz[zk]['accel_sum'] / s_n),
-                'avg_stress': round(agg_dynz[zk]['stress_sum'] / s_n, 1),
-            }
-
-    # Speed/flow distribution
-    all_sf = []
-    for c in recent_csvs:
-        raw = analyze_speed_flow_distribution(c, rows=csv_row_cache[c])
-        if raw:
-            all_sf.append({
-                'speed': {f"{k[0]}-{k[1]}": v for k, v in raw['speed'].items()},
-                'flow': {f"{k[0]}-{k[1]}": v for k, v in raw['flow'].items()},
-            })
-    agg_sf = _merge_speed_flow(all_sf) if all_sf else None
-
-    # Trends (for the selected material)
-    trend_data = []
-    for s_info in reversed(sessions[:10]):
-        sm = s_info['summary']
-        ts = sm.get('start_time', '')
-        trend_data.append({
-            'date': ts[:10] if len(ts) >= 10 else ts,
-            'material': sm.get('material', ''),
-            'avg_boost': sm.get('avg_boost', 0),
-            'max_boost': sm.get('max_boost', 0),
-            'avg_pwm': sm.get('avg_pwm', 0),
-            'max_pwm': sm.get('max_pwm', 0),
-            'eq_score': None,
-        })
-
-    # Session list (this material only)
-    session_list = [
-        {
-            'filename': s['summary'].get('filename', ''),
-            'material': s['summary'].get('material', ''),
-            'start_time': s['summary'].get('start_time', ''),
-            'summary_file': os.path.basename(s['summary_file']),
-        }
-        for s in sessions
-    ]
-
-    data = {
-        'summary': agg_summary,
-        'timeline': [],  # no combined timeline for aggregate
-        'z_banding': agg_zb,
-        'thermal_lag': agg_lag,
-        'headroom': agg_headroom,
-        'pa_stability': agg_pa,
-        'dynz_zones': agg_dynz,
-        'speed_flow': agg_sf,
-        'trends': trend_data,
-        'sessions': session_list,
-        'selected_file': '',
-        'is_live': False,
-        'is_aggregate': True,
-        'aggregate_material': material,
-        'aggregate_sessions': n,
-        'boost_optimization': None,  # not available for aggregate view
-    }
-
-    # Generate recommendations from aggregated data
-    data['recommendations'] = generate_recommendations(data)
-    annotate_recommendations(data['recommendations'], log_dir, material)
-
-    return data
-
-
-def _agg_most_common_culprit(summaries):
-    """Find the most repeated banding culprit across summaries."""
-    counts = defaultdict(int)
-    for s in summaries:
-        c = s.get('banding_analysis', {}).get('likely_culprit', '')
-        if c and c != '-' and c.lower() != 'none':
-            counts[c] += 1
-    if not counts:
-        return 'none'
-    return max(counts, key=counts.get)
-
-
 def collect_dashboard_data(log_dir, summary_path=None, material=None):
     """Gather all analysis data for the web dashboard."""
     data = {
@@ -1530,19 +1215,9 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         'thermal_lag': None, 'headroom': None, 'pa_stability': None,
         'dynz_zones': {}, 'speed_flow': None, 'trends': None,
         'sessions': [], 'selected_file': '', 'is_live': False,
-        'materials': [],
     }
 
     all_sessions = find_recent_sessions(log_dir, count=50, material=material)
-
-    # Build list of unique materials across all sessions (unfiltered)
-    all_unfiltered = find_recent_sessions(log_dir, count=100)
-    mat_set = set()
-    for s in all_unfiltered:
-        m = (s['summary'].get('material') or '').strip().upper()
-        if m:
-            mat_set.add(m)
-    data['materials'] = sorted(mat_set)
 
     data['sessions'] = [
         {
@@ -2645,31 +2320,6 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif parsed.path == '/api/material-data':
-            # Aggregated data for a single material across all prints
-            mat = params.get('material', [None])[0]
-            if not mat:
-                data = {'error': 'material parameter required'}
-            else:
-                mat_upper = mat.strip().upper()
-                cache_key = f"mat_data:{mat_upper}"
-                data = _cache_get(cache_key)
-                if data is None:
-                    try:
-                        data = collect_material_overview(self.log_dir, mat_upper)
-                    except Exception as exc:
-                        import traceback
-                        traceback.print_exc()
-                        data = {'error': str(exc)}
-                    _cache_set(cache_key, data)
-            payload = json.dumps(data, default=str).encode('utf-8', errors='replace')
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Content-Length', str(len(payload)))
-            self.send_header('Cache-Control', 'no-cache')
-            self.end_headers()
-            self.wfile.write(payload)
-
         elif parsed.path in ('/', ''):
             summary_path = self._resolve_session(params)
             try:
@@ -2920,8 +2570,12 @@ Examples:
                   f"(requested {args.count})")
 
         print(f"Analyzing {len(sessions)} prints...")
-        agg = aggregate_banding_analysis(sessions)
-        print_banding_report(agg)
+        for s_info in sessions:
+            csv_f = s_info.get('csv_file', '')
+            if csv_f:
+                banding = analyze_csv_for_banding(csv_f)
+                if banding:
+                    print_banding_report(banding)
         return 0
 
     # ------------------------------------------------------------------
