@@ -295,6 +295,21 @@ PRINT_START ... MATERIAL={filament_type[0]}
 PRINT_START ... MATERIAL={material_type}
 ```
 
+#### Where to set the filament type in your slicer
+
+The `{filament_type[0]}` variable only works if you've told the slicer what material you're using:
+
+| Slicer | Where to set it |
+|--------|----------------|
+| **OrcaSlicer** | Select a filament preset in the top toolbar (e.g. "Generic PETG"). The type is embedded in the preset. For custom filaments: Filament Settings → Basic → **Type** dropdown. |
+| **PrusaSlicer** | Select a filament preset in the right panel. For custom filaments: Filament Settings → Filament → **Type** dropdown (PLA, PETG, ABS, etc.). |
+| **SuperSlicer** | Same as PrusaSlicer — filament preset selector, or Filament Settings → **Filament type**. |
+| **Cura** | Select a material in the material dropdown (top bar). For custom materials: Preferences → Materials → select your material → **Properties → Material** field must be set (e.g. "PLA", "PETG"). |
+
+> **Common mistake:** Creating a custom filament profile without setting the type field. The slicer will pass an empty string or "Generic" instead of the actual material name, causing an error.
+
+The system normalizes common variations (`PLA+` → `PLA`, `PETG-CF` → `PETG`, `ABS-GF` → `ABS`, `PA6` → `NYLON`, etc.).
+
 ### Disable Slicer Pressure Advance
 
 **Important:** This system handles Pressure Advance dynamically. Disable PA in your slicer to avoid conflicts:
@@ -307,9 +322,6 @@ PRINT_START ... MATERIAL={material_type}
 | SuperSlicer | Printer Settings → Extruder → Pressure Advance = 0 |
 
 The system uses `default_pa` from the material profile (or your calibrated value via `AT_SET_PA`).
-```
-
-The system normalizes variations like `PLA+`, `PETG-CF`, `ABS-GF` to their base profiles.
 
 ---
 

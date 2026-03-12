@@ -71,7 +71,21 @@ variable_heater_wattage: 40            # Revo heater wattage (40 = stock, 60 = u
 PRINT_START BED=[bed_temperature_initial_layer_single] EXTRUDER=[nozzle_temperature_initial_layer] MATERIAL={filament_type[0]}
 ```
 
-`{filament_type[0]}` is a built-in slicer variable — it automatically passes PLA, PETG, ABS, etc. No manual setup.
+**Cura:**
+```gcode
+PRINT_START BED={material_bed_temperature_layer_0} EXTRUDER={material_print_temperature_layer_0} MATERIAL={material_type}
+```
+
+`{filament_type[0]}` / `{material_type}` resolves to PLA, PETG, ABS, etc. automatically — but only if you've set the filament type correctly in the slicer:
+
+| Slicer | Where to set filament type |
+|--------|---------------------------|
+| **OrcaSlicer** | Select a filament preset in the top toolbar (e.g. "Generic PETG"). The type is embedded in the preset — if you create a custom filament, set **Type** under Filament Settings → Basic. |
+| **PrusaSlicer** | Select a filament preset in the right panel. For custom filaments: Filament Settings → Filament → **Type** dropdown. |
+| **SuperSlicer** | Same as PrusaSlicer — filament preset or Filament Settings → **Filament type**. |
+| **Cura** | Select a material in the material dropdown (top bar). For custom materials: Preferences → Materials → select material → **Properties → Material** field. |
+
+> **The print will error if MATERIAL is missing.** If you see `AT_START: No MATERIAL parameter!` in the console, your slicer start G-code is missing the `MATERIAL=` part.
 
 ### 4. Add Macros to printer.cfg
 
