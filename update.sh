@@ -248,6 +248,14 @@ fi
 # The default (40W) is used if absent, but having it visible encourages
 # users to set it correctly for their hardware.
 if [ -f "$USER_CFG" ]; then
+    # First: deduplicate — keep only the first occurrence
+    DUP_COUNT=$(grep -c "^variable_heater_wattage:" "$USER_CFG" 2>/dev/null || true)
+    if [ "$DUP_COUNT" -gt 1 ]; then
+        # Keep the first uncommented line, remove subsequent ones
+        awk '/^variable_heater_wattage:/ { if (!seen) { seen=1; print } else { next } } !/^variable_heater_wattage:/' "$USER_CFG" > "${USER_CFG}.tmp" && mv "${USER_CFG}.tmp" "$USER_CFG"
+        echo "[OK] Removed duplicate heater_wattage lines in auto_flow_user.cfg"
+    fi
+
     if grep -q "^variable_heater_wattage:" "$USER_CFG" 2>/dev/null; then
         : # already uncommented — nothing to do
     elif grep -q "^# *variable_heater_wattage:" "$USER_CFG" 2>/dev/null; then
@@ -260,6 +268,22 @@ if [ -f "$USER_CFG" ]; then
             sed -i '/^variable_use_high_flow_nozzle:/a\# Heater cartridge wattage: 40 = stock Revo, 60 = upgrade\nvariable_heater_wattage: 40' "$USER_CFG"
             echo "[OK] Added heater_wattage to auto_flow_user.cfg (default: 40W)"
         fi
+    fi
+fi
+
+# Remove defunct Smart Cooling / Heater-Adaptive Fan settings
+# These features were removed; the variables no longer exist in defaults.
+# Leaving them causes no harm (Klipper ignores unknown variables in a merge)
+# but they clutter the config and confuse users.
+if [ -f "$USER_CFG" ]; then
+    if grep -q "variable_sc_" "$USER_CFG" 2>/dev/null; then
+        sed -i '/^# *SMART COOLING/d' "$USER_CFG"
+        sed -i '/^# *HEATER-ADAPTIVE FAN/d' "$USER_CFG"
+        sed -i '/^# *variable_sc_/d' "$USER_CFG"
+        sed -i '/^variable_sc_/d' "$USER_CFG"
+        # Clean up any resulting blank line runs (3+ blank lines → 1)
+        sed -i '/^$/N;/^\n$/d' "$USER_CFG"
+        echo "[OK] Removed defunct Smart Cooling settings from auto_flow_user.cfg"
     fi
 fi
 
