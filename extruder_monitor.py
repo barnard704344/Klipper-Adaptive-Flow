@@ -252,7 +252,22 @@ class ExtruderMonitor:
             feed = cur_f if cur_f is not None else self._gcode_last_f
             if feed and dist > 0.0:
                 try:
-                    duration = dist * 60.0 / float(feed)
+                    # Apply M220 speed factor so lookahead matches actual
+                    # motion speed (e.g. KlipperScreen speed slider).
+                    # Also apply M221 extrude factor to delta_e so the
+                    # predicted rate matches live_extruder_velocity.
+                    # get_status() returns user-facing multipliers
+                    # (1.0 = 100%, 1.5 = 150%).
+                    gcode_move = self.printer.lookup_object('gcode_move', None)
+                    if gcode_move is not None:
+                        status = gcode_move.get_status()
+                        speed_factor = status.get('speed_factor', 1.0)
+                        extrude_factor = status.get('extrude_factor', 1.0)
+                    else:
+                        speed_factor = 1.0
+                        extrude_factor = 1.0
+                    duration = dist * 60.0 / (float(feed) * speed_factor)
+                    delta_e = delta_e * extrude_factor
                 except Exception:
                     duration = None
             if duration is None:
