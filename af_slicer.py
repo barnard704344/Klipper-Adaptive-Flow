@@ -1191,7 +1191,13 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
 
     fil_mvs = slicer_settings.get('filament_max_volumetric_speed')
     if fil_mvs is not None:
-        fmvs = float(fil_mvs)
+        # OrcaSlicer writes per-extruder values as comma-separated (e.g. '17,17,17,9')
+        fil_mvs_str = str(fil_mvs).split(',')[0].strip()
+        try:
+            fmvs = float(fil_mvs_str)
+        except (ValueError, TypeError):
+            fmvs = None
+    if fil_mvs is not None and fmvs is not None:
         if fmvs > peak_flow:
             _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
                  'bad', f'{safe_flow} mm\u00b3/s',
