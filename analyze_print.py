@@ -1584,6 +1584,27 @@ opacity:0;transition:opacity .3s}
 .cfg-toast.ok{border-color:#3fb950}.cfg-toast.err{border-color:#f85149}
 .pulse{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
+.eq-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
+display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
+.eq-overlay.show{opacity:1;pointer-events:auto}
+.eq-modal{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;
+width:420px;max-width:92vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.eq-modal h2{font-size:16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+.eq-modal .eq-close{cursor:pointer;color:#8b949e;font-size:20px;padding:0 4px}
+.eq-modal .eq-close:hover{color:#c9d1d9}
+.eq-row{margin-bottom:14px}
+.eq-row .eq-hdr{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+.eq-row .eq-lbl{color:#c9d1d9;font-weight:600}
+.eq-row .eq-val{font-weight:600}
+.eq-bar-bg{height:8px;background:#21262d;border-radius:4px;overflow:hidden}
+.eq-bar-fg{height:100%;border-radius:4px;transition:width .4s}
+.eq-detail{font-size:11px;color:#8b949e;margin-top:3px;line-height:1.4}
+.eq-overall{text-align:center;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #30363d}
+.eq-overall .eq-big{font-size:42px;font-weight:700}
+.eq-overall .eq-grade{font-size:13px;margin-top:2px}
+.eq-weights{font-size:11px;color:#484f58;text-align:center;margin-top:12px;padding-top:10px;border-top:1px solid #21262d}
+.cd.eq-click{cursor:pointer;transition:border-color .2s}
+.cd.eq-click:hover{border-color:#58a6ff}
 @media(max-width:768px){.row2{grid-template-columns:1fr}
 .cards{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -1694,21 +1715,182 @@ var qs=eq.score!=null?eq.score:null;
 var qc=qs!=null?(qs>=80?'#3fb950':qs>=60?'#d29922':'#f85149'):'#8b949e';
 var qSub=qs!=null?'T:'+eq.thermal+' F:'+eq.flow+' H:'+eq.heater+' P:'+eq.pressure:'no data';
 items=[
-{l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),
-d:'Active material profile and total print duration.'},
-{l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',
-d:'Extra temperature added above base to meet flow demand. \u2022 0\u201310\u00b0C = light load (good) \u2022 10\u201325\u00b0C = moderate \u2022 25\u00b0C+ = heavy load, check if heater can keep up'},
-{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,
-d:'Average heater power. Max hitting 100% is normal during temp ramps (PID behavior). \u2022 Avg under 60% = lots of headroom (good) \u2022 60\u201380% = healthy \u2022 80%+ avg with thermal lag = heater struggling'},
-{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',
-d:'% of layers where accel was reduced for tricky geometry. \u2022 0% = simple print, no intervention needed (good) \u2022 1\u201315% = normal for curves/overhangs \u2022 15%+ = very complex geometry'},
-{l:'Quality',v:qs!=null?'<span style="color:'+qc+'">'+qs+'/100</span>':'\u2014',s:qSub,w:qs!=null&&qs<60,
-d:'Extrusion quality score based on 4 physics metrics. \u2022 T = Thermal stability (temp on target) \u2022 F = Flow steadiness (flow jitter) \u2022 H = Heater reserve (PWM headroom) \u2022 P = Pressure stability (accel transients). \u2022 85+ = excellent \u2022 65\u201384 = acceptable \u2022 <65 = likely visible issues'}];
-c.innerHTML=items.map(function(x){return '<div class="cd"><div class="lb">'+
+{l:'Material',v:(s.material||'?')+liveBadge,s:(s.duration_min||0).toFixed(1)+' min'+(s._live?' elapsed':''),ck:'showMaterial()',
+d:'Click for print overview and feature summary.'},
+{l:'Temp Boost',v:(s.avg_boost||0).toFixed(1)+'\u00b0C',s:'max '+(s.max_boost||0).toFixed(1)+'\u00b0C',ck:'showBoost()',
+d:'Click for thermal boost breakdown.'},
+{l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,ck:'showHeater()',
+d:'Click for heater headroom analysis.'},
+{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',ck:'showDynZ()',
+d:'Click for DynZ zone breakdown.'},
+{l:'Quality',v:qs!=null?'<span style="color:'+qc+'">'+qs+'/100</span>':'\u2014',s:qSub,w:qs!=null&&qs<60,ck:qs!=null?'showEQ()':null,
+d:'Click for full breakdown. T=Thermal F=Flow H=Heater P=Pressure.'}];
+c.innerHTML=items.map(function(x){return '<div class="cd'+(x.ck?' eq-click':'')+
+'"'+(x.ck?' onclick="'+x.ck+'"':'')+'><div class="lb">'+
 x.l+(x.d?'<span class="tip" data-tip="'+x.d+'">?</span>':'')+
 '</div><div class="vl'+(x.w?' w':'')+'">'+x.v+
 '</div><div class="sb">'+x.s+'</div></div>'}).join('')}}
 rc();
+
+function _showModal(title,html){
+var ov=document.createElement('div');
+ov.className='eq-overlay';
+ov.innerHTML='<div class="eq-modal"><h2>'+title+'<span class="eq-close">&times;</span></h2>'+html+'</div>';
+ov.querySelector('.eq-close').addEventListener('click',function(){ov.remove()});
+ov.addEventListener('click',function(e){if(e.target===ov)ov.remove()});
+document.body.appendChild(ov);
+requestAnimationFrame(function(){ov.classList.add('show')})}
+function _eqBar(label,val,detail,weight){
+var bc=val>=80?'#3fb950':val>=60?'#d29922':'#f85149';
+return '<div class="eq-row"><div class="eq-hdr"><span class="eq-lbl">'+label+
+(weight!=null?' <span style="color:#484f58;font-weight:400">('+weight+'%)</span>':'')+
+'</span><span class="eq-val" style="color:'+bc+'">'+val+'</span></div>'+
+'<div class="eq-bar-bg"><div class="eq-bar-fg" style="width:'+Math.min(val,100)+'%;background:'+bc+'"></div></div>'+
+'<div class="eq-detail">'+detail+'</div></div>'}
+function _pctBar(label,pct,detail){
+var bc=pct>80?'#f85149':pct>50?'#d29922':'#3fb950';
+return '<div class="eq-row"><div class="eq-hdr"><span class="eq-lbl">'+label+
+'</span><span class="eq-val" style="color:'+bc+'">'+pct.toFixed(1)+'%</span></div>'+
+'<div class="eq-bar-bg"><div class="eq-bar-fg" style="width:'+Math.min(pct,100)+'%;background:'+bc+'"></div></div>'+
+(detail?'<div class="eq-detail">'+detail+'</div>':'')+'</div>'}
+function _statRow(label,val){
+return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px">'+
+'<span style="color:#8b949e">'+label+'</span><span style="color:#c9d1d9;font-weight:600">'+val+'</span></div>'}
+
+function showMaterial(){
+var s=D.summary;if(!s)return;
+var at=s.auto_temp||{},fl=s.flow||{},pa=s.dynamic_pa||{},dz=s.dynamic_z||{},fn=s.fan||{},ft=s.features||{};
+var bo=D.boost_optimization||{},hi=D.hotend_info||{};
+var h='<div class="eq-overall"><div class="eq-big" style="color:#58a6ff">'+
+(s.material||'?')+'</div><div class="eq-grade" style="color:#8b949e">'+(s.filename||'')+
+'</div></div>';
+h+='<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d">';
+h+=_statRow('Duration',(s.duration_min||0).toFixed(1)+' min');
+h+=_statRow('Samples',s.samples||0);
+h+=_statRow('Start',s.start_time?(s.start_time||'').replace('T',' ').slice(0,19):'\u2014');
+h+='</div>';
+h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Active Features</div>';
+h+=_statRow('Auto Temperature',ft.auto_temp?'\u2705 On':'\u274c Off');
+h+=_statRow('Dynamic PA',ft.dynamic_pa?'\u2705 On':'\u274c Off');
+h+=_statRow('Dynamic Z (DynZ)',ft.dynamic_z?'\u2705 On':'\u274c Off');
+if(hi.nozzle_type){
+h+='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Hotend</div>';
+h+=_statRow('Nozzle','Revo '+hi.nozzle_type+' '+hi.nozzle_diameter+'mm');
+h+=_statRow('Heater',hi.heater_wattage+'W');
+h+=_statRow('Safe Flow',hi.safe_flow+' mm\xb3/s');
+h+=_statRow('Peak Flow',hi.peak_flow+' mm\xb3/s')}
+if(bo.verdict_text){
+h+='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Speed Headroom</div>';
+h+=_statRow('Verdict',bo.verdict_text);
+if(bo.speed_increase_pct)h+=_statRow('Potential Increase','~'+bo.speed_increase_pct+'%');
+if(bo.bottleneck)h+=_statRow('Bottleneck',bo.bottleneck)}
+_showModal('Print Overview',h)}
+
+function showBoost(){
+var s=D.summary;if(!s)return;
+var at=s.auto_temp||{},tl=D.thermal_lag||{};
+var avgB=at.avg_boost||s.avg_boost||0,maxB=at.max_boost||s.max_boost||0;
+var bc=maxB>=25?'#f85149':maxB>=10?'#d29922':'#3fb950';
+var h='<div class="eq-overall"><div class="eq-big" style="color:'+bc+'">'+avgB.toFixed(1)+
+'\xb0C<span style="font-size:18px;color:#8b949e"> avg</span></div>'+
+'<div class="eq-grade" style="color:#8b949e">max '+maxB.toFixed(1)+'\xb0C</div></div>';
+h+='<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d">';
+h+=_statRow('Boost Active',(at.boost_active_pct||0).toFixed(1)+'% of print');
+h+=_statRow('Temp Range',(at.temp_min||0).toFixed(1)+'\xb0C \u2013 '+(at.temp_max||0).toFixed(1)+'\xb0C');
+h+=_statRow('Target Max',(at.temp_target_max||0).toFixed(1)+'\xb0C');
+h+='</div>';
+h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Thermal Lag</div>';
+h+=_statRow('Avg Lag',(tl.avg_lag||at.avg_thermal_lag||0).toFixed(1)+'\xb0C');
+h+=_statRow('Max Lag',(tl.max_lag||at.max_thermal_lag||0).toFixed(1)+'\xb0C');
+h+=_statRow('Time Behind Target',(tl.lag_pct||0).toFixed(1)+'%');
+var eps=tl.episodes||[];
+if(eps.length>0){
+h+='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Lag Episodes ('+eps.length+')</div>';
+for(var i=0;i<Math.min(eps.length,5);i++){
+var e=eps[i];
+h+='<div style="font-size:11px;color:#8b949e;margin-bottom:4px">'+
+'Z '+(e.z_start||0).toFixed(1)+'mm \u2022 '+(e.start_s||0).toFixed(0)+'\u2013'+(e.end_s||0).toFixed(0)+
+'s \u2022 max lag '+(e.max_lag||0).toFixed(1)+'\xb0C \u2022 flow '+(e.max_flow||0).toFixed(1)+' mm\xb3/s</div>'}}
+h+='<div class="eq-weights">0\u201310\xb0C = light load \u2022 10\u201325\xb0C = moderate \u2022 25\xb0C+ = heavy</div>';
+_showModal('Temperature Boost',h)}
+
+function showHeater(){
+var s=D.summary;if(!s)return;
+var ht=s.heater||{},hr=D.headroom||{},hi=D.hotend_info||{};
+var avgP=(ht.avg_pwm||s.avg_pwm||0),maxP=(ht.max_pwm||s.max_pwm||0),sat=(ht.pwm_maxed_pct||0);
+var bc=avgP>0.85?'#f85149':avgP>0.65?'#d29922':'#3fb950';
+var h='<div class="eq-overall"><div class="eq-big" style="color:'+bc+'">'+(avgP*100).toFixed(0)+
+'%<span style="font-size:18px;color:#8b949e"> avg PWM</span></div>'+
+'<div class="eq-grade" style="color:#8b949e">max '+(maxP*100).toFixed(0)+'% \u2022 saturated '+sat.toFixed(1)+'%</div></div>';
+if(hi.heater_wattage){h+='<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d">';
+h+=_statRow('Heater',hi.heater_wattage+'W Revo');
+h+=_statRow('Max Safe Flow',hi.safe_flow+' mm\xb3/s');
+h+=_statRow('Avg Flow',(s.avg_flow||0).toFixed(1)+' mm\xb3/s');
+h+=_statRow('Max Flow',(s.max_flow||0).toFixed(1)+' mm\xb3/s');
+h+='</div>'}
+var bands=Object.keys(hr).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+if(bands.length>0){
+h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">PWM by Flow Range</div>';
+for(var i=0;i<bands.length;i++){
+var b=hr[bands[i]],ap=b.avg_pwm||0;
+h+=_pctBar(bands[i]+' mm\xb3/s',ap*100,
+b.count+' samples \u2022 avg '+(ap*100).toFixed(0)+'% \u2022 max '+(b.max_pwm*100).toFixed(0)+'%')}}
+h+='<div class="eq-weights">Under 60% avg = headroom \u2022 60\u201380% = healthy \u2022 80%+ = struggling</div>';
+_showModal('Heater Duty',h)}
+
+function showDynZ(){
+var s=D.summary;if(!s)return;
+var dz=s.dynamic_z||{},zones=D.dynz_zones||{};
+var dp=dz.active_pct||s.dynz_active_pct||0,amin=dz.accel_min||s.accel_min||0;
+var bc=dp>30?'#f85149':dp>15?'#d29922':'#3fb950';
+var h='<div class="eq-overall"><div class="eq-big" style="color:'+bc+'">'+dp+
+'%<span style="font-size:18px;color:#8b949e"> active</span></div>'+
+'<div class="eq-grade" style="color:#8b949e">min accel '+amin+' mm/s\xb2</div></div>';
+var ba=s.banding_analysis||{};
+h+='<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d">';
+h+=_statRow('DynZ Transitions',ba.dynz_transitions||0);
+h+=_statRow('Accel Changes',ba.accel_changes||0);
+h+=_statRow('Likely Culprit',(ba.likely_culprit||'\u2014').replace(/_/g,' '));
+h+='</div>';
+var zkeys=Object.keys(zones).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
+if(zkeys.length>0){
+h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Z-Height Zones (showing high-activity)</div>';
+var shown=0;
+for(var i=0;i<zkeys.length&&shown<12;i++){
+var z=zones[zkeys[i]];
+if(z.transitions>0||z.active_pct<90){
+h+=_pctBar('Z '+zkeys[i]+' mm',z.active_pct,
+z.samples+' samples \u2022 avg accel '+z.avg_accel+' \u2022 stress '+(z.avg_stress||0).toFixed(1)+
+(z.transitions>0?' \u2022 '+z.transitions+' transitions':''));
+shown++}}
+if(shown===0){
+h+='<div style="font-size:11px;color:#8b949e;margin-bottom:8px">DynZ was active at 100% across all zones \u2014 consistently protecting quality.</div>'}}
+h+='<div class="eq-weights">0% = no intervention \u2022 1\u201315% = normal \u2022 15%+ = complex geometry</div>';
+_showModal('Dynamic Z Breakdown',h)}
+
+function showEQ(){
+var eq=D.extrusion_quality||{};
+if(eq.score==null)return;
+var dt=eq.detail||{};
+var sc=eq.score,g=sc>=85?'Excellent':sc>=65?'Acceptable':'Needs Improvement';
+var gc=sc>=85?'#3fb950':sc>=65?'#d29922':'#f85149';
+var h='<div class="eq-overall"><div class="eq-big" style="color:'+gc+'">'+sc+'<span style="font-size:18px;color:#8b949e">/100</span></div>'+
+'<div class="eq-grade" style="color:'+gc+'">'+g+'</div></div>';
+h+=_eqBar('\ud83c\udf21\ufe0f Thermal Stability',eq.thermal,
+(dt.temp_in_band_pct||0).toFixed(0)+'% of extrusion within \xb11\xb0C of target. '+
+'Avg deviation: '+(dt.avg_temp_dev||0).toFixed(1)+'\xb0C, max: '+(dt.max_temp_dev||0).toFixed(1)+'\xb0C.',35);
+h+=_eqBar('\ud83c\udf0a Flow Steadiness',eq.flow,
+'Jitter: '+(dt.flow_jitter||0).toFixed(3)+' (lower=smoother). '+
+(dt.big_jumps||0)+' large flow jumps ('+(dt.big_jump_pct||0).toFixed(1)+'%). '+
+'Mean flow: '+(dt.mean_flow||0).toFixed(1)+' mm\xb3/s.',30);
+h+=_eqBar('\u2622\ufe0f Heater Reserve',eq.heater,
+'PWM \u226595%: '+(dt.pwm_saturated_pct||0).toFixed(1)+'% of extrusion time. '+
+'Avg PWM: '+((dt.avg_pwm||0)*100).toFixed(0)+'%.',20);
+h+=_eqBar('\u2699\ufe0f Pressure Stability',eq.pressure,
+(dt.transient_count||0)+' accel transients ('+(dt.transient_pct||0).toFixed(1)+'% of samples). '+
+'Avg impact: '+(dt.avg_transient_impact||0).toFixed(2)+'.',15);
+h+='<div class="eq-weights">Weights: Thermal 35% \u2022 Flow 30% \u2022 Heater 20% \u2022 Pressure 15%</div>';
+_showModal('Extrusion Quality Breakdown',h)}
 
 var allTabs=[
 {id:'sl',l:'\u2702 Slicer',tip:'Shows slicer settings extracted from your G-code file. Cross-references acceleration values with banding data to identify specific settings causing issues.'},
