@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from collections import defaultdict
 
-from af_config import LOG_DIR, CONFIG_DIR, _get_config_value, load_csv_rows
+from af_config import LOG_DIR, CONFIG_DIR, _get_config_value, _last_change_for, load_csv_rows
 
 
 # =============================================================================
@@ -261,9 +261,12 @@ def compute_extrusion_quality(timeline):
     # Normalize by mean flow: 0 = perfectly smooth, higher = jittery
     normalized_jitter = avg_delta / mean_flow
 
-    # Count "big jumps" (>2 mm³/s delta) — these are the ones that
-    # actually cause visible pressure artifacts
-    big_jumps = sum(1 for d in flow_deltas if d > 2.0)
+    # Count "big jumps" — flow deltas large enough to cause visible
+    # pressure artifacts.  Threshold scales with mean flow so high-flow
+    # prints aren't unfairly penalized (a 2 mm³/s swing at 15 mm³/s is
+    # only 13%, but at 3 mm³/s it's 67%).
+    big_threshold = max(2.0, mean_flow * 0.30)
+    big_jumps = sum(1 for d in flow_deltas if d > big_threshold)
     big_jump_pct = big_jumps / max(len(flow_deltas), 1) * 100
 
     # Score: penalize jitter.  Typical good print: jitter < 0.05
@@ -292,18 +295,28 @@ def compute_extrusion_quality(timeline):
     # 4. PRESSURE STABILITY — accel-induced pressure transients
     #    Large accel changes during high-flow extrusion cause pressure
     #    spikes that PA can't fully compensate for.
+    #    EXCLUDES DynZ-driven accel changes — those are intentional quality
+    #    protection, not slicer-induced pressure problems.
     # ------------------------------------------------------------------
     accels = [pt.get('a', 0) for pt in active]
+    dynz_flags = [pt.get('dz', 0) for pt in active]
     accel_deltas = [abs(accels[i] - accels[i - 1])
                     for i in range(1, len(accels))]
 
-    # Weight by flow: a 3000 accel swing at 15 mm³/s matters much more
-    # than the same swing at 2 mm³/s
     weighted_transients = []
+    dynz_excluded = 0
     for i in range(1, len(accels)):
         ad = abs(accels[i] - accels[i - 1])
-        fl = max(flows[i], flows[i - 1])
-        if ad > 200 and fl > 2.0:
+        if ad <= 200:
+            continue
+        # Skip transitions where DynZ is active on either side — DynZ
+        # deliberately changes accel to protect quality; these aren't
+        # slicer-induced pressure problems.
+        if dynz_flags[i] or dynz_flags[i - 1]:
+            dynz_excluded += 1
+            continue
+        fl = min(flows[i], flows[i - 1])
+        if fl > 2.0:
             # Normalize: 1000 accel delta at 10 mm³/s flow = 1.0 impact
             impact = (ad / 1000.0) * (fl / 10.0)
             weighted_transients.append(impact)
@@ -344,6 +357,7 @@ def compute_extrusion_quality(timeline):
             'flow_jitter': round(normalized_jitter, 3),
             'big_jump_pct': round(big_jump_pct, 1),
             'big_jumps': big_jumps,
+            'big_jump_threshold': round(big_threshold, 1),
             'avg_flow_delta': round(avg_delta, 2),
             'mean_flow': round(mean_flow, 1),
             'pwm_saturated_pct': round(sat_pct, 1),
@@ -351,6 +365,7 @@ def compute_extrusion_quality(timeline):
             'avg_transient_impact': round(avg_transient, 3),
             'transient_count': transient_count,
             'transient_pct': round(transient_pct, 1),
+            'dynz_excluded_transients': dynz_excluded,
             'active_samples': n,
         },
     }
@@ -1772,6 +1787,20 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
     # Read current flow_k
     _current_flow_k = _get_config_value('flow_k', material)
 
+    # If flow_k was recently changed via the dashboard, use the pre-change
+    # value as the base for suggestions — the print ran with the old value.
+    _base_flow_k = _current_flow_k
+    if _current_flow_k is not None:
+        ts, old_val, new_val = _last_change_for('flow_k', material)
+        if ts is not None and old_val is not None and new_val is not None:
+            try:
+                new_f = float(new_val)
+                old_f = float(old_val)
+                if abs(_current_flow_k - new_f) < 0.001:
+                    _base_flow_k = old_f
+            except (ValueError, TypeError):
+                pass
+
     suggestions = []
     if speed_increase_pct >= 10:
         new_avg_flow = round(avg_flow * (1 + speed_increase_pct / 100), 1)
@@ -1848,22 +1877,38 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
     if boost_headroom > 10 and not thermal_at_limit:
         flow_k_detail = (f'Boost used only {max_boost:.1f}°C of ~{max_boost_available}°C range '
                          f'({avg_pwm*100:.0f}% heater duty).')
-        if _current_flow_k is not None:
-            sug_fk = round(_current_flow_k + 0.15, 2)
+        if _base_flow_k is not None:
+            sug_fk = round(_base_flow_k + 0.15, 2)
             sug_fk = min(sug_fk, 2.5)  # cap
-            flow_k_detail += f'\nflow_k: {_current_flow_k} → {sug_fk}'
+            # If current config already meets/exceeds suggestion, suppress
+            # the Apply button — the change was already applied.
+            if _current_flow_k is not None and _current_flow_k >= sug_fk:
+                flow_k_detail += (f'\nflow_k: already at {_current_flow_k} '
+                                  f'(awaiting print data with new setting)')
+                suggestions.append({
+                    'what': 'Increase flow_k for more aggressive boost',
+                    'detail': flow_k_detail,
+                    'impact': 'better flow adaptation',
+                    # No config_var/suggested_value → no Apply button
+                })
+            else:
+                flow_k_detail += f'\nflow_k: {_current_flow_k} → {sug_fk}'
+                suggestions.append({
+                    'what': 'Increase flow_k for more aggressive boost',
+                    'detail': flow_k_detail,
+                    'impact': 'better flow adaptation',
+                    'config_var': 'flow_k',
+                    'direction': 'increase',
+                    'suggested_value': sug_fk,
+                    'material': material,
+                })
         else:
             flow_k_detail += '\nIncrease flow_k by 0.1–0.2 in your material profile.'
-
-        suggestions.append({
-            'what': 'Increase flow_k for more aggressive boost',
-            'detail': flow_k_detail,
-            'impact': 'better flow adaptation',
-            'config_var': 'flow_k',
-            'direction': 'increase',
-            'suggested_value': sug_fk if _current_flow_k is not None else None,
-            'material': material,
-        })
+            suggestions.append({
+                'what': 'Increase flow_k for more aggressive boost',
+                'detail': flow_k_detail,
+                'impact': 'better flow adaptation',
+            })
 
     if fan_at_limit and material in ('PLA', 'PETG'):
         # Estimate max safe speed limited by cooling

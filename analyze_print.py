@@ -684,12 +684,12 @@ def generate_recommendations(data):
             rec = {
                 'severity': 'warn' if ts >= 40 else 'bad',
                 'category': 'Quality',
-                'title': f'Thermal stability: {ts}/100 — temp off-target {100 - eq_detail.get("temp_in_band_pct", 100):.0f}% of extrusion time',
+                'title': f'Thermal stability: {ts}/100 \u2014 temp off-target {100 - eq_detail.get("temp_in_band_pct", 100):.0f}% of extrusion time',
                 'detail': (
-                    f'Only {eq_detail.get("temp_in_band_pct", 0):.0f}% of extrusion time was within ±1°C of target '
-                    f'(avg deviation {eq_detail.get("avg_temp_dev", 0):.1f}°C, max {eq_detail.get("max_temp_dev", 0):.1f}°C). '
-                    f'Temperature deviation directly changes melt viscosity — '
-                    f'each °C off target alters extrusion width, causing visible banding on walls.'
+                    f'Only {eq_detail.get("temp_in_band_pct", 0):.0f}% of extrusion time was within \xb11\xb0C of target '
+                    f'(avg deviation {eq_detail.get("avg_temp_dev", 0):.1f}\xb0C, max {eq_detail.get("max_temp_dev", 0):.1f}\xb0C). '
+                    f'Temperature deviation directly changes melt viscosity \u2014 '
+                    f'each \xb0C off target alters extrusion width, causing visible banding on walls.'
                 ),
                 'action': 'Re-tune PID with fan running (M106 S255 before PID_CALIBRATE). Reduce slicer fan speed if using high fan speeds.',
             }
@@ -700,6 +700,17 @@ def generate_recommendations(data):
             if changes:
                 rec['config_changes'] = changes
             recs.append(rec)
+        elif ts < 80:
+            recs.append({
+                'severity': 'info', 'category': 'Quality',
+                'title': f'Thermal stability: {ts}/100 \u2014 minor temp deviations',
+                'detail': (
+                    f'{eq_detail.get("temp_in_band_pct", 0):.0f}% of extrusion within \xb11\xb0C '
+                    f'(avg deviation {eq_detail.get("avg_temp_dev", 0):.1f}\xb0C). '
+                    f'Good but not perfect \u2014 faint banding may be visible on glossy filaments.'
+                ),
+                'action': 'Re-tune PID with fan on if not done recently. Slightly increasing flow_smoothing can reduce demand spikes the heater struggles with.',
+            })
 
         # Flow steadiness
         fs = eq.get('flow', 100)
@@ -709,13 +720,13 @@ def generate_recommendations(data):
             rec = {
                 'severity': 'warn' if fs >= 40 else 'bad',
                 'category': 'Quality',
-                'title': f'Flow steadiness: {fs}/100 — {bjumps} large flow jumps (>{2} mm³/s)',
+                'title': f'Flow steadiness: {fs}/100 \u2014 {bjumps} flow jumps >{eq_detail.get("big_jump_threshold", 2.0):.1f} mm\xb3/s',
                 'detail': (
                     f'Flow jitter index: {jitter:.3f} (ideal <0.05). '
                     f'{eq_detail.get("big_jump_pct", 0):.1f}% of samples had large flow changes. '
-                    f'Average flow delta: {eq_detail.get("avg_flow_delta", 0):.1f} mm³/s at mean flow {eq_detail.get("mean_flow", 0):.1f} mm³/s. '
+                    f'Average flow delta: {eq_detail.get("avg_flow_delta", 0):.1f} mm\xb3/s at mean flow {eq_detail.get("mean_flow", 0):.1f} mm\xb3/s. '
                     f'Large flow rate changes cause pressure transients in the melt zone that '
-                    f'PA cannot fully compensate — each one leaves a mark on walls.'
+                    f'PA cannot fully compensate \u2014 each one leaves a mark on walls.'
                 ),
                 'action': 'Increase flow_smoothing to dampen flow spikes. In slicer, unify speeds for walls/infill to reduce abrupt flow changes.',
             }
@@ -723,6 +734,17 @@ def generate_recommendations(data):
             if c:
                 rec['config_changes'] = [c]
             recs.append(rec)
+        elif fs < 80:
+            recs.append({
+                'severity': 'info', 'category': 'Quality',
+                'title': f'Flow steadiness: {fs}/100 \u2014 moderate flow variation',
+                'detail': (
+                    f'Jitter index {eq_detail.get("flow_jitter", 0):.3f}, '
+                    f'{eq_detail.get("big_jumps", 0)} large jumps. '
+                    f'Flow changes are noticeable but not severe.'
+                ),
+                'action': 'In slicer, bring wall/infill/solid-infill speeds closer together. A smaller speed gap between move types means fewer flow jumps.',
+            })
 
         # Heater reserve
         hs = eq.get('heater', 100)
@@ -730,12 +752,12 @@ def generate_recommendations(data):
             rec = {
                 'severity': 'warn' if hs >= 40 else 'bad',
                 'category': 'Quality',
-                'title': f'Heater reserve: {hs}/100 — PWM saturated {eq_detail.get("pwm_saturated_pct", 0):.0f}% of extrusion time',
+                'title': f'Heater reserve: {hs}/100 \u2014 PWM saturated {eq_detail.get("pwm_saturated_pct", 0):.0f}% of extrusion time',
                 'detail': (
-                    f'Heater was at ≥95% PWM for {eq_detail.get("pwm_saturated_pct", 0):.1f}% of active extrusion '
+                    f'Heater was at \u226595% PWM for {eq_detail.get("pwm_saturated_pct", 0):.1f}% of active extrusion '
                     f'(avg PWM {eq_detail.get("avg_pwm", 0) * 100:.0f}%). '
                     f'When the heater has no reserve, it cannot respond to temperature demand '
-                    f'changes from flow variation or fan cooling — temp drops below target '
+                    f'changes from flow variation or fan cooling \u2014 temp drops below target '
                     f'and extrusion becomes inconsistent.'
                 ),
                 'action': 'Reduce fan speed in slicer to give the heater thermal headroom. Verify PID was tuned with fan on. Consider a 60W heater upgrade.',
@@ -747,6 +769,17 @@ def generate_recommendations(data):
             if changes:
                 rec['config_changes'] = changes
             recs.append(rec)
+        elif hs < 80:
+            recs.append({
+                'severity': 'info', 'category': 'Quality',
+                'title': f'Heater reserve: {hs}/100 \u2014 limited headroom',
+                'detail': (
+                    f'PWM saturated {eq_detail.get("pwm_saturated_pct", 0):.1f}% of time, '
+                    f'avg PWM {eq_detail.get("avg_pwm", 0) * 100:.0f}%. '
+                    f'The heater is coping but has little margin for higher speeds or cooling.'
+                ),
+                'action': 'Lowering part cooling fan by 10\u201320% gives the most headroom. Reducing flow_k by 0.1 also helps.',
+            })
 
         # Pressure stability
         ps = eq.get('pressure', 100)
@@ -754,13 +787,13 @@ def generate_recommendations(data):
             rec = {
                 'severity': 'warn' if ps >= 40 else 'bad',
                 'category': 'Quality',
-                'title': f'Pressure stability: {ps}/100 — {eq_detail.get("transient_count", 0)} accel-induced transients',
+                'title': f'Pressure stability: {ps}/100 \u2014 {eq_detail.get("transient_count", 0)} accel-induced transients',
                 'detail': (
                     f'{eq_detail.get("transient_pct", 0):.1f}% of samples had significant '
                     f'acceleration changes during high-flow extrusion (avg impact: '
                     f'{eq_detail.get("avg_transient_impact", 0):.2f}). '
                     f'Large acceleration changes at high flow create pressure waves in the '
-                    f'melt zone that Pressure Advance cannot fully absorb — each transition '
+                    f'melt zone that Pressure Advance cannot fully absorb \u2014 each transition '
                     f'shows as a faint line on the print surface.'
                 ),
                 'action': 'In slicer, unify acceleration values for all print moves (walls, infill, top surface) to the Y-axis shaper limit. Only travel should use a higher accel.',
@@ -769,6 +802,17 @@ def generate_recommendations(data):
             if c:
                 rec['config_changes'] = [c]
             recs.append(rec)
+        elif ps < 80:
+            recs.append({
+                'severity': 'info', 'category': 'Quality',
+                'title': f'Pressure stability: {ps}/100 \u2014 some accel-induced transients',
+                'detail': (
+                    f'{eq_detail.get("transient_count", 0)} transients at '
+                    f'{eq_detail.get("transient_pct", 0):.1f}% of samples. '
+                    f'Moderate acceleration variation during extrusion.'
+                ),
+                'action': 'In slicer, set wall/infill/solid-infill accelerations to the same value (your Y-axis input shaper limit). Only travel needs higher accel.',
+            })
 
     # --- Slicer-specific recommendations (from gcode analysis) ---
     slicer_diag = data.get('slicer_diagnosis') or {}
@@ -1215,6 +1259,7 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
         'thermal_lag': None, 'headroom': None, 'pa_stability': None,
         'dynz_zones': {}, 'speed_flow': None, 'trends': None,
         'sessions': [], 'selected_file': '', 'is_live': False,
+        'has_live_print': False,
     }
 
     all_sessions = find_recent_sessions(log_dir, count=50, material=material)
@@ -1232,16 +1277,17 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     # Check for an active (live) print first — a CSV with no summary JSON
     csv_path = None
     csv_rows = None   # will be loaded once when csv_path is known
-    if summary_path is None:
-        live_csv = find_active_print_csv(log_dir)
-        if live_csv:
-            csv_path = live_csv
-            csv_rows = load_csv_rows(live_csv)
-            live_summary = synthesize_live_summary(live_csv, rows=csv_rows)
-            if live_summary:
-                data['summary'] = live_summary
-                data['selected_file'] = os.path.basename(live_csv)
-                data['is_live'] = True
+    live_csv = find_active_print_csv(log_dir)
+    if live_csv:
+        data['has_live_print'] = True
+    if summary_path is None and live_csv:
+        csv_path = live_csv
+        csv_rows = load_csv_rows(live_csv)
+        live_summary = synthesize_live_summary(live_csv, rows=csv_rows)
+        if live_summary:
+            data['summary'] = live_summary
+            data['selected_file'] = os.path.basename(live_csv)
+            data['is_live'] = True
 
     # Fall back to completed print
     if data['summary'] is None:
@@ -1268,7 +1314,11 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     data['timeline'] = read_csv_timeline(csv_path, rows=csv_rows)
 
     # --- Extrusion Quality Score (physics-based, replaces banding risk) ---
-    data['extrusion_quality'] = compute_extrusion_quality(data['timeline'])
+    # Use full-resolution data for quality scoring — the downsampled timeline
+    # skips samples and inflates apparent jitter / jump counts.
+    full_timeline = read_csv_timeline(csv_path, max_points=len(csv_rows),
+                                      rows=csv_rows)
+    data['extrusion_quality'] = compute_extrusion_quality(full_timeline)
 
     data['z_banding'] = {
         str(k): v for k, v in analyze_z_banding(csv_path, bin_size=0.5, rows=csv_rows).items()
@@ -1335,7 +1385,9 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
             csv_f = s.get('csv_file', '')
             if csv_f and os.path.exists(csv_f) and i < 5:  # cap to 5 newest
                 try:
-                    tl = read_csv_timeline(csv_f, max_points=400)
+                    trend_rows = load_csv_rows(csv_f)
+                    tl = read_csv_timeline(csv_f, max_points=len(trend_rows),
+                                           rows=trend_rows)
                     eq = compute_extrusion_quality(tl)
                     if eq:
                         trend_data[i]['eq_score'] = eq['score']
@@ -1662,19 +1714,14 @@ var ftel=document.getElementById('ft');
 if(isLive)lvi.style.display='inline';
 
 // Populate session selector
-if(!isLive){
-(D.sessions||[]).forEach(function(s){var o=document.createElement('option');
-o.value=s.summary_file;
-o.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
-if(s.summary_file===D.selected_file)o.selected=true;sel.appendChild(o)});
-} else {
+var hasLive=D.has_live_print||false;
+if(hasLive){
 var o=document.createElement('option');o.value='__live__';
-o.textContent='\u25cf LIVE PRINT';o.selected=true;sel.appendChild(o);
+o.textContent='\u25cf LIVE PRINT';if(isLive)o.selected=true;sel.appendChild(o);}
 (D.sessions||[]).forEach(function(s){var o2=document.createElement('option');
 o2.value=s.summary_file;
 o2.textContent=(s.start_time||'').slice(0,16)+' | '+s.material+' | '+s.filename;
-sel.appendChild(o2)});
-}
+if(!isLive&&s.summary_file===D.selected_file)o2.selected=true;sel.appendChild(o2)});
 
 function go(f){
 if(f==='__live__')window.location.href='/';
@@ -1868,6 +1915,13 @@ h+='<div style="font-size:11px;color:#8b949e;margin-bottom:8px">DynZ was active 
 h+='<div class="eq-weights">0% = no intervention \u2022 1\u201315% = normal \u2022 15%+ = complex geometry</div>';
 _showModal('Dynamic Z Breakdown',h)}
 
+function _eqTip(val,tips){
+if(val>=85)return '';
+var t=val<60?tips[0]:tips[1];
+return '<div style="margin:4px 0 8px 0;padding:6px 10px;background:rgba('+
+(val<60?'248,81,73':'210,153,34')+',0.08);border-left:3px solid '+(val<60?'#f85149':'#d29922')+
+';border-radius:0 4px 4px 0;font-size:11px;color:#c9d1d9;line-height:1.5">'+
+'<span style="font-weight:600;color:'+(val<60?'#f85149':'#d29922')+'">How to improve:</span> '+t+'</div>'}
 function showEQ(){
 var eq=D.extrusion_quality||{};
 if(eq.score==null)return;
@@ -1879,16 +1933,29 @@ var h='<div class="eq-overall"><div class="eq-big" style="color:'+gc+'">'+sc+'<s
 h+=_eqBar('\ud83c\udf21\ufe0f Thermal Stability',eq.thermal,
 (dt.temp_in_band_pct||0).toFixed(0)+'% of extrusion within \xb11\xb0C of target. '+
 'Avg deviation: '+(dt.avg_temp_dev||0).toFixed(1)+'\xb0C, max: '+(dt.max_temp_dev||0).toFixed(1)+'\xb0C.',35);
+h+=_eqTip(eq.thermal,[
+'Re-tune PID with fan running at print speed (<code>M106 S255</code> before <code>PID_CALIBRATE</code>). Reduce part cooling fan speed in slicer. Increase <b>flow_smoothing</b> to reduce rapid demand changes the heater struggles to follow.',
+'Temperature is mostly on-target. Small gains from PID re-tune with fan on, or slightly increasing <b>flow_smoothing</b> to reduce demand spikes.']);
 h+=_eqBar('\ud83c\udf0a Flow Steadiness',eq.flow,
 'Jitter: '+(dt.flow_jitter||0).toFixed(3)+' (lower=smoother). '+
-(dt.big_jumps||0)+' large flow jumps ('+(dt.big_jump_pct||0).toFixed(1)+'%). '+
+(dt.big_jumps||0)+' flow jumps >'+(dt.big_jump_threshold||2).toFixed(1)+' mm\xb3/s ('+(dt.big_jump_pct||0).toFixed(1)+'%). '+
 'Mean flow: '+(dt.mean_flow||0).toFixed(1)+' mm\xb3/s.',30);
+h+=_eqTip(eq.flow,[
+'In your slicer, <b>unify wall/infill/solid-infill speeds</b> so they are closer together \u2014 large speed differences between move types cause the biggest flow jumps. Increase <b>flow_smoothing</b> to dampen remaining spikes.',
+'Flow is fairly smooth. To improve further, bring slicer speeds for different move types closer together, or raise <b>flow_smoothing</b> slightly.']);
 h+=_eqBar('\u2622\ufe0f Heater Reserve',eq.heater,
 'PWM \u226595%: '+(dt.pwm_saturated_pct||0).toFixed(1)+'% of extrusion time. '+
 'Avg PWM: '+((dt.avg_pwm||0)*100).toFixed(0)+'%.',20);
+h+=_eqTip(eq.heater,[
+'Your heater is maxing out. <b>Reduce part cooling fan speed</b> in the slicer (biggest single impact). Lower <b>flow_k</b> to reduce temperature demand. If using a 40W heater, a 60W upgrade gives 50% more reserve.',
+'Heater is coping but has limited headroom. Lowering fan speed slightly or reducing <b>flow_k</b> by 0.1 will help. Consider 60W heater if pushing higher speeds.']);
 h+=_eqBar('\u2699\ufe0f Pressure Stability',eq.pressure,
 (dt.transient_count||0)+' accel transients ('+(dt.transient_pct||0).toFixed(1)+'% of samples). '+
-'Avg impact: '+(dt.avg_transient_impact||0).toFixed(2)+'.',15);
+'Avg impact: '+(dt.avg_transient_impact||0).toFixed(2)+'.'+
+(dt.dynz_excluded_transients?' '+dt.dynz_excluded_transients+' accel changes managed by DynZ (excluded).':''),15);
+h+=_eqTip(eq.pressure,[
+'In your slicer, <b>set all print-move accelerations to the same value</b> (use your Y-axis input shaper limit). Only travel moves should use higher accel. This eliminates the pressure waves PA cannot absorb.',
+'Pressure is mostly stable. To improve, bring slicer acceleration values for walls/infill/top closer together.']);
 h+='<div class="eq-weights">Weights: Thermal 35% \u2022 Flow 30% \u2022 Heater 20% \u2022 Pressure 15%</div>';
 _showModal('Extrusion Quality Breakdown',h)}
 

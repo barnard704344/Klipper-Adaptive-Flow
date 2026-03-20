@@ -326,21 +326,45 @@ def _suggest_change(variable, direction, amount, material=None,
     """Build a config_change dict for a recommendation.
 
     *direction* is ``'reduce'`` or ``'increase'``.
-    Returns ``None`` if the current value can't be read.
+    Returns ``None`` if the current value can't be read or the suggestion
+    has already been applied.
     """
     current = _get_config_value(variable, material)
     if current is None:
         return None
+
+    # Prevent stacking: if this variable was recently applied through the
+    # dashboard and the current config matches the applied-to value, compute
+    # the suggestion from the PRE-change base so refreshing the page after
+    # clicking Apply won't keep incrementing the target.
+    base = current
+    ts, old_val, new_val = _last_change_for(variable, material)
+    if ts is not None and old_val is not None and new_val is not None:
+        try:
+            new_f = float(new_val)
+            old_f = float(old_val)
+            if abs(current - new_f) < 0.001:
+                base = old_f
+        except (ValueError, TypeError):
+            pass
+
     if direction == 'reduce':
-        suggested = round(current - amount, 4)
+        suggested = round(base - amount, 4)
     else:
-        suggested = round(current + amount, 4)
+        suggested = round(base + amount, 4)
     if minimum is not None and suggested < minimum:
         suggested = minimum
     if maximum is not None and suggested > maximum:
         suggested = maximum
+
+    # If current config already meets or exceeds the suggestion, skip
     if suggested == current:
         return None
+    if direction == 'increase' and current >= suggested:
+        return None
+    if direction == 'reduce' and current <= suggested:
+        return None
+
     return {
         'variable': variable,
         'current': current,
