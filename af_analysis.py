@@ -1274,6 +1274,8 @@ def analyze_dynz_zones(csv_file, bin_size=0.5, rows=None):
         for row in _rows:
                 try:
                     z = float(row.get('z_height', 0))
+                    if z <= 0.5:
+                        continue
                     dynz = int(row.get('dynz_active', 0))
                     accel = float(row.get('accel', 0))
                     speed = float(row.get('speed', 0))

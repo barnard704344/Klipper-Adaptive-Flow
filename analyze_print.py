@@ -113,7 +113,7 @@ def read_csv_timeline(csv_file, max_points=800, rows=None):
                 'pa': round(float(row.get('pa', 0)), 4),
                 'z': round(float(row.get('z_height', 0)), 2),
                 'a': int(float(row.get('accel', 0))),
-                'dz': int(row.get('dynz_active', 0)),
+                'dz': int(row.get('dynz_active', 0)) if float(row.get('z_height', 0)) > 0.5 else 0,
                 'fn': round(float(row.get('fan_pct', 0)), 1),
             })
         except (KeyError, ValueError):
@@ -188,7 +188,9 @@ def synthesize_live_summary(csv_path, rows=None):
                     speeds.append(float(row.get('speed', 0)))
                     if float(row.get('pa', 0)) > 0:
                         pa_vals.append(float(row['pa']))
-                    if int(row.get('dynz_active', 0)):
+                    z_h = float(row.get('z_height', 0))
+                    past_first_layer = z_h > 0.5
+                    if int(row.get('dynz_active', 0)) and past_first_layer:
                         dynz_active += 1
                         accel = float(row.get('accel', 99999))
                         if accel > 0:
@@ -1310,6 +1312,16 @@ def collect_dashboard_data(log_dir, summary_path=None, material=None):
     # === Load CSV once and pass to all analyzers ===
     if csv_rows is None:
         csv_rows = load_csv_rows(csv_path)
+
+    # Re-compute Speed Guard stats from CSV (excludes first-layer noise)
+    fresh = synthesize_live_summary(csv_path, rows=csv_rows)
+    if fresh and data['summary']:
+        data['summary']['dynz_active_pct'] = fresh['dynz_active_pct']
+        data['summary']['accel_min'] = fresh['accel_min']
+        dz = data['summary'].get('dynamic_z')
+        if isinstance(dz, dict):
+            dz['active_pct'] = fresh['dynz_active_pct']
+            dz['accel_min'] = fresh['accel_min']
 
     data['timeline'] = read_csv_timeline(csv_path, rows=csv_rows)
 
