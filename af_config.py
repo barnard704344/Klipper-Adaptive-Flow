@@ -53,7 +53,7 @@ _ALLOWED_VARIABLES = {
     'pa_deadband':              (0.0, 0.05),
     'pa_min_value':             (0.0, 0.2),
     'pa_max_reduction':         (0.0, 0.1),
-    # DynZ
+    # Speed Guard
     'dynz_enable':              (0, 1),
     'dynz_bin_height':          (0.1, 20.0),
     'dynz_speed_thresh':        (1.0, 500.0),

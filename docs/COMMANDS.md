@@ -5,7 +5,7 @@ Complete reference for all Klipper Adaptive Flow commands.
 ## Table of Contents
 
 - [Core Commands](#core-commands) - `AT_START`, `AT_END`
-- [Status Commands](#status-commands) - `AT_STATUS`, `AT_THERMAL_STATUS`, `AT_DYNZ_STATUS`
+- [Status Commands](#status-commands) - `AT_STATUS`, `AT_THERMAL_STATUS`, `AT_DYNZ_STATUS` (Speed Guard)
 - [Configuration Commands](#configuration-commands) - `AT_SET_PA`, `AT_GET_PA`, `AT_LIST_PA`, etc.
 - [Advanced Commands](#advanced-commands) - `AT_ENABLE`, `AT_DISABLE`, `AT_RESET_STATE`
 - [Quick Reference](#quick-reference) - Command summary table
@@ -102,14 +102,14 @@ Thermal faults: 0
 
 ### `AT_DYNZ_STATUS`
 
-Display Dynamic Z-Window (DynZ) stress zone status.
+Display Speed Guard status — shows which layers are being slowed down to protect print quality.
 
 **Example output:**
 ```
-Dynamic Z-Window Status
------------------------
+Speed Guard Status
+------------------
 Enabled: True
-Active: True (stress detected)
+Active: True (slowed down)
 Current Z: 15.2mm (bin 30)
 Bin height: 0.5mm
 Stress bins: 8, 15, 22, 29, 30
@@ -117,11 +117,11 @@ Accel reduction: 30%
 ```
 
 **Notes:**
-- Shows detected stress zones
+- Shows which Z-height bins have accumulated stress
 - Displays current acceleration reduction
-- Use to monitor dome/sphere detection
+- Use to check if Speed Guard is slowing tricky sections (domes, overhangs)
 
-**See also:** [DYNZ.md](DYNZ.md) for full documentation
+**See also:** [SPEED_GUARD.md](SPEED_GUARD.md) for full documentation
 
 ---
 
@@ -292,7 +292,7 @@ Manually disable adaptive temperature control.
 Reset all runtime state variables to defaults.
 
 **Notes:**
-- Clears DynZ stress data for current print
+- Clears Speed Guard stress data for current print
 - Resets thermal fault counters
 - Does **not** clear saved PA values
 - Use if the system gets into an unexpected state
@@ -420,7 +420,7 @@ Available profiles:
 | `AT_END` | Disable system | In `PRINT_END` macro before `TURN_OFF_HEATERS` |
 | `AT_STATUS` | Show full status | During print to monitor behavior |
 | `AT_THERMAL_STATUS` | Show thermal status | Check heater performance |
-| `AT_DYNZ_STATUS` | Show DynZ status | Check dome/sphere detection |
+| `AT_DYNZ_STATUS` | Show Speed Guard status | Check if tricky layers are being slowed |
 | `AT_SET_PA` | Save PA value | After PA calibration |
 | `AT_GET_PA` | Get PA value | Check a material's PA |
 | `AT_LIST_PA` | List all PA values | Check saved calibrations |
@@ -458,7 +458,7 @@ AT_LIST_PA  # Verify it was saved
 ```gcode
 # During print, in console
 AT_STATUS        # Check overall behavior
-AT_DYNZ_STATUS   # Check DynZ stress zones
+AT_DYNZ_STATUS   # Check Speed Guard status
 ```
 
 ### Testing Material Profiles
@@ -516,5 +516,5 @@ AT_SET_PA MATERIAL=PLA PA=0.050  # Correct it
 
 - [README.md](../README.md) - Installation and quick start
 - [CONFIGURATION.md](CONFIGURATION.md) - Detailed configuration reference
-- [DYNZ.md](DYNZ.md) - Dynamic Z-Window documentation
+- [SPEED_GUARD.md](SPEED_GUARD.md) - Speed Guard documentation
 - [ANALYSIS.md](ANALYSIS.md) - Print analysis and dashboard

@@ -234,7 +234,7 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
                 'pct': round(100 * count / len(csv_accel_values), 1),
             }
         else:
-            # Unknown — might be Klipper default or DynZ override
+            # Unknown — might be Klipper default or Speed Guard override
             result['accel_map'][str(accel_val)] = {
                 'features': ['Unknown / Klipper default'],
                 'count': count,
@@ -933,25 +933,17 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  f'{feature_name}: {flow} mm\u00b3/s ({int(flow / safe_flow * 100)}% of '
                  f'Revo {variant} capacity). Speed is {purpose}-limited \u2014 current value is appropriate.', flow)
         elif _is_fast_printer and flow < safe_flow * 0.65 and line_w > 0 and layer > 0:
-            # Under-utilizing a fast printer — suggest speed increase
-            # 65% threshold: on a corexy with a high-flow hotend, anything under
-            # ~65% utilization is leaving significant time on the table
             optimal = _optimal_speed(line_w, layer, quality_factor=0.85)
             if optimal and speed < optimal * 0.70:
-                # Compute theoretical max for reference
                 max_theoretical = int(optimal * 0.90)
                 max_theoretical = min(max_theoretical, _fw_max_vel)
-                # Use the data-backed speed_increase_pct from boost
-                # optimization when available — this ensures the per-speed
-                # suggestions match the Optimization Analysis section.
                 if boost_speed_increase_pct is not None and boost_speed_increase_pct >= 5:
                     suggest_speed = int(speed * (1 + boost_speed_increase_pct / 100))
                 else:
-                    # No actual print data — cap at 50% as a safe default
                     suggest_speed = int(speed * 1.5)
-                suggest_speed = max(suggest_speed, int(speed * 1.10))  # at least 10% increase
-                suggest_speed = min(suggest_speed, max_theoretical)    # don't exceed theoretical
-                suggest_speed = min(suggest_speed, _fw_max_vel)        # cap at firmware limit
+                suggest_speed = max(suggest_speed, int(speed * 1.10))
+                suggest_speed = min(suggest_speed, max_theoretical)
+                suggest_speed = min(suggest_speed, _fw_max_vel)
                 suggest_flow = _flow(suggest_speed, line_w, layer)
                 pct_inc = int((suggest_speed / speed - 1) * 100)
                 _add(setting, category, f'{int(speed)} mm/s', 'warn',

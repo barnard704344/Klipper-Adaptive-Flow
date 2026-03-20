@@ -519,7 +519,7 @@ class ExtruderMonitor:
                     # Thermal lag
                     'thermal_lag_sum': 0.0,
                     'thermal_lag_max': 0.0,
-                    # DynZ stats
+                    # Speed Guard stats
                     'dynz_active_samples': 0,
                     'accel_min': 999999,
                     # Fan stats
@@ -701,11 +701,11 @@ class ExtruderMonitor:
                 self._log_stats['thermal_lag_sum'] += thermal_lag
                 self._log_stats['thermal_lag_max'] = max(self._log_stats['thermal_lag_max'], thermal_lag)
                 
-                # DynZ stats
+                # Speed Guard stats
                 if dynz_active:
                     self._log_stats['dynz_active_samples'] += 1
-                if accel > 0:
-                    self._log_stats['accel_min'] = min(self._log_stats['accel_min'], accel)
+                    if accel > 0:
+                        self._log_stats['accel_min'] = min(self._log_stats['accel_min'], accel)
                 
                 # Fan stats
                 self._log_stats['fan_sum'] += fan_pct
@@ -821,7 +821,7 @@ class ExtruderMonitor:
                             'pa_avg': round(self._log_stats['pa_sum'] / samples, 4) if samples > 0 else 0,
                         },
                         
-                        # Dynamic Z-Window stats
+                        # Dynamic Z-Window (Speed Guard) stats
                         'dynamic_z': {
                             'active_pct': dynz_active_pct,
                             'accel_min': accel_min,
@@ -863,7 +863,7 @@ class ExtruderMonitor:
                     if ba['high_risk_events'] > 0 or ba['accel_changes'] > 10:
                         gcmd.respond_info(f"⚠️  BANDING RISK DETECTED: {ba['high_risk_events']} high-risk events")
                         gcmd.respond_info(f"  Likely culprit: {ba['likely_culprit']}")
-                        gcmd.respond_info(f"  Events: Accel changes:{ba['accel_changes']}, PA changes:{ba['pa_changes']}, DynZ transitions:{ba['dynz_transitions']}, Temp overshoots:{ba['temp_overshoots']}")
+                        gcmd.respond_info(f"  Events: Accel changes:{ba['accel_changes']}, PA changes:{ba['pa_changes']}, Speed Guard transitions:{ba['dynz_transitions']}, Temp overshoots:{ba['temp_overshoots']}")
                     else:
                         gcmd.respond_info(f"✓ Banding risk low: avg {ba['avg_risk']:.1f}/10, {ba['high_risk_events']} high-risk events")
                                         # Feature summary
@@ -882,7 +882,7 @@ class ExtruderMonitor:
                     
                     dz = summary['dynamic_z']
                     if dz['active_pct'] > 0:
-                        gcmd.respond_info(f"AT_LOG: DynZ: active {dz['active_pct']}% of print, min accel {dz['accel_min']}")
+                        gcmd.respond_info(f"AT_LOG: Speed Guard: active {dz['active_pct']}% of print, min accel {dz['accel_min']}")
                     
                     fn = summary['fan']
                     gcmd.respond_info(f"AT_LOG: Fan: {fn['fan_min']}-{fn['fan_max']}% (avg {fn['fan_avg']:.0f}%), {fn['fan_adjustments']} adjustments")
@@ -955,9 +955,9 @@ class ExtruderMonitor:
         dynz_per_hr = dynz_trans / duration_hrs
         temp_per_hr = temp_over / duration_hrs
         
-        # Determine DynZ relief method to correctly attribute accel changes
-        # When DynZ uses 'temp_reduction', it does NOT change acceleration,
-        # so accel changes are from the slicer, not DynZ.
+        # Determine Speed Guard relief method to correctly attribute accel changes
+        # When Speed Guard uses 'temp_reduction', it does NOT change acceleration,
+        # so accel changes are from the slicer, not Speed Guard.
         dynz_uses_accel = False
         try:
             cfg = self.printer.lookup_object('gcode_macro _AUTO_TEMP_CORE')
@@ -975,20 +975,20 @@ class ExtruderMonitor:
         }
         
         if dynz_uses_accel:
-            # DynZ is switching acceleration — attribute accel changes to DynZ
+            # Speed Guard is switching acceleration — attribute accel changes to it
             scores['dynz_accel_switching'] = dynz_per_hr * 10 + accel_per_hr
             if dynz_per_hr > 10:
                 scores['dynz_accel_switching'] += 50
         else:
-            # DynZ uses temp reduction — it never touches acceleration
-            # DynZ transitions may still cause temp swings, score that separately
+            # Speed Guard uses temp reduction — it never touches acceleration
+            # Speed Guard transitions may still cause temp swings, score that separately
             scores['dynz_temp_swings'] = dynz_per_hr * 5
             # All accel changes come from slicer G-code
             if accel_per_hr > 50:
                 scores['slicer_accel_control'] = accel_per_hr * 2
         
-        # Special case: frequent accel changes without DynZ = slicer issue
-        # (also relevant in accel_limit mode if DynZ isn't firing)
+        # Special case: frequent accel changes without Speed Guard = slicer issue
+        # (also relevant in accel_limit mode if Speed Guard isn't firing)
         if dynz_uses_accel and accel_per_hr > 50 and dynz_per_hr < 5:
             scores['slicer_accel_control'] = accel_per_hr * 2
         

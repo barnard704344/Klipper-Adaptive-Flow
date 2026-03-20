@@ -69,7 +69,7 @@ gcode:
 # ─────────────────────────────────────────────────────────────
 [gcode_macro PRINT_END]
 gcode:
-    # Save learned DynZ values and disable Adaptive Flow
+    # Save learned Speed Guard values and disable Adaptive Flow
     AT_END
 
     # Turn off heaters and fan

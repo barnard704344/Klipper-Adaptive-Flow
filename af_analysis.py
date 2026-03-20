@@ -3,7 +3,7 @@ Adaptive Flow — Per-print analysis functions.
 
 This module contains all the statistical analysis functions that operate on
 a single print's CSV log: banding detection, Z-height heatmaps, thermal lag,
-heater headroom, PA stability, DynZ zone mapping, speed/flow distribution,
+heater headroom, PA stability, Speed Guard zone mapping, speed/flow distribution,
 and boost optimization.
 
 Import from this module via analyze_print.py or af_slicer as needed.
@@ -101,13 +101,13 @@ def print_single_summary(summary, path):
     print(f"Boost    : avg {avg_boost:.1f}\u00b0C / max {max_boost:.1f}\u00b0C")
     print(f"Heater   : avg {avg_pwm:.0%} / max {max_pwm:.0%}")
 
-    # DynZ
+    # Speed Guard
     dynz_pct  = summary.get('dynz_active_pct', 0)
     accel_min = summary.get('accel_min', 0)
     if dynz_pct > 0:
-        print(f"DynZ     : active {dynz_pct}% of print, min accel {accel_min} mm/s\u00b2")
+        print(f"Speed Guard: active {dynz_pct}% of print, min accel {accel_min} mm/s\u00b2")
     else:
-        print(f"DynZ     : inactive (no stress zones)")
+        print(f"Speed Guard: inactive (no stress zones)")
 
     # Banding summary from extruder_monitor
     ba = summary.get('banding_analysis', {})
@@ -295,7 +295,7 @@ def compute_extrusion_quality(timeline):
     # 4. PRESSURE STABILITY — accel-induced pressure transients
     #    Large accel changes during high-flow extrusion cause pressure
     #    spikes that PA can't fully compensate for.
-    #    EXCLUDES DynZ-driven accel changes — those are intentional quality
+    #    EXCLUDES Speed Guard-driven accel changes — those are intentional quality
     #    protection, not slicer-induced pressure problems.
     # ------------------------------------------------------------------
     accels = [pt.get('a', 0) for pt in active]
@@ -309,8 +309,8 @@ def compute_extrusion_quality(timeline):
         ad = abs(accels[i] - accels[i - 1])
         if ad <= 200:
             continue
-        # Skip transitions where DynZ is active on either side — DynZ
-        # deliberately changes accel to protect quality; these aren't
+        # Skip transitions where Speed Guard is active on either side —
+        # it deliberately changes accel to protect quality; these aren't
         # slicer-induced pressure problems.
         if dynz_flags[i] or dynz_flags[i - 1]:
             dynz_excluded += 1
@@ -519,7 +519,7 @@ def _diagnose_fix(culprit):
     """Return a human-readable diagnosis and fix for a banding culprit."""
     fixes = {
         'dynz_accel_switching': (
-            "DynZ changing acceleration causes banding",
+            "Speed Guard changing acceleration causes banding",
             "Set variable_dynz_relief_method: 'temp_reduction'",
         ),
         'pa_oscillation': (
@@ -561,7 +561,7 @@ def print_banding_report(agg):
           f"(avg {agg.get('avg_accel_changes_per_print', 0):.1f}/print)")
     print(f"PA changes: {agg['total_pa_changes']} "
           f"(avg {agg.get('avg_pa_changes_per_print', 0):.1f}/print)")
-    print(f"DynZ transitions: {agg['total_dynz_transitions']} "
+    print(f"Speed Guard transitions: {agg['total_dynz_transitions']} "
           f"(avg {agg.get('avg_dynz_transitions_per_print', 0):.1f}/print)")
     print(f"Temp overshoots: {agg['total_temp_overshoots']}\n")
 
@@ -715,7 +715,7 @@ def print_z_map(bins, bin_size=0.5):
             if pz['pa']:
                 parts.append(f"{pz['pa']} PA changes")
             if pz['dynz']:
-                parts.append(f"{pz['dynz']} DynZ transitions")
+                parts.append(f"{pz['dynz']} Speed Guard transitions")
             if parts:
                 print(f"    Caused by: {', '.join(parts)}")
     else:
@@ -1260,11 +1260,11 @@ def print_pa_stability_report(pa_data):
 
 
 # =============================================================================
-# DYNZ ZONE MAP
+# SPEED GUARD ZONE MAP
 # =============================================================================
 
 def analyze_dynz_zones(csv_file, bin_size=0.5, rows=None):
-    """Analyze DynZ activation patterns by Z-height."""
+    """Analyze Speed Guard activation patterns by Z-height."""
     bins = defaultdict(lambda: {
         'samples': 0, 'dynz_active': 0, 'transitions': 0,
         'accel_sum': 0, 'stress_sum': 0,
@@ -1311,17 +1311,17 @@ def analyze_dynz_zones(csv_file, bin_size=0.5, rows=None):
 
 
 def print_dynz_map(zones, bin_size=0.5):
-    """Print the DynZ zone map to terminal."""
+    """Print the Speed Guard zone map to terminal."""
     if not zones:
-        print("No DynZ data (DynZ may be inactive this print).")
+        print("No Speed Guard data (may be inactive this print).")
         return
     print("\n" + "=" * 70)
-    print("  DYNZ ZONE MAP")
+    print("  SPEED GUARD ZONE MAP")
     print("=" * 70)
 
     any_active = any(v['active_pct'] > 0 for v in zones.values())
     if not any_active:
-        print("\n  \u2713 DynZ was not active at any Z-height.")
+        print("\n  \u2713 Speed Guard was not active at any Z-height.")
         print("=" * 70 + "\n")
         return
 
@@ -1353,12 +1353,12 @@ def print_dynz_map(zones, bin_size=0.5):
     if high_zones:
         print(f"  High-activity zones: "
               f"{', '.join(f'{z:.1f}mm' for z in sorted(high_zones))}")
-        print(f"\n  \u26a0 DynZ heavily active at those heights.")
+        print(f"\n  \u26a0 Speed Guard heavily active at those heights.")
         print("    \u2192 Check for thin walls, overhangs, or rapid geometry changes")
         print("    \u2192 If banding appears there, try "
               "dynz_relief_method: 'temp_reduction'")
     else:
-        print(f"\n  \u2713 DynZ activation is mild throughout.")
+        print(f"\n  \u2713 Speed Guard activation is mild throughout.")
 
     print("\n" + "=" * 70 + "\n")
 
@@ -1802,6 +1802,8 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
                 pass
 
     suggestions = []
+    per_setting_changes = []
+    _total_features = 0
     if speed_increase_pct >= 10:
         new_avg_flow = round(avg_flow * (1 + speed_increase_pct / 100), 1)
         mult = 1 + speed_increase_pct / 100
@@ -1823,20 +1825,33 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
                     cur_v = float(cur)
                 except (ValueError, TypeError):
                     continue
+                _total_features += 1
                 new_v = int(cur_v * mult)
                 # Cap at flow limit
                 lw = nozzle_d + 0.05
                 max_v = int(safe_flow * 0.85 / (lw * layer_h)) if lw * layer_h > 0 else new_v
                 new_v = min(new_v, max_v)
                 if new_v > cur_v:
-                    speed_lines.append(f'{label}: {int(cur_v)} → {new_v} mm/s')
+                    speed_lines.append(f'{label}: {int(cur_v)} \u2192 {new_v} mm/s')
                     per_setting_changes.append({'key': sk, 'current': int(cur_v), 'suggested': new_v})
 
-        detail_text = (f'Increase speeds by ~{speed_increase_pct}% — avg flow rises from '
-                       f'{avg_flow:.1f} to ~{new_avg_flow} mm³/s '
-                       f'(safe limit: {safe_flow} mm³/s).')
-        if speed_lines:
-            detail_text += '\n' + '  •  '.join([''] + speed_lines)
+        _n_can = len(speed_lines)
+        if _n_can == 0:
+            # Headroom exists on paper but all features already at flow limit
+            detail_text = (f'Average flow ({avg_flow:.1f} mm\xb3/s) is well below the '
+                           f'safe limit ({safe_flow} mm\xb3/s), but all feature speeds '
+                           f'are already near the flow ceiling. '
+                           f'No individual speed changes recommended.')
+        elif _total_features > 0 and _n_can < _total_features:
+            at_limit = _total_features - _n_can
+            detail_text = (f'{_n_can} of {_total_features} features can go faster '
+                           f'({at_limit} already near flow limit):')
+            detail_text += '\n' + '  \u2022  '.join([''] + speed_lines)
+        else:
+            detail_text = (f'Increase speeds by ~{speed_increase_pct}% \u2014 avg flow rises from '
+                           f'{avg_flow:.1f} to ~{new_avg_flow} mm\xb3/s '
+                           f'(safe limit: {safe_flow} mm\xb3/s).')
+            detail_text += '\n' + '  \u2022  '.join([''] + speed_lines)
 
         suggestions.append({
             'what': 'Increase print speeds',
@@ -1928,15 +1943,36 @@ def analyze_boost_optimization(csv_file, summary=None, hotend_info=None,
         })
 
     # ── Overall verdict ──
-    if speed_increase_pct >= 25:
+    # Use actual per-feature results (not global %) so the verdict matches reality.
+    _n_can_increase = len(per_setting_changes)
+    _n_total_feat = _total_features
+
+    if speed_increase_pct >= 25 and _n_can_increase >= 3:
         verdict = 'significant_headroom'
         verdict_text = (f'Your printer has significant room to go faster. '
-                        f'All systems had headroom — you could increase speeds by '
+                        f'All systems had headroom \u2014 you could increase speeds by '
                         f'~{speed_increase_pct}% without exceeding thermal or flow limits.')
-    elif speed_increase_pct >= 10:
+    elif speed_increase_pct >= 25 and 0 < _n_can_increase < 3:
         verdict = 'moderate_headroom'
-        verdict_text = (f'There\'s moderate room for improvement (~{speed_increase_pct}% faster). '
-                        f'The printer handled this print comfortably.')
+        verdict_text = (f'{_n_can_increase} of {_n_total_feat} feature speeds can increase '
+                        f'(the rest are already near the flow limit). '
+                        f'Most speeds are well-matched to your hardware.')
+    elif speed_increase_pct >= 10 and _n_can_increase > 0:
+        verdict = 'moderate_headroom'
+        if _n_can_increase == 1:
+            _feat_name = per_setting_changes[0]['key'].replace('_speed', '').replace('_', ' ').title()
+            verdict_text = (f'{_feat_name} speed has room to increase. '
+                            f'All other feature speeds are already near the flow limit.')
+        elif _n_total_feat > 0 and _n_can_increase < _n_total_feat:
+            verdict_text = (f'{_n_can_increase} of {_n_total_feat} feature speeds can increase. '
+                            f'The rest are already near the flow limit.')
+        else:
+            verdict_text = (f'Room for improvement (~{speed_increase_pct}% faster). '
+                            f'The printer handled this print comfortably.')
+    elif speed_increase_pct >= 10 and _n_can_increase == 0:
+        verdict = 'well_tuned'
+        verdict_text = ('Average flow is below the safe limit, but all feature speeds '
+                        'are already near the flow ceiling. Speeds are well-matched to your hardware.')
     elif limiting_factors:
         verdict = 'at_limit'
         verdict_text = (f'The printer was near its limits on {bottleneck}. '

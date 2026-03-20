@@ -30,7 +30,7 @@ Five cards along the top give an at-a-glance health overview. Each card has a **
 | **Extrusion Quality** | Weighted 0–100 composite score covering thermal stability, flow steadiness, heater reserve, and pressure consistency |
 | **Temp Boost** | Average and max temperature boost applied by Adaptive Flow |
 | **Heater Duty** | Average and max PWM duty cycle — flags saturation risk |
-| **DynZ** | Percentage of layers where DynZ stress relief was active |
+| **Speed Guard** | Percentage of layers where Speed Guard slowed acceleration to protect quality |
 
 ### Tab Navigation
 
@@ -43,7 +43,7 @@ Below the cards, tabs switch between analysis views. Each tab has a **?** toolti
 | **Z-Height** | Banding risk bar chart by Z-layer + problem zone breakdown |
 | **Heater** | PWM vs flow-rate brackets + thermal lag episodes |
 | **PA** | Pressure Advance value over time + oscillation zone table |
-| **DynZ** | DynZ activation percentage and stress by Z-height |
+| **Speed Guard** | Speed Guard activation by Z-height — which layers were slowed and how often |
 | **Distribution** | Speed and flow rate histograms — where your printer spends its time |
 
 Every chart includes a description paragraph explaining what you're looking at — colour coding, what "good" looks like, and what to watch for. No prior knowledge required.
@@ -115,7 +115,7 @@ Two stacked charts:
 
 ### Z-Height Tab
 
-Bar chart showing banding risk score by Z-layer bin (default 0.5mm per bin). Problem zones (score ≥5) are highlighted. Below the chart, a breakdown lists each problem zone with its cause (accel changes, PA changes, DynZ transitions).
+Bar chart showing banding risk score by Z-layer bin (default 0.5mm per bin). Problem zones (score ≥5) are highlighted. Below the chart, a breakdown lists each problem zone with its cause (accel changes, PA changes, Speed Guard transitions).
 
 ### Heater Tab
 
@@ -129,9 +129,9 @@ Two sections:
 1. **PA timeline chart** — PA value plotted over time, with oscillation zones highlighted
 2. **Oscillation zone table** — start time, duration, number of changes, and Z range for each zone
 
-### DynZ Tab
+### Speed Guard Tab
 
-Bar chart showing DynZ activation percentage and stress score by Z-height bin. High-activity zones are flagged with transition counts and average acceleration.
+Bar chart showing which layers were slowed down and how often. Yellow bars show the percentage of time each layer ran at reduced acceleration. Red bars show how often speed switched between fast and slow at each height — frequent switching can itself cause visible lines.
 
 ### Distribution Tab
 
@@ -198,7 +198,7 @@ Each CSV sample is scored for banding risk:
 | Accel change >500 mm/s² | +3 |
 | PA change >0.005 | +2 |
 | Temp change >3°C | +2 |
-| DynZ state transition | +2 |
+| Speed Guard transition | +2 |
 | Temp overshoot >5°C | +1 |
 
 Score ≥5 = high-risk event (likely visible artifact on the part).
@@ -209,7 +209,7 @@ When banding events are detected, the dashboard diagnoses the most likely cause:
 
 | Culprit | Cause | Suggested Fix |
 |---------|-------|---------------|
-| `dynz_accel_switching` | DynZ changing acceleration mid-layer | `dynz_relief_method: 'temp_reduction'` |
+| `dynz_accel_switching` | Speed Guard changing acceleration mid-layer | `dynz_relief_method: 'temp_reduction'` |
 | `pa_oscillation` | PA bouncing rapidly | Lower `pa_boost_k` or increase `pa_deadband` |
 | `temp_instability` | Temperature oscillating | Lower ramp rates, check PID tuning |
 | `slicer_accel_control` | Slicer inserting accel G-code | Reduce distinct accel values in slicer, or match inner/outer wall accels. See Slicer tab for specific settings |
@@ -301,14 +301,14 @@ The extruder monitor logs these columns for each sample (one row per ~0.5 second
 | `pa` | Current Pressure Advance value |
 | `z_height` | Current Z position (mm) |
 | `predicted_flow` | Lookahead predicted flow rate (mm³/s) |
-| `dynz_active` | DynZ stress relief active (0 or 1) |
+| `dynz_active` | Speed Guard active — 1 if layer is being slowed, 0 if at full speed |
 | `accel` | Current acceleration (mm/s²) |
 | `fan_pct` | Part cooling fan percentage (0–100) |
 | `pa_delta` | PA change from previous sample |
 | `accel_delta` | Acceleration change from previous sample |
 | `temp_target_delta` | Target temp change from previous sample |
 | `temp_overshoot` | Actual − Target temperature |
-| `dynz_transition` | DynZ state change (1=ON, −1=OFF, 0=no change) |
+| `dynz_transition` | Speed Guard state change (1=slowed, −1=restored, 0=no change) |
 | `layer_transition` | Layer change detected (1 or 0) |
 | `banding_risk` | Composite risk score 0–10 |
 | `event_flags` | Human-readable events (e.g., `ACCEL_CHG:+1200`) |
@@ -346,7 +346,7 @@ python3 analyze_print.py --headroom
 # PA stability
 python3 analyze_print.py --pa-stability
 
-# DynZ zone map
+# Speed Guard zone map
 python3 analyze_print.py --dynz-map
 
 # Speed/flow distribution

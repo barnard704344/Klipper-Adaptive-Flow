@@ -15,7 +15,7 @@ Usage:
     python3 analyze_print.py --lag                   # Thermal lag report
     python3 analyze_print.py --headroom              # Heater headroom analysis
     python3 analyze_print.py --pa-stability          # PA stability analysis
-    python3 analyze_print.py --dynz-map              # DynZ zone map
+    python3 analyze_print.py --dynz-map              # Speed Guard zone map
     python3 analyze_print.py --distribution          # Speed/flow distribution
     python3 analyze_print.py --serve                 # Web dashboard on port 7127
 
@@ -190,9 +190,9 @@ def synthesize_live_summary(csv_path, rows=None):
                         pa_vals.append(float(row['pa']))
                     if int(row.get('dynz_active', 0)):
                         dynz_active += 1
-                    accel = float(row.get('accel', 99999))
-                    if accel > 0:
-                        accel_min = min(accel_min, accel)
+                        accel = float(row.get('accel', 99999))
+                        if accel > 0:
+                            accel_min = min(accel_min, accel)
                     if int(row.get('banding_risk', 0)) >= 5:
                         high_risk += 1
                     duration_s = float(row.get('elapsed_s', 0))
@@ -246,14 +246,14 @@ _CULPRIT_INFO = {
         'fix': 'Reduce ramp_up_rate by 1\u20132 \u00b0C/s (try 2.0\u20133.0). Increase flow_smoothing to 0.5+ to dampen flow spikes that trigger temp changes.',
     },
     'dynz_accel_switching': {
-        'name': 'DynZ acceleration switching',
-        'explain': 'The Dynamic Z-Window system is frequently changing acceleration limits as it detects stress zones. Each switch can cause a visible line.',
-        'fix': 'Increase dynz_min_accel to soften the acceleration drops (try 2000\u20133000). Or increase dynz_activate_score so DynZ only triggers on clearly stressed zones.',
+        'name': 'Speed Guard acceleration switching',
+        'explain': 'Speed Guard is frequently changing acceleration limits as it detects tricky sections. Each switch can cause a brief extrusion inconsistency that shows as a line on the print.',
+        'fix': 'Increase dynz_min_accel to soften the slowdowns (try 2000\u20133000). Or increase dynz_activate_score so it only triggers on clearly stressed layers.',
     },
     'dynz_temp_swings': {
-        'name': 'DynZ temperature swings',
-        'explain': 'DynZ is using temperature reduction for stress relief, causing frequent temp target changes.',
-        'fix': 'Increase dynz_activate_score so it triggers less often. Or switch dynz_relief_method to "accel_limit" if you prefer speed reduction over temp changes.',
+        'name': 'Speed Guard temperature swings',
+        'explain': 'Speed Guard is reducing temperature for stress relief, causing frequent temp target changes.',
+        'fix': 'Increase dynz_activate_score so it triggers less often. Or switch dynz_relief_method to "accel_limit" if you prefer slowdowns over temp changes.',
     },
     'no_obvious_culprit': {
         'name': 'No clear cause',
@@ -880,11 +880,11 @@ def generate_recommendations(data):
             'action': 'Flow demands were low. You could increase flow_k slightly if you want more responsiveness at higher speeds.',
         })
 
-    # --- DynZ ---
+    # --- Speed Guard ---
     if dynz_pct > 20:
         recs.append({
-            'severity': 'info', 'category': 'DynZ',
-            'title': f'DynZ active {dynz_pct}% of layers',
+            'severity': 'info', 'category': 'Speed Guard',
+            'title': f'Speed Guard active {dynz_pct}% of layers',
             'detail': 'Very complex geometry required frequent acceleration reduction.',
             'action': 'This is normal for domes/spheres. If print quality is fine, no changes needed. If too slow, increase dynz_min_accel.',
         })
@@ -1768,8 +1768,8 @@ d:'Click for print overview and feature summary.'},
 d:'Click for thermal boost breakdown.'},
 {l:'Heater Duty',v:((s.avg_pwm||0)*100).toFixed(0)+'%',s:'max '+((s.max_pwm||0)*100).toFixed(0)+'%',w:(s.avg_pwm||0)>0.85,ck:'showHeater()',
 d:'Click for heater headroom analysis.'},
-{l:'DynZ',v:dp>0?dp+'%':'Off',s:dp>0?'min accel '+(s.accel_min||0):'inactive',ck:'showDynZ()',
-d:'Click for DynZ zone breakdown.'},
+{l:'Speed Guard',v:dp>0?dp+'%':'Off',s:dp>0?'slowed to '+(s.accel_min||0)+' mm/s\xb2':'not needed',ck:'showDynZ()',
+d:'Slows down tricky sections (overhangs, curves) to prevent artifacts. Click for details.'},
 {l:'Quality',v:qs!=null?'<span style="color:'+qc+'">'+qs+'/100</span>':'\u2014',s:qSub,w:qs!=null&&qs<60,ck:qs!=null?'showEQ()':null,
 d:'Click for full breakdown. T=Thermal F=Flow H=Heater P=Pressure.'}];
 c.innerHTML=items.map(function(x){return '<div class="cd'+(x.ck?' eq-click':'')+
@@ -1819,13 +1819,18 @@ h+='</div>';
 h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Active Features</div>';
 h+=_statRow('Auto Temperature',ft.auto_temp?'\u2705 On':'\u274c Off');
 h+=_statRow('Dynamic PA',ft.dynamic_pa?'\u2705 On':'\u274c Off');
-h+=_statRow('Dynamic Z (DynZ)',ft.dynamic_z?'\u2705 On':'\u274c Off');
+h+=_statRow('Speed Guard',ft.dynamic_z?'\u2705 On':'\u274c Off');
+h+='<div style="font-size:11px;color:#8b949e;line-height:1.4;margin:-4px 0 4px 0">Auto-slows acceleration at tricky layers (overhangs, curves, domes) to prevent ringing and artifacts.</div>';
 if(hi.nozzle_type){
 h+='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Hotend</div>';
 h+=_statRow('Nozzle','Revo '+hi.nozzle_type+' '+hi.nozzle_diameter+'mm');
 h+=_statRow('Heater',hi.heater_wattage+'W');
 h+=_statRow('Safe Flow',hi.safe_flow+' mm\xb3/s');
-h+=_statRow('Peak Flow',hi.peak_flow+' mm\xb3/s')}
+h+=_statRow('Peak Flow',hi.peak_flow+' mm\xb3/s');
+h+='<div style="margin-top:6px;padding:8px 10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:11px;color:#8b949e;line-height:1.5">';
+h+='<b style="color:#3fb950">Safe</b> = max sustained flow (your speed target). ';
+h+='<b style="color:#d29922">Peak</b> = brief burst max (heater can\u2019t sustain this). ';
+h+='Aim to keep average flow near Safe; brief spikes above are OK \u2014 Adaptive Flow compensates with temp boost.</div>'}
 if(bo.verdict_text){
 h+='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #21262d;font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Speed Headroom</div>';
 h+=_statRow('Verdict',bo.verdict_text);
@@ -1892,16 +1897,23 @@ var dp=dz.active_pct||s.dynz_active_pct||0,amin=dz.accel_min||s.accel_min||0;
 var bc=dp>30?'#f85149':dp>15?'#d29922':'#3fb950';
 var h='<div class="eq-overall"><div class="eq-big" style="color:'+bc+'">'+dp+
 '%<span style="font-size:18px;color:#8b949e"> active</span></div>'+
-'<div class="eq-grade" style="color:#8b949e">min accel '+amin+' mm/s\xb2</div></div>';
+'<div class="eq-grade" style="color:#8b949e">lowest accel: '+amin+' mm/s\xb2</div></div>';
+h+='<div style="padding:8px 10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:11px;color:#8b949e;line-height:1.5;margin-bottom:14px">';
+h+='Speed Guard monitors each layer for stress (high speed + high flow + heater strain). ';
+h+='When a layer looks risky, it temporarily <b style="color:#e6edf3">reduces acceleration</b> to prevent ringing and artifacts, then restores full speed on calmer layers.';
+h+='</div>';
 var ba=s.banding_analysis||{};
 h+='<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #21262d">';
-h+=_statRow('DynZ Transitions',ba.dynz_transitions||0);
-h+=_statRow('Accel Changes',ba.accel_changes||0);
-h+=_statRow('Likely Culprit',(ba.likely_culprit||'\u2014').replace(/_/g,' '));
+h+=_statRow('Times Slowed',ba.dynz_transitions||0);
+h+=_statRow('Slicer Accel Changes',ba.accel_changes||0);
+var culprit=(ba.likely_culprit||'\u2014').replace(/_/g,' ');
+if(culprit==='slicer accel control')culprit='Slicer sends many different accel values';
+else if(culprit==='no obvious culprit')culprit='No clear cause \u2014 print looks good';
+h+=_statRow('Banding Cause',culprit);
 h+='</div>';
 var zkeys=Object.keys(zones).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 if(zkeys.length>0){
-h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Z-Height Zones (showing high-activity)</div>';
+h+='<div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px">Layers Where Speed Changed</div>';
 var shown=0;
 for(var i=0;i<zkeys.length&&shown<12;i++){
 var z=zones[zkeys[i]];
@@ -1911,9 +1923,9 @@ z.samples+' samples \u2022 avg accel '+z.avg_accel+' \u2022 stress '+(z.avg_stre
 (z.transitions>0?' \u2022 '+z.transitions+' transitions':''));
 shown++}}
 if(shown===0){
-h+='<div style="font-size:11px;color:#8b949e;margin-bottom:8px">DynZ was active at 100% across all zones \u2014 consistently protecting quality.</div>'}}
-h+='<div class="eq-weights">0% = no intervention \u2022 1\u201315% = normal \u2022 15%+ = complex geometry</div>';
-_showModal('Dynamic Z Breakdown',h)}
+h+='<div style="font-size:11px;color:#8b949e;margin-bottom:8px">Speed Guard was active on every layer \u2014 consistently protecting quality throughout the print.</div>'}}
+h+='<div class="eq-weights">0% = full speed (no intervention) \u2022 1\u201315% = occasional slowdowns (normal) \u2022 15%+ = frequent slowdowns (complex geometry)</div>';
+_showModal('Speed Guard',h)}
 
 function _eqTip(val,tips){
 if(val>=85)return '';
@@ -1952,7 +1964,7 @@ h+=_eqTip(eq.heater,[
 h+=_eqBar('\u2699\ufe0f Pressure Stability',eq.pressure,
 (dt.transient_count||0)+' accel transients ('+(dt.transient_pct||0).toFixed(1)+'% of samples). '+
 'Avg impact: '+(dt.avg_transient_impact||0).toFixed(2)+'.'+
-(dt.dynz_excluded_transients?' '+dt.dynz_excluded_transients+' accel changes managed by DynZ (excluded).':''),15);
+(dt.dynz_excluded_transients?' '+dt.dynz_excluded_transients+' accel changes managed by Speed Guard (excluded).':''),15);
 h+=_eqTip(eq.pressure,[
 'In your slicer, <b>set all print-move accelerations to the same value</b> (use your Y-axis input shaper limit). Only travel moves should use higher accel. This eliminates the pressure waves PA cannot absorb.',
 'Pressure is mostly stable. To improve, bring slicer acceleration values for walls/infill/top closer together.']);
@@ -1965,7 +1977,7 @@ var allTabs=[
 {id:'zh',l:'Z-Height',tip:'Shows which layers had the most thermal stress. Tall bars = layers where banding is most likely.'},
 {id:'ht',l:'Heater',tip:'Is your heater keeping up? Shows power usage at different flow rates. Bars near 100% mean the heater is maxed out.'},
 {id:'pa',l:'PA',tip:'Pressure Advance value over time. A flat line means stable extrusion. Wobbling means the system is hunting.'},
-{id:'dz',l:'DynZ',tip:'Dynamic Z-offset adjustments for first layers and overhangs. Shows where acceleration was reduced to protect quality.'},
+{id:'dz',l:'Speed Guard',tip:'Auto-slows acceleration at tricky layers (overhangs, curves, domes) to prevent ringing and artifacts. Chart shows which layers were slowed and how often.'},
 {id:'ds',l:'Distribution',tip:'How your print spent its time across different speeds and flow rates. Helps identify if you are pushing too hard.'}];
 var at='sl',tb=document.getElementById('tb'),ca=document.getElementById('ca');
 function buildTabs(){
@@ -2048,7 +2060,8 @@ h+='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-
 '<span style="background:linear-gradient(135deg,#1f6feb,#58a6ff);border-radius:8px;padding:5px 12px;font-weight:700;color:#fff;font-size:13px">Revo '+(hi.nozzle_type||'HF')+'</span>'+
 '<span style="color:#e6edf3;font-size:13px">E3D Revo '+(hi.nozzle_type||'HF')+' '+ndLabel+'mm \u2022 '+(hi.heater_wattage||'?')+'W \u2022 '+mat+'</span>'+
 '<span style="color:#8b949e;font-size:12px">Safe: <b style="color:#3fb950">'+sfLabel+'</b> \u2022 Peak: <b style="color:#d29922">'+pkLabel+'</b> mm\u00b3/s</span>'+
-'</div>'}
+'</div>'+
+'<div style="padding:6px 10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:11px;color:#8b949e;line-height:1.5;margin-bottom:10px">'+'<b style="color:#3fb950">Safe</b> = max sustained flow (your speed target). <b style="color:#d29922">Peak</b> = brief burst max (heater can\u2019t sustain). Aim to keep average near Safe; brief spikes above are OK.</div>'}
 
 /* Printer Hardware grid */
 var phw=D.printer_hw;
@@ -2409,10 +2422,11 @@ if(!tl.length&&!pa)ca.innerHTML='<p>No PA data.</p>'}
 function rDZ(){
 var dz=D.dynz_zones;
 if(!dz||!Object.keys(dz).length){
-ca.innerHTML='<p>No DynZ data (may be inactive).</p>';return}
-ca.innerHTML='<div class="box"><h3>DynZ Activation by Z-Height</h3>'+
-'<p class="box-desc">Shows where the system reduced acceleration to protect print quality (e.g. overhangs, curves). '+
-'Yellow = % of time active at each height. Red = how often it toggled on/off. Frequent transitions can cause artifacts.</p>'+mc('c6')+'</div>';
+ca.innerHTML='<p>Speed Guard was not active for this print (no complex geometry detected).</p>';return}
+ca.innerHTML='<div class="box"><h3>Speed Guard by Layer Height</h3>'+
+'<p class="box-desc">Shows which layers were slowed down to protect print quality. '+
+'<b style="color:#d29922">Yellow bars</b> = % of time that layer ran at reduced acceleration. '+
+'<b style="color:#f85149">Red bars</b> = how often speed switched between fast and slow at that height \u2014 frequent switching can itself cause visible lines.</p>'+mc('c6')+'</div>';
 var ks=Object.keys(dz).sort(function(a,b){return parseFloat(a)-parseFloat(b)});
 CH.c6=new Chart(document.getElementById('c6'),{type:'bar',data:{
 labels:ks.map(function(k){return parseFloat(k).toFixed(1)+'mm'}),
@@ -2709,7 +2723,7 @@ Examples:
   PA stability analysis:
     python3 analyze_print.py --pa-stability
 
-  DynZ zone map:
+  Speed Guard zone map:
     python3 analyze_print.py --dynz-map
 
   Speed/flow distribution:
@@ -2749,7 +2763,7 @@ Examples:
         help='Show PA stability analysis for a single print')
     parser.add_argument(
         '--dynz-map', action='store_true',
-        help='Show DynZ activation zone map for a single print')
+        help='Show Speed Guard activation zone map for a single print')
     parser.add_argument(
         '--distribution', action='store_true',
         help='Show speed/flow time distribution for a single print')
@@ -2898,7 +2912,7 @@ Examples:
         pa_data = analyze_pa_stability(csv_path)
         print_pa_stability_report(pa_data)
 
-    # DynZ zone map
+    # Speed Guard zone map
     if args.dynz_map:
         csv_path = summary_path.replace('_summary.json', '.csv')
         if not os.path.exists(csv_path):

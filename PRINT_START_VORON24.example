@@ -87,7 +87,7 @@ gcode:
 # ─────────────────────────────────────────────────────────────
 [gcode_macro PRINT_END]
 gcode:
-    # Save learned DynZ values and disable Adaptive Flow
+    # Save learned Speed Guard values and disable Adaptive Flow
     AT_END
 
     # >>> EDIT: Remove if you don't have a filament sensor.

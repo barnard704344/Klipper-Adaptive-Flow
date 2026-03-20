@@ -85,9 +85,9 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 **D. Single-print analysis functions** (now in `af_analysis.py`, ~25 functions)
 - `find_latest_summary` / `load_summary` — locate and load per-print JSON summary.
 - `compute_extrusion_quality(timeline)` — flow stability (std dev), PA consistency,
-  temperature tracking error, heater headroom, DynZ activation percentage.
+  temperature tracking error, heater headroom, Speed Guard activation percentage.
 - `analyze_csv_for_banding` — groups consecutive acceleration spike events into "episodes"
-  and diagnoses each one (accel too high, flow inconsistency, feature transition, DynZ switch).
+  and diagnoses each one (accel too high, flow inconsistency, feature transition, Speed Guard switch).
 - `analyze_z_banding` — bins CSV rows by Z-height (0.5 mm bins), computes risk per bin
   (accel events, flow variability, PWM spikes), returns a heatmap of problem layers.
 - `analyze_thermal_lag` — compares `target_temp` vs `actual_temp` over time, flags episodes
@@ -95,7 +95,7 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 - `analyze_heater_headroom` — groups duty cycle by flow rate brackets (0-5, 5-10, 10-15,
   15-20 mm³/s), flags brackets where mean PWM exceeds 90%.
 - `analyze_pa_stability` — rolling-window PA consistency; detects oscillation > 0.005 per cycle.
-- `analyze_dynz_zones` — maps DynZ activation events to Z-height.
+- `analyze_dynz_zones` — maps Speed Guard activation events to Z-height.
 - `analyze_speed_flow_distribution` — speed and flow histograms showing where the printer
   spends its time.
 
@@ -111,7 +111,7 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 - `find_recent_sessions` — gather N most recent print sessions, optionally filtered by material.
 - `aggregate_banding_analysis` — merges banding data across multiple prints to surface
   recurring problem zones.
-- Per-tab aggregate generators for: thermal, PA stability, DynZ, speed/flow distribution, and
+- Per-tab aggregate generators for: thermal, PA stability, Speed Guard, speed/flow distribution, and
   cross-session trend lines.
 
 **G. Recommendation engine** (remains in `analyze_print.py`)
@@ -127,9 +127,9 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 - Serves a single-page HTML/JS dashboard generated entirely in Python (no external web
   framework).
 - The page uses **Chart.js v4** (CDN) for all charts and vanilla JS for interactivity.
-- Dashboard tabs: Recommendations, Slicer, Timeline, Z-Height, Heater, PA, DynZ,
+- Dashboard tabs: Recommendations, Slicer, Timeline, Z-Height, Heater, PA, Speed Guard,
   Distribution, Trends.
-- Summary cards: Material, Temp Boost, Heater Duty, DynZ, Banding.
+- Summary cards: Material, Temp Boost, Heater Duty, Speed Guard, Banding.
 - Session selector dropdown; live-print detection (CSV modified within 2 minutes → "LIVE"
   badge, 5-second auto-refresh).
 - Material aggregate mode: switches all tabs to pooled data across all prints of one material.
@@ -161,7 +161,7 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
     viscosity = less PA needed).
   - Monitors heater PWM duty cycle; reduces boost demand when duty > 95% to prevent
     thermal fault.
-  - Runs DynZ: tracks stress score per Z-bin, applies temperature reduction or accel limit
+  - Runs Speed Guard: tracks stress score per Z-bin, applies temperature reduction or accel limit
     when score exceeds threshold.
   - Manages multi-object temperature transitions (sequential print mode).
   - Skips boosting on the first layer for consistent first-layer squish.
@@ -171,7 +171,7 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 - **Defined user-facing commands:** `AT_START`, `AT_END`, `AT_STATUS`, `AT_THERMAL_STATUS`,
   `AT_DYNZ_STATUS`, `AT_ENABLE`, `AT_DISABLE`, `AT_RESET_STATE`, `AT_INIT_MATERIAL`,
   `AT_SET_PA`, `AT_GET_PA`, `AT_LIST_PA`, `AT_SET_FLOW_K`, `AT_SET_FLOW_GATE`, `AT_SET_MAX`.
-- Persists PA values and DynZ state between sessions using Klipper's `[save_variables]` to
+- Persists PA values and Speed Guard state between sessions using Klipper's `[save_variables]` to
   `~/printer_data/config/sfs_auto_flow_vars.cfg`.
 
 ### `auto_flow_user.cfg.example` (80 lines)
@@ -262,16 +262,16 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 - Detailed configuration reference for `auto_flow_user.cfg` and material profiles.
 - Explains all variables with their units, defaults, and interaction effects.
 - Sections: quick start (just two settings for most users), temperature control algorithm,
-  dynamic PA algorithm, DynZ (brief overview with link to DYNZ.md), material profile parameters,
+  dynamic PA algorithm, Speed Guard (brief overview with link to SPEED_GUARD.md), material profile parameters,
   hardware auto-scaling tables.
 
-### `docs/DYNZ.md` (179 lines)
+### `docs/SPEED_GUARD.md` (179 lines)
 
-- Dedicated documentation for the Dynamic Z-Window learning system.
-- Explains the problem (convex surfaces create stress zones), the algorithm (Z-bin scoring,
+- Dedicated documentation for the Speed Guard system (formerly Dynamic Z-Window / DynZ).
+- Explains the problem (complex geometry creates stress), the algorithm (Z-bin scoring,
   detection thresholds, score decay, relief methods), configuration variables, and when to
   enable/disable it.
-- Includes worked examples of what DynZ does and does not help with.
+- Includes worked examples of what Speed Guard does and does not help with.
 
 ---
 
@@ -350,7 +350,7 @@ The main entry point, now supported by four sub-modules (`af_config.py`, `af_ana
 | `docs/ANALYSIS.md` | 457 lines | Dashboard user guide | Active |
 | `docs/COMMANDS.md` | 474 lines | G-code command reference | Active |
 | `docs/CONFIGURATION.md` | 349 lines | Config variable reference | Active |
-| `docs/DYNZ.md` | 179 lines | DynZ algorithm guide | Active |
+| `docs/SPEED_GUARD.md` | 179 lines | Speed Guard algorithm guide | Active |
 | `README.md` | 239 lines | Install + quick start | Active |
 | `HARDWARE_AWARE_PLAN.md` | 209 lines | Internal planning doc | **Stale — feature is shipped** |
 | `0` | 0 bytes | Unknown — empty file | **Dead weight — delete it** |

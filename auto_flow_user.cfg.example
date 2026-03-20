@@ -53,7 +53,7 @@ variable_heater_wattage: 40
 # variable_pa_max_reduction: 0.020 # Max PA reduction from base
 
 # ---------------------------------------------------------
-#  DYNAMIC Z-WINDOW (DynZ)
+#  SPEED GUARD
 # ---------------------------------------------------------
 # Detects convex surfaces and reduces thermal demand.
 # Scores persist across prints via save_variables.

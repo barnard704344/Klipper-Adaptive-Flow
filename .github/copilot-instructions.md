@@ -8,7 +8,7 @@ This repository provides **automatic temperature and pressure advance control** 
 - **Dynamic Temperature Control**: Flow/speed/acceleration-based temperature boost
 - **Dynamic Pressure Advance**: Automatically scales PA with temperature changes
 - **5-Second Lookahead**: Pre-heats nozzle before flow spikes
-- **Dynamic Z-Window (DynZ)**: Learns and adapts to challenging geometries (domes, spheres)
+- **Speed Guard**: Learns and adapts to challenging geometries (domes, spheres)
 - **Multi-Object Temperature Management**: Safe temperature transitions between sequential objects
 - **Material Profiles**: Per-material tuning for PLA, PETG, ABS, ASA, TPU, Nylon, PC, HIPS
 
@@ -28,7 +28,7 @@ This repository provides **automatic temperature and pressure advance control** 
 ### Documentation
 - `README.md` - Installation, setup, and usage guide
 - `docs/CONFIGURATION.md` - Detailed configuration reference
-- `docs/DYNZ.md` - Dynamic Z-Window documentation
+- `docs/SPEED_GUARD.md` - Speed Guard documentation
 - `docs/ANALYSIS.md` - Print analysis setup guide
 
 ### Examples
@@ -128,7 +128,7 @@ PA_adjusted = PA_base - (temp_boost × pa_boost_k)
 - G-code interceptor parses upcoming moves
 - Enables pre-heating before flow demand spikes
 
-### Dynamic Z-Window (DynZ)
+### Speed Guard (internally `dynz_`)
 - Divides Z-height into bins (typically 0.5mm each)
 - Learns stress patterns (high speed + low flow + heater demand)
 - Reduces acceleration in stress zones on subsequent layers
@@ -250,7 +250,7 @@ When making code changes:
 The `analyze_print.py` script provides local, statistical analysis:
 
 - **Single-print mode**: Displays health summary (boost, heater duty, banding events)
-- **Multi-print banding mode** (`--count N`): Aggregates data across N prints to identify consistent banding culprits (DynZ switching, PA oscillation, temp instability, slicer accel control)
+- **Multi-print banding mode** (`--count N`): Aggregates data across N prints to identify consistent banding culprits (Speed Guard switching, PA oscillation, temp instability, slicer accel control)
 
 No API keys, network access, or external services required.
 

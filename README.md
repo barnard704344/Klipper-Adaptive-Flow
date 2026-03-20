@@ -32,7 +32,7 @@ That's it. Adaptive Flow handles:
 | **Pressure Advance** | Sets correct PA for your material and nozzle, adjusts in real-time as temp changes |
 | **HF nozzle compensation** | Auto-detects HF melt zone, scales PA and smooth_time — no calibration needed |
 | **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
-| **Complex geometry** | DynZ tracks where domes and overhangs cause trouble, remembers problem zones across prints |
+| **Complex geometry** | Speed Guard auto-slows acceleration at tricky layers (domes, overhangs, curves) to prevent artifacts |
 | **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, shows exactly what to change |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
@@ -179,7 +179,7 @@ During a print, the system continuously:
 3. **Adjusts** nozzle temperature proportional to flow demand
 4. **Scales** PA as temperature changes (hotter = less viscous = less PA needed)
 5. **Monitors** heater duty cycle, capping boost when PWM exceeds 95%
-6. **Tracks** problem zones (DynZ) and reduces thermal demand on future layers — scores persist across prints
+6. **Guards** tricky geometry (Speed Guard) — auto-slows acceleration at domes, overhangs, and curves to prevent artifacts
 
 All adjustments stay within safe limits defined by your hardware.
 
@@ -219,7 +219,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 | `AT_START MATERIAL=X` | Enable (call in PRINT_START) |
 | `AT_END` | Disable (call in PRINT_END) |
 | `AT_STATUS` | Show current state |
-| `AT_DYNZ_STATUS` | Show DynZ stress zone status |
+| `AT_SPEED_GUARD_STATUS` | Show Speed Guard stress zone status |
 | `AT_SET_PA MATERIAL=X PA=Y` | Override PA for a material |
 | `AT_LIST_PA` | Show all PA values |
 
@@ -231,7 +231,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Dynamic Temperature** — Flow, speed, and acceleration-based boost with soft gating
 - **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
-- **Dynamic Z-Window (DynZ)** — Tracks convex surfaces, reduces thermal demand on problem layers, persists scores across prints
+- **Speed Guard** — Auto-slows acceleration at tricky layers (domes, overhangs, curves) to prevent ringing and artifacts. Monitors stress per Z-height bin, persists scores across prints
 - **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, shows exactly what to change
 - **Extrusion Quality Scoring** — Weighted 0–100 composite score covering thermal (35%), flow (30%), heater (20%), and pressure (15%) stability
 - **Boost Optimization** — Analyses actual heater and flow headroom, tells you how much faster you can print
@@ -239,7 +239,7 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM
 - **First Layer Skip** — No boost on layer 1 for consistent squish
 
-[Full configuration reference →](docs/CONFIGURATION.md) · [Analysis dashboard →](docs/ANALYSIS.md) · [DynZ docs →](docs/DYNZ.md)
+[Full configuration reference →](docs/CONFIGURATION.md) · [Analysis dashboard →](docs/ANALYSIS.md) · [Speed Guard docs →](docs/SPEED_GUARD.md)
 
 </details>
 
