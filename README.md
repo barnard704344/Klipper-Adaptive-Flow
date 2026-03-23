@@ -163,7 +163,7 @@ Open `http://<printer-ip>:7127` in your browser. No SSH, no terminal.
 The dashboard shows:
 - **Slicer diagnostics** — the most useful tab. Extracts settings directly from your G-code, cross-references acceleration values with print data, and tells you exactly which slicer setting to change and what value to use. This is the fastest way to fix print quality issues.
 - **Live print monitoring** — temperature, flow, PA, and heater PWM plotted over the entire print timeline
-- **Extrusion quality score** — weighted 0–100 composite rating covering thermal stability (35%), flow steadiness (30%), heater reserve (20%), and pressure consistency (15%)
+- **Extrusion quality score** — weighted 0–100 composite rating covering thermal stability (45%), flow steadiness (30%), heater reserve (10%), and pressure consistency (15%). Scores are context-aware — heater reserve is treated as a capacity warning when thermal stability proves the heater is keeping up.
 - **Heater analysis** — shows power usage at different flow rates, so you can see if your heater is the bottleneck
 - **Distribution** — how your print spent its time across speeds and flow rates
 - **Z-Height analysis** — identifies which layers had the most thermal stress
@@ -232,8 +232,8 @@ Most users never need to touch these. They exist for edge cases and experimentat
 - **Dynamic PA** — Scales with temperature boost, auto-compensates HF melt zone (1.4× PA, wider smooth_time)
 - **5-Second Lookahead** — Pre-heats before flow spikes arrive
 - **Speed Guard** — Auto-slows acceleration at tricky layers (domes, overhangs, curves) to prevent ringing and artifacts. Monitors stress per Z-height bin, persists scores across prints
-- **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, shows exactly what to change
-- **Extrusion Quality Scoring** — Weighted 0–100 composite score covering thermal (35%), flow (30%), heater (20%), and pressure (15%) stability
+- **Slicer Diagnostics** — Parses G-code footer, maps accel values to slicer features, shows flow rates and max speeds per setting based on E3D published data
+- **Extrusion Quality Scoring** — Weighted 0–100 composite score covering thermal (45%), flow (30%), heater (10%), and pressure (15%) stability. Context-aware tips check your actual slicer settings before making recommendations
 - **Boost Optimization** — Analyses actual heater and flow headroom, tells you how much faster you can print
 - **Multi-Object Temp Management** — Prevents thermal runaway between sequential objects
 - **Heater Duty Capping** — Won't request boost if heater is already at 95%+ PWM

@@ -104,7 +104,15 @@ Fewer distinct values = fewer banding-causing transitions.
 | Inner/outer wall mismatch | Different accel for inner vs outer walls | Inner wall acceleration 5000 → 8000 |
 | Too many distinct accels | 5+ different values causing constant transitions | Informational — review settings |
 
-**Settings Tables** — all acceleration, speed, and other quality-related settings extracted from the G-code, organised into Acceleration, Speed, and Other categories.
+**Settings Tables** — all acceleration, speed, and other quality-related settings extracted from the G-code, organised into Acceleration, Speed, and Quality categories. Each speed setting shows:
+
+| Column | Description |
+|--------|-------------|
+| **Current** | Value from your slicer profile |
+| **Flow** | Calculated volumetric flow rate at that speed (mm³/s) |
+| **Suggested** | Recommended value if a change would help |
+| **Max Speed** | Maximum speed before hitting hotend safe flow limit (E3D published data). Only shown for core print-move settings — omitted for bridge, gap fill, first layer, etc. where speed is intentionally limited for non-flow reasons. |
+| **Details** | Explanation including OrcaSlicer menu location where applicable |
 
 ### Timeline Tab
 
@@ -258,12 +266,23 @@ A weighted composite score evaluating four aspects of print health:
 
 | Component | Weight | What It Measures |
 |-----------|--------|------------------|
-| **Thermal** | 35% | How well actual temperature tracked target (deviation %, in-band %) |
-| **Flow** | 30% | Flow rate steadiness (jitter, big jumps as % of samples) |
-| **Heater** | 20% | Heater reserve capacity (PWM saturation %, avg PWM) |
-| **Pressure** | 15% | PA transient impact (frequency and severity of PA-related artifacts) |
+| **Thermal** | 45% | How well actual temperature tracked target (deviation %, in-band %). Gets the most weight because it measures actual print outcome. |
+| **Flow** | 30% | Flow rate steadiness (jitter, big jumps as % of samples). Calibrated so normal geometry-driven variation at well-matched speeds scores ~80. |
+| **Heater** | 10% | Heater reserve capacity (PWM saturation %, avg PWM). Treated as a capacity warning — when thermal stability is high (≥85), the score is floored at 50 since the heater is demonstrably keeping up. |
+| **Pressure** | 15% | Frequency-weighted pressure transient impact. Rare transients (e.g. 0.2% of samples) score high even if individual impact is moderate. Speed Guard-managed transitions are excluded. |
 
-Each component scores 0–100 independently, then they're combined into the overall score. The weakest component is highlighted in the dashboard summary card. Scores above 80 indicate good print quality; below 60 suggests actionable problems.
+Each component scores 0–100 independently, then they're combined into the overall score.
+
+**Grade tiers:**
+
+| Score | Grade | Meaning |
+|-------|-------|---------|
+| ≥85 | **Excellent** | No action needed |
+| 70–84 | **Good** | Minor improvements possible, unlikely to cause visible defects |
+| 50–69 | **Acceptable** | Some issues worth addressing |
+| <50 | **Needs Improvement** | Actionable problems likely visible in print |
+
+**Context-aware recommendations:** The "How to improve" tips for Flow Steadiness and Pressure Stability check your actual slicer speed and acceleration settings. If your speeds are already well-matched, the tip will say so rather than suggesting changes you've already made. Heater Reserve tips reference your thermal stability score to distinguish between "heater is struggling" and "heater is near capacity but maintaining temperature fine."
 
 ### Boost Optimization
 

@@ -265,16 +265,19 @@ def compute_extrusion_quality(timeline):
     # pressure artifacts.  Threshold scales with mean flow so high-flow
     # prints aren't unfairly penalized (a 2 mm³/s swing at 15 mm³/s is
     # only 13%, but at 3 mm³/s it's 67%).
-    big_threshold = max(2.0, mean_flow * 0.30)
+    # Floor of 3.0 mm³/s avoids penalizing normal infill↔wall transitions
+    # at moderate flow rates.
+    big_threshold = max(3.0, mean_flow * 0.30)
     big_jumps = sum(1 for d in flow_deltas if d > big_threshold)
     big_jump_pct = big_jumps / max(len(flow_deltas), 1) * 100
 
-    # Score: penalize jitter.  Typical good print: jitter < 0.05
-    # Typical moderate: jitter 0.10-0.20. Bad: jitter > 0.30
-    flow_score = int(max(0, min(100, 100 - normalized_jitter * 200)))
+    # Score: penalize jitter.  Calibrated so a typical mixed-move print
+    # (jitter ~0.15) scores ~80, pure-infill (~0.05) scores ~94,
+    # badly mismatched speeds (jitter >0.30) scores <65.
+    flow_score = int(max(0, min(100, 100 - normalized_jitter * 120)))
     # Extra penalty for big jumps, but capped to avoid double-floor
     if big_jump_pct > 5:
-        flow_score = int(max(10, flow_score - big_jump_pct * 0.5))
+        flow_score = int(max(10, flow_score - big_jump_pct * 0.3))
 
     # ------------------------------------------------------------------
     # 3. HEATER RESERVE — how much headroom does the heater have?
@@ -285,11 +288,20 @@ def compute_extrusion_quality(timeline):
     sat_pct = pwm_saturated / n * 100
     avg_pwm = statistics.mean([pt.get('pw', 0) for pt in active])
 
-    # Score: 100 if never saturated, 0 if always saturated
-    heater_score = int(max(0, min(100, 100 - sat_pct * 3)))
-    # Also penalize high average PWM (little margin)
+    # Score: 100 if never saturated, 0 if always saturated.
+    # Use 2x multiplier — sat_pct*3 was too harsh and made a working
+    # 40W heater at high flow score ~29 even when thermal stability was fine.
+    heater_score = int(max(0, min(100, 100 - sat_pct * 2)))
+    # Penalize high average PWM (little margin), but softly
     if avg_pwm > 0.80:
-        heater_score = int(max(0, heater_score - (avg_pwm - 0.80) * 100))
+        heater_score = int(max(0, heater_score - (avg_pwm - 0.80) * 50))
+
+    # Cross-compensation: if thermal stability proves the heater IS
+    # keeping up (≥85), floor the reserve score at 50.  A low reserve
+    # score is a capacity warning, not a quality problem when temp is
+    # actually on-target.
+    if thermal_score >= 85 and heater_score < 50:
+        heater_score = 50
 
     # ------------------------------------------------------------------
     # 4. PRESSURE STABILITY — accel-induced pressure transients
@@ -326,19 +338,30 @@ def compute_extrusion_quality(timeline):
     transient_count = len(weighted_transients)
     transient_pct = transient_count / max(n - 1, 1) * 100
 
-    # Score: penalize transients
-    # avg_transient of 1.0 = moderate (1000 accel swing at 10 mm³/s)
-    # avg_transient of 3.0 = severe
-    pressure_score = int(max(0, min(100, 100 - avg_transient * 15
-                                    - transient_pct * 0.3)))
+    # Score: penalize transients using frequency-weighted impact.
+    # avg_transient alone is misleading — 24 events at impact 2.58 out
+    # of 12000 samples is NOT a pressure problem.  Weight by how often
+    # transients actually occur (transient_pct).
+    # effective_impact combines severity AND frequency:
+    #   0.2% occurrence × 2.58 avg = 0.005 → negligible
+    #   5% occurrence × 2.0 avg = 0.10 → moderate
+    #   20% occurrence × 3.0 avg = 0.60 → severe
+    effective_impact = avg_transient * (transient_pct / 100.0)
+    pressure_score = int(max(0, min(100,
+                                    100 - effective_impact * 200
+                                    - transient_pct * 0.5)))
 
     # ------------------------------------------------------------------
     # OVERALL SCORE — weighted combination
+    # Thermal stability gets the most weight because it measures the
+    # actual outcome (is temp on-target during extrusion?).
+    # Heater reserve is a forward-looking capacity warning — when
+    # thermal is already good, low reserve isn't a quality problem.
     # ------------------------------------------------------------------
     overall = int(
-        thermal_score * 0.35
+        thermal_score * 0.45
         + flow_score * 0.30
-        + heater_score * 0.20
+        + heater_score * 0.10
         + pressure_score * 0.15
     )
     overall = max(0, min(100, overall))

@@ -1946,17 +1946,31 @@ return '<div style="margin:4px 0 8px 0;padding:6px 10px;background:rgba('+
 (val<60?'248,81,73':'210,153,34')+',0.08);border-left:3px solid '+(val<60?'#f85149':'#d29922')+
 ';border-radius:0 4px 4px 0;font-size:11px;color:#c9d1d9;line-height:1.5">'+
 '<span style="font-weight:600;color:'+(val<60?'#f85149':'#d29922')+'">How to improve:</span> '+t+'</div>'}
+function _eqSpeedSpread(){
+var ss=D.slicer_settings||{};
+var sk=['outer_wall_speed','inner_wall_speed','sparse_infill_speed','internal_solid_infill_speed'];
+var vals=[];sk.forEach(function(k){if(typeof ss[k]==='number'&&ss[k]>0)vals.push(ss[k])});
+if(vals.length<2)return{spread:null};
+var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
+return{spread:Math.round((mx-mn)/mn*100),min:mn,max:mx,n:vals.length}}
+function _eqAccelSpread(){
+var ss=D.slicer_settings||{};
+var ak=['outer_wall_acceleration','inner_wall_acceleration','sparse_infill_acceleration','internal_solid_infill_acceleration'];
+var vals=[];ak.forEach(function(k){if(typeof ss[k]==='number'&&ss[k]>0)vals.push(ss[k])});
+if(vals.length<2)return{spread:null};
+var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
+return{spread:Math.round((mx-mn)/mn*100),min:mn,max:mx,n:vals.length}}
 function showEQ(){
 var eq=D.extrusion_quality||{};
 if(eq.score==null)return;
 var dt=eq.detail||{};
-var sc=eq.score,g=sc>=85?'Excellent':sc>=65?'Acceptable':'Needs Improvement';
-var gc=sc>=85?'#3fb950':sc>=65?'#d29922':'#f85149';
+var sc=eq.score,g=sc>=85?'Excellent':sc>=70?'Good':sc>=50?'Acceptable':'Needs Improvement';
+var gc=sc>=85?'#3fb950':sc>=70?'#7ee787':sc>=50?'#d29922':'#f85149';
 var h='<div class="eq-overall"><div class="eq-big" style="color:'+gc+'">'+sc+'<span style="font-size:18px;color:#8b949e">/100</span></div>'+
 '<div class="eq-grade" style="color:'+gc+'">'+g+'</div></div>';
 h+=_eqBar('\ud83c\udf21\ufe0f Thermal Stability',eq.thermal,
 (dt.temp_in_band_pct||0).toFixed(0)+'% of extrusion within \xb11\xb0C of target. '+
-'Avg deviation: '+(dt.avg_temp_dev||0).toFixed(1)+'\xb0C, max: '+(dt.max_temp_dev||0).toFixed(1)+'\xb0C.',35);
+'Avg deviation: '+(dt.avg_temp_dev||0).toFixed(1)+'\xb0C, max: '+(dt.max_temp_dev||0).toFixed(1)+'\xb0C.',45);
 h+=_eqTip(eq.thermal,[
 'Re-tune PID with fan running at print speed (<code>M106 S255</code> before <code>PID_CALIBRATE</code>). Reduce part cooling fan speed in slicer. Increase <b>flow_smoothing</b> to reduce rapid demand changes the heater struggles to follow.',
 'Temperature is mostly on-target. Small gains from PID re-tune with fan on, or slightly increasing <b>flow_smoothing</b> to reduce demand spikes.']);
@@ -1964,23 +1978,41 @@ h+=_eqBar('\ud83c\udf0a Flow Steadiness',eq.flow,
 'Jitter: '+(dt.flow_jitter||0).toFixed(3)+' (lower=smoother). '+
 (dt.big_jumps||0)+' flow jumps >'+(dt.big_jump_threshold||2).toFixed(1)+' mm\xb3/s ('+(dt.big_jump_pct||0).toFixed(1)+'%). '+
 'Mean flow: '+(dt.mean_flow||0).toFixed(1)+' mm\xb3/s.',30);
-h+=_eqTip(eq.flow,[
-'In your slicer, <b>unify wall/infill/solid-infill speeds</b> so they are closer together \u2014 large speed differences between move types cause the biggest flow jumps. Increase <b>flow_smoothing</b> to dampen remaining spikes.',
-'Flow is fairly smooth. To improve further, bring slicer speeds for different move types closer together, or raise <b>flow_smoothing</b> slightly.']);
+var _spd=_eqSpeedSpread();
+var _flowBad,_flowWarn;
+if(_spd.spread!==null&&_spd.spread<=30){
+_flowBad='Your slicer speeds are already well-matched ('+_spd.spread+'% spread). The remaining jitter is from geometry-driven flow changes (corners, short segments, infill\u2194wall transitions) and is normal. No slicer changes needed.';
+_flowWarn='Your slicer speeds are already close ('+_spd.spread+'% spread) \u2014 this score reflects normal geometry-driven flow variation, not a slicer problem. No action needed.'
+}else if(_spd.spread!==null){
+_flowBad='Your slicer speeds vary by '+_spd.spread+'% ('+_spd.min+'\u2013'+_spd.max+' mm/s). <b>Bring inner wall, outer wall, infill, and solid-infill speeds within 20% of each other</b> to reduce flow jumps. Then increase <b>flow_smoothing</b> by 0.10\u20130.15.';
+_flowWarn='Your slicer speeds vary by '+_spd.spread+'% ('+_spd.min+'\u2013'+_spd.max+' mm/s). Bringing them within 20\u201330% of each other would help. You can also raise <b>flow_smoothing</b> by 0.05.'
+}else{
+_flowBad='In your slicer, <b>set inner wall, outer wall, infill, and solid-infill speeds within 20% of each other</b>. Then increase <b>flow_smoothing</b> by 0.10\u20130.15 to dampen remaining spikes.';
+_flowWarn='No slicer data available to check speed spread. If speeds are already matched, no action needed.'}
+h+=_eqTip(eq.flow,[_flowBad,_flowWarn]);
 h+=_eqBar('\u2622\ufe0f Heater Reserve',eq.heater,
 'PWM \u226595%: '+(dt.pwm_saturated_pct||0).toFixed(1)+'% of extrusion time. '+
-'Avg PWM: '+((dt.avg_pwm||0)*100).toFixed(0)+'%.',20);
+'Avg PWM: '+((dt.avg_pwm||0)*100).toFixed(0)+'%.',10);
 h+=_eqTip(eq.heater,[
-'Your heater is maxing out. <b>Reduce part cooling fan speed</b> in the slicer (biggest single impact). Lower <b>flow_k</b> to reduce temperature demand. If using a 40W heater, a 60W upgrade gives 50% more reserve.',
-'Heater is coping but has limited headroom. Lowering fan speed slightly or reducing <b>flow_k</b> by 0.1 will help. Consider 60W heater if pushing higher speeds.']);
+eq.thermal>=85?'Your heater is running near capacity but <b>still maintaining temperature well</b> (thermal stability '+eq.thermal+'%). This is a headroom warning, not a current quality problem. To create margin: reduce slicer fan speed by 10\u201315%, lower <b>flow_k</b> by 0.1, or upgrade to a 60W heater.':'Your heater is maxing out and <b>temperature is suffering</b>. <b>Reduce part cooling fan speed</b> in the slicer (biggest single impact). Lower <b>flow_k</b> to reduce temperature demand. A 60W heater upgrade gives 50% more reserve.',
+eq.thermal>=85?'Heater has limited headroom but is <b>maintaining temperature well</b>. To build margin: lower slicer fan speed slightly or reduce <b>flow_k</b> by 0.1.':'Heater has limited headroom. Lower fan speed slightly or reduce <b>flow_k</b> by 0.1. Consider a 60W heater if pushing higher speeds.']);
 h+=_eqBar('\u2699\ufe0f Pressure Stability',eq.pressure,
 (dt.transient_count||0)+' accel transients ('+(dt.transient_pct||0).toFixed(1)+'% of samples). '+
 'Avg impact: '+(dt.avg_transient_impact||0).toFixed(2)+'.'+
 (dt.dynz_excluded_transients?' '+dt.dynz_excluded_transients+' accel changes managed by Speed Guard (excluded).':''),15);
-h+=_eqTip(eq.pressure,[
-'In your slicer, <b>set all print-move accelerations to the same value</b> (use your Y-axis input shaper limit). Only travel moves should use higher accel. This eliminates the pressure waves PA cannot absorb.',
-'Pressure is mostly stable. To improve, bring slicer acceleration values for walls/infill/top closer together.']);
-h+='<div class="eq-weights">Weights: Thermal 35% \u2022 Flow 30% \u2022 Heater 20% \u2022 Pressure 15%</div>';
+var _acc=_eqAccelSpread();
+var _presBad,_presWarn;
+if(_acc.spread!==null&&_acc.spread<=10){
+_presBad='Your slicer accelerations are already unified ('+_acc.spread+'% spread). The remaining transients are from direction changes and speed-limited short segments. This is inherent to the geometry and difficult to eliminate further.';
+_presWarn='Your slicer accelerations are already well-matched ('+_acc.spread+'% spread). Remaining transients come from geometry, not slicer settings \u2014 unlikely to cause visible defects.'
+}else if(_acc.spread!==null){
+_presBad='Your slicer accelerations vary by '+_acc.spread+'% ('+_acc.min+'\u2013'+_acc.max+' mm/s\xb2). <b>Set inner wall, outer wall, infill, and solid-infill accelerations to the same value</b> (use your Y-axis input shaper limit). Only travel moves need higher accel.';
+_presWarn='Your slicer accelerations vary by '+_acc.spread+'% ('+_acc.min+'\u2013'+_acc.max+' mm/s\xb2). Setting all print-move accels to the same value would help \u2014 only travel moves need higher accel.'
+}else{
+_presBad='In your slicer, <b>set inner wall, outer wall, infill, and solid-infill accelerations to the same value</b> (a good starting point is your Y-axis input shaper limit). Only travel moves need higher accel.';
+_presWarn='Pressure is stable and unlikely to cause visible defects. To improve: set all print-move accelerations to the same value \u2014 only travel needs higher accel.'}
+h+=_eqTip(eq.pressure,[_presBad,_presWarn]);
+h+='<div class="eq-weights">Weights: Thermal 45% \u2022 Flow 30% \u2022 Heater 10% \u2022 Pressure 15%</div>';
 _showModal('Extrusion Quality Breakdown',h)}
 
 var allTabs=[
@@ -2146,8 +2178,8 @@ var allKeys=[
 {k:'support_speed',g:'Speed'},
 {k:'bridge_flow',g:'Quality'},{k:'wall_loops',g:'Quality'},
 {k:'wall_sequence',g:'Quality'},
-{k:'overhang_1_4_speed',g:'Quality'},{k:'overhang_2_4_speed',g:'Quality'},
-{k:'overhang_3_4_speed',g:'Quality'},{k:'overhang_4_4_speed',g:'Quality'},
+{k:'overhang_1_4_speed',g:'Quality',l:'Overhang speed (10%)'},{k:'overhang_2_4_speed',g:'Quality',l:'Overhang speed (25%)'},
+{k:'overhang_3_4_speed',g:'Quality',l:'Overhang speed (50%)'},{k:'overhang_4_4_speed',g:'Quality',l:'Overhang speed (75%)'},
 {k:'small_perimeter_speed',g:'Quality'},{k:'filament_max_volumetric_speed',g:'Quality'}
 ];
 
@@ -2184,7 +2216,7 @@ h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+' '+setting+'</td>
 h+='</table></div>'}
 
 /* --- Single unified settings table --- */
-h+='<div class="box"><table class="pa-table"><tr><th>Setting</th><th>Current</th><th></th><th>Suggested</th><th>Details</th></tr>';
+h+='<div class="box"><table class="pa-table"><tr><th>Setting</th><th>Current</th><th>Flow</th><th></th><th>Suggested</th><th>Max Speed</th><th>Details</th></tr>';
 var lastGroup='';
 allKeys.forEach(function(e){
 var val=ss[e.k];
@@ -2192,21 +2224,25 @@ if(val===undefined||val===null)return;
 /* Group header row */
 if(e.g!==lastGroup){
 lastGroup=e.g;
-h+='<tr><td colspan="5" style="padding:10px 10px 4px;font-size:11px;font-weight:700;'+
+h+='<tr><td colspan="7" style="padding:10px 10px 4px;font-size:11px;font-weight:700;'+
 'color:#58a6ff;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #21262d">'+e.g+'</td></tr>'}
 var a=advMap[e.k];
 var icon='';var clr='#c9d1d9';var sug='';var detail='';var arrow='';
+var flowCell='';var maxSpd='';
 if(a){
 icon=a.verdict==='good'?'\u2705 ':a.verdict==='bad'?'\u274c ':a.verdict==='warn'?'\u26a0\ufe0f ':'\u2139\ufe0f ';
 clr=a.verdict==='good'?'#3fb950':a.verdict==='bad'?'#f85149':a.verdict==='warn'?'#d29922':'#58a6ff';
 if(a.suggestion){sug=a.suggestion;arrow='\u2192'}
 detail=a.reason||'';
-if(a.flow_mm3s!==undefined)detail=a.flow_mm3s+' mm\u00b3/s \u2014 '+detail}
+if(a.flow_mm3s!==undefined)flowCell=a.flow_mm3s+' mm\u00b3/s';
+if(a.max_speed)maxSpd=a.max_speed+' mm/s'}
 var valClr=(sug?'#f85149':'#c9d1d9');
-h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+e.k.replace(/_/g,' ')+'</td>'+
+h+='<tr><td style="font-weight:600;white-space:nowrap">'+icon+(e.l||e.k.replace(/_/g,' '))+'</td>'+
 '<td style="font-weight:600;color:'+valClr+'">'+val+'</td>'+
+'<td style="font-size:12px;color:#8b949e;white-space:nowrap">'+flowCell+'</td>'+
 '<td style="text-align:center;color:#484f58">'+arrow+'</td>'+
 '<td style="font-weight:600;color:#3fb950">'+sug+'</td>'+
+'<td style="font-weight:600;color:#58a6ff;white-space:nowrap">'+maxSpd+'</td>'+
 '<td style="font-size:12px;color:#8b949e;line-height:1.4">'+detail+'</td></tr>'});
 h+='</table></div>';
 

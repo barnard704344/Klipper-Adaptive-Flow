@@ -435,13 +435,16 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             return 'warn'
         return 'good'
 
-    def _add(setting, category, current, verdict, suggestion, reason, flow=None):
+    def _add(setting, category, current, verdict, suggestion, reason,
+             flow=None, max_speed=None):
         entry = {
             'setting': setting, 'category': category, 'current': current,
             'verdict': verdict, 'suggestion': suggestion, 'reason': reason,
         }
         if flow is not None:
             entry['flow_mm3s'] = flow
+        if max_speed is not None:
+            entry['max_speed'] = max_speed
         advice.append(entry)
 
     # =====================================================================
@@ -907,31 +910,38 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             return
         flow = _flow(speed, line_w, layer)
         fv = _flow_verdict(flow)
+        # Max speed before hitting safe flow limit — only shown for core
+        # print-move settings where "how fast can I go?" is meaningful.
+        # Omit for purpose-limited features (bridge, gap fill, first layer
+        # etc.) where speed is intentionally held low for non-flow reasons.
+        _ms = None
+        if not purpose and line_w and layer and line_w * layer > 0:
+            _ms = int(safe_flow / (line_w * layer))
+            _ms = min(_ms, _fw_max_vel)
         if flow > peak_flow:
             max_safe_speed = int(safe_flow / (line_w * layer)) if line_w * layer > 0 else speed
             _add(setting, category, f'{int(speed)} mm/s', 'bad',
                  f'{max_safe_speed} mm/s',
                  f'{feature_name}: {flow} mm\u00b3/s exceeds Revo {variant} {nozzle_dia}mm '
                  f'{material} peak of {peak_flow} mm\u00b3/s (E3D data). '
-                 f'Will cause under-extrusion.', flow)
+                 f'Will cause under-extrusion.', flow, _ms)
         elif flow > safe_flow * 0.85:
             _add(setting, category, f'{int(speed)} mm/s', 'warn', None,
                  f'{feature_name}: {flow} mm\u00b3/s is near Revo {variant} {nozzle_dia}mm '
                  f'{material} safe limit of {safe_flow} mm\u00b3/s (E3D data). '
-                 f'May work but leaves little headroom for the {wattage}W heater.', flow)
+                 f'May work but leaves little headroom for the {wattage}W heater.', flow, _ms)
         elif quality_max and speed > quality_max:
             _add(setting, category, f'{int(speed)} mm/s', 'info',
                  f'{int(quality_max)} mm/s',
                  f'{feature_name}: speed is fine for flow ({flow} mm\u00b3/s) but '
-                 f'higher speeds can reduce {feature_name.lower()} quality.', flow)
+                 f'higher speeds can reduce {feature_name.lower()} quality.', flow, _ms)
         elif speed < min_ok:
             _add(setting, category, f'{int(speed)} mm/s', 'info', None,
-                 f'{feature_name}: very slow ({flow} mm\u00b3/s). Fine for quality, slow for time.', flow)
+                 f'{feature_name}: very slow ({flow} mm\u00b3/s). Fine for quality, slow for time.', flow, _ms)
         elif purpose:
-            # Speed is intentionally limited for non-flow reasons — don't suggest increases
             _add(setting, category, f'{int(speed)} mm/s', 'good', None,
                  f'{feature_name}: {flow} mm\u00b3/s ({int(flow / safe_flow * 100)}% of '
-                 f'Revo {variant} capacity). Speed is {purpose}-limited \u2014 current value is appropriate.', flow)
+                 f'Revo {variant} capacity). Speed is {purpose}-limited \u2014 current value is appropriate.', flow, _ms)
         elif _is_fast_printer and flow < safe_flow * 0.65 and line_w > 0 and layer > 0:
             optimal = _optimal_speed(line_w, layer, quality_factor=0.85)
             if optimal and speed < optimal * 0.70:
@@ -953,15 +963,15 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                      f'({safe_flow} mm\u00b3/s for {material}). '
                      f'Suggest {suggest_speed} mm/s '
                      f'({suggest_flow} mm\u00b3/s, +{pct_inc}%) \u2014 '
-                     f'hardware capacity allows up to {max_theoretical} mm/s.', flow)
+                     f'hardware capacity allows up to {max_theoretical} mm/s.', flow, _ms)
             else:
                 _add(setting, category, f'{int(speed)} mm/s', 'good', None,
                      f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
-                     f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow)
+                     f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow, _ms)
         else:
             _add(setting, category, f'{int(speed)} mm/s', 'good', None,
                  f'{feature_name}: {flow} mm\u00b3/s \u2014 well within Revo {variant} '
-                 f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow)
+                 f'{nozzle_dia}mm capacity ({safe_flow} mm\u00b3/s safe, E3D data).', flow, _ms)
 
     _speed_advice('outer_wall_speed', 'Speed',
                   slicer_settings.get('outer_wall_speed'), outer_w, layer_h,
@@ -1051,43 +1061,47 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
             _add('wall_sequence', 'Quality', str(wall_seq), 'info', None,
                  f'Wall sequence: {wall_seq}')
 
-    for i, angle in [(1, '25%'), (2, '50%'), (3, '75%'), (4, '100%')]:
+    for i, angle in [(1, '10%'), (2, '25%'), (3, '50%'), (4, '75%')]:
         key = f'overhang_{i}_4_speed'
         val = slicer_settings.get(key)
         if val is not None:
             val_str = str(val)
+            orca_loc = 'OrcaSlicer \u2192 Quality \u2192 Overhang speed'
             if '%' in val_str:
                 pct = float(val_str.replace('%', ''))
                 if pct > 80:
                     _add(key, 'Quality', val_str, 'info', f'{60 - (i * 10)}%',
                          f'{angle} overhang: speed too high \u2014 material sags before cooling. '
-                         f'Slow down steep overhangs for better bridging.')
+                         f'Slow down steep overhangs for better bridging. ({orca_loc})')
                 else:
                     _add(key, 'Quality', val_str, 'good', None,
-                         f'{angle} overhang: good slowdown for cooling time.')
+                         f'{angle} overhang: good slowdown for cooling time. ({orca_loc})')
             elif float(val) > 0:
                 _add(key, 'Quality', f'{val} mm/s', 'info', None,
-                     f'{angle} overhang at {val} mm/s.')
+                     f'{angle} overhang at {val} mm/s. ({orca_loc})')
 
     small_peri = slicer_settings.get('small_perimeter_speed')
     if small_peri is not None:
         val_str = str(small_peri)
+        orca_loc = 'OrcaSlicer \u2192 Speed \u2192 Small perimeters'
         if '%' in val_str:
             pct = float(val_str.replace('%', ''))
             if pct > 80:
                 _add('small_perimeter_speed', 'Quality', val_str, 'info', '50\u201360%',
-                     'Small perimeters need slow speed for dimensional accuracy (screw holes, pins).')
+                     f'Small perimeters need slow speed for dimensional accuracy (screw holes, pins). ({orca_loc})')
             else:
                 _add('small_perimeter_speed', 'Quality', val_str, 'good', None,
-                     'Good slowdown for small features.')
-        elif float(small_peri) > 0:
-            if float(small_peri) > 150:
-                _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'info',
-                     '60\u2013100 mm/s',
-                     'Small perimeters at this speed lose dimensional accuracy.')
-            else:
-                _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'good', None,
-                     'Good speed for small features.')
+                     f'Good slowdown for small features. ({orca_loc})')
+        elif float(small_peri) == 0:
+            _add('small_perimeter_speed', 'Quality', '0 (auto)', 'good', None,
+                 f'Auto mode \u2014 OrcaSlicer uses outer wall speed for small perimeters. ({orca_loc})')
+        elif float(small_peri) > 150:
+            _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'info',
+                 '60\u2013100 mm/s',
+                 f'Small perimeters at this speed lose dimensional accuracy. ({orca_loc})')
+        else:
+            _add('small_perimeter_speed', 'Quality', f'{small_peri} mm/s', 'good', None,
+                 f'Good speed for small features. ({orca_loc})')
 
     # =====================================================================
     # WALL SPEED BIFURCATION DETECTION — intra-layer flow swing analysis
@@ -1184,12 +1198,14 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
     fil_mvs = slicer_settings.get('filament_max_volumetric_speed')
     if fil_mvs is not None:
         # OrcaSlicer writes per-extruder values as comma-separated (e.g. '17,17,17,9')
-        fil_mvs_str = str(fil_mvs).split(',')[0].strip()
+        # Parse all values and evaluate the first (active extruder)
+        fil_parts = [s.strip() for s in str(fil_mvs).split(',')]
         try:
-            fmvs = float(fil_mvs_str)
+            fmvs = float(fil_parts[0])
         except (ValueError, TypeError):
             fmvs = None
     if fil_mvs is not None and fmvs is not None:
+        pct_of_safe = int(fmvs / safe_flow * 100) if safe_flow > 0 else 0
         if fmvs > peak_flow:
             _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
                  'bad', f'{safe_flow} mm\u00b3/s',
@@ -1207,11 +1223,17 @@ def generate_slicer_profile_advice(slicer_settings, hotend_info, print_summary=N
                  'warn', f'{safe_flow} mm\u00b3/s',
                  f'Set to {fmvs} \u2014 very conservative for the Revo {variant} '
                  f'(safe: {safe_flow} for {material}, E3D data). You\u2019re leaving speed on the table.')
-        else:
+        elif fmvs >= safe_flow * 0.90:
             _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
                  'good', None,
-                 f'Matches Revo {variant} safe limit ({safe_flow} mm\u00b3/s '
-                 f'for {material}, E3D data). Good.')
+                 f'{fmvs} mm\u00b3/s ({pct_of_safe}% of Revo {variant} safe limit). '
+                 f'Well matched to your hotend for {material}.')
+        else:
+            _add('filament_max_volumetric_speed', 'Quality', f'{fmvs} mm\u00b3/s',
+                 'info', f'{safe_flow} mm\u00b3/s',
+                 f'{fmvs} mm\u00b3/s is {pct_of_safe}% of your Revo {variant} safe limit '
+                 f'({safe_flow} mm\u00b3/s for {material}, E3D data). '
+                 f'You can raise this to {safe_flow} to use your full hotend capacity.')
 
     # =====================================================================
     # ACCEL UNIFORMITY SUMMARY
