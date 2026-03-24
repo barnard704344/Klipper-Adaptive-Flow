@@ -2,19 +2,21 @@
 
 **Stop calibrating. Start printing.**
 
-Automatic temperature and pressure advance control for **E3D Revo** hotends on Klipper. Tell it which Revo nozzle and heater you have, and it handles the rest. Every material, every print, automatically.
+Automatic **Pressure Advance**, **temperature**, and **flow control** for **E3D Revo** hotends on Klipper. The system sets your PA to a proven baseline for your exact nozzle and material, then adjusts it in real-time as temperature and viscosity change during the print. Temperature tracks volumetric flow — boosting heat before high-flow moves and backing off during fine detail. A built-in slicer analyser reads your G-code settings and tells you exactly what to change for better results.
+
+Tell it which Revo nozzle and heater you have, and it handles the rest. Every material, every print, automatically.
 
 Think of it as Bambu Lab's auto-calibration, but for your Revo.
 
 ## The Problem
 
 Every time you switch materials or try a new filament brand, you're supposed to:
-- Print PA calibration patterns and squint at lines
-- Run flow tests and measure walls with calipers
-- Figure out what temperature to print at for your specific speed and flow rate
-- Redo everything when you change your nozzle or heater
+- **Calibrate Pressure Advance** — print test patterns, squint at lines, pick a value. But PA depends on temperature, nozzle geometry, and filament viscosity. The "correct" value at 210°C is wrong at 230°C — and your printer hits both temps in the same print when flow changes
+- **Tune flow and temperature together** — slicer defaults pick one temperature for the whole print, but a 5mm³/s detail move and a 15mm³/s infill move need very different nozzle temperatures. Too cold = under-extrusion on fast moves. Too hot = stringing on slow ones
+- **Run flow tests** — print cubes, measure walls with calipers, calculate volumetric limits. Repeat for every nozzle/heater/material combination
+- **Guess at slicer settings** — inner wall accel vs outer wall accel, speed limits, flow limits. Most users copy someone else's profile and hope for the best, with no way to know if their settings are actually matched to their hardware
 
-Most people don't do any of this. They use slicer defaults and live with mediocre prints. The few who do calibrate spend hours on it — and it's only valid for that one filament on that one printer at that one speed.
+Most people don't do any of this. They use slicer defaults and live with mediocre prints — corner bulging from wrong PA, rough overhangs from insufficient heat, and stringing from excessive heat. The few who do calibrate spend hours on it — and it's only valid for that one filament on that one printer at that one speed.
 
 ## The Solution
 
@@ -28,22 +30,55 @@ That's it. Adaptive Flow handles:
 
 | What | How |
 |------|-----|
-| **Temperature** | Dynamically boosts during high-flow moves, pre-heats 5 seconds ahead |
-| **Pressure Advance** | Sets correct PA for your material and nozzle, adjusts in real-time as temp changes |
-| **HF nozzle compensation** | Auto-detects HF melt zone, scales PA and smooth_time — no calibration needed |
-| **Heater limits** | Won't demand more than your heater can deliver — automatically scales to your wattage |
-| **Complex geometry** | Speed Guard auto-slows acceleration at tricky layers (domes, overhangs, curves) to prevent artifacts |
-| **Slicer analysis** | Reads your G-code, maps acceleration values to slicer features, shows exactly what to change |
+| **Pressure Advance** | Sets a proven PA baseline for your nozzle type and material (Standard vs HF). Then dynamically lowers PA as temperature rises — because hotter filament is less viscous and needs less pressure correction. No test patterns, no guessing |
+| **Temperature** | Tracks volumetric flow in real-time and boosts nozzle temperature proportionally — more heat for fast infill, less for fine detail. A 5-second lookahead pre-heats before flow spikes arrive, so the nozzle is ready before it needs to be |
+| **Flow management** | Knows the safe flow limits of your exact Revo nozzle and heater wattage. Caps temperature boost when the heater is near its limit, so the system never demands more than your hardware can deliver |
+| **HF nozzle compensation** | The Revo HF has 2.3× more melt zone than the Standard — it needs different PA (auto-scaled 1.4×), wider smooth_time, and a temperature offset. All applied automatically when you set `use_high_flow_nozzle: True` |
+| **Slicer analysis** | Reads your G-code settings, cross-references acceleration and speed values with actual print data, and tells you exactly which slicer setting to change and what value to use — no guessing, no forum-trawling |
+| **Complex geometry** | Speed Guard auto-slows acceleration at tricky layers (domes, overhangs, curves) to prevent ringing and artifacts |
 
 Your slicer just sends `MATERIAL=PETG` and the system does the rest.
 
 ## What Makes This Different
 
 - **Sensible defaults, not magic calibration.** PA, flow, and thermal values are derived from E3D's published Revo specifications. The Revo's standardised melt zone makes these values more consistent than generic Klipper defaults, but they are still starting points. For best results on a Voron or other precision build, calibrate your extruder `rotation_distance` and store a printer-specific PA baseline with `AT_SET_PA`.
+- **PA that actually works across a whole print.** Static PA is a compromise — it's tuned for one temperature, but your nozzle temperature shifts throughout the print as flow changes. Adaptive Flow tracks the temperature boost and scales PA in real-time: hotter filament is less viscous, so PA decreases. The result is consistent corners and fine detail whether the printer is crawling at 30mm/s or blasting infill at 300mm/s.
 - **Revo-native.** The system knows the thermal characteristics of every Revo nozzle (HF vs Standard) and heater (40W vs 60W+). HF nozzles get auto-scaled PA (1.4×), wider smooth_time, and temp offset. It auto-scales every material profile to your specific Revo configuration — not generic values that work for no printer in particular.
-- **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change for better print quality.
+- **Slicer-aware diagnostics.** The analysis dashboard extracts your slicer settings directly from G-code, maps acceleration values to specific slicer features, and shows you exactly what to change for better print quality. It calculates the volumetric flow rate for each speed setting and flags when settings exceed your nozzle's safe flow limit.
 - **Zero maintenance.** Updates preserve your settings. Defaults improve over time. You don't need to re-tune anything after initial setup.
 - **Scope:** Adaptive Flow solves *thermal* print quality issues (temperature swings, PA drift with viscosity, flow spikes). Mechanical issues like Z-wobble, belt tension, or frame resonance require mechanical fixes and Klipper's `SHAPER_CALIBRATE`.
+
+## The PA–Temperature–Flow Connection
+
+This is the core insight behind Adaptive Flow, and why static PA values are always a compromise.
+
+**The physics:** When your nozzle temperature rises, filament becomes less viscous. Less viscous filament needs less pressure to push through the nozzle — so the optimal Pressure Advance value *drops*. When the nozzle cools, viscosity increases and PA needs to go *up*.
+
+**The problem with static PA:** In a typical print, the nozzle runs at one slicer-set temperature. But fast infill moves and slow perimeter moves have very different flow demands. A static PA value might be perfect for 200mm/s infill at 240°C but too aggressive for a 40mm/s outer wall where the nozzle has cooled slightly. The result: corner bulging in some places, insufficient compensation in others.
+
+**What Adaptive Flow does:**
+1. **Monitors volumetric flow** — how many mm³/s of filament the extruder is pushing
+2. **Adjusts temperature to match** — boosts heat proportional to flow, with a 5-second lookahead to pre-heat before spikes
+3. **Scales PA with temperature** — as boost increases, PA decreases by `pa_boost_k` per °C (e.g. +20°C boost with `pa_boost_k: 0.001` reduces PA by 0.020)
+4. **Respects hardware limits** — caps boost when heater PWM exceeds 95%, enforces minimum PA, uses deadband to avoid jitter
+
+The result: your corners stay sharp at every speed, your infill doesn't under-extrude at high flow, and your fine detail doesn't blob from excessive PA — all without calibrating anything.
+
+## Improving Your Slicer Settings
+
+One of the most impactful features is the **slicer diagnostics** built into the analysis dashboard (`http://<printer-ip>:7127`, Slicer tab).
+
+Most print quality issues aren't caused by the printer — they're caused by mismatched slicer settings. Inner wall accel at 5000 but outer wall at 500 causes visible transition lines. Infill speed that exceeds your hotend's flow limit causes under-extrusion. Bridge settings that are too aggressive cause drooping.
+
+The Slicer tab reads the settings embedded in your G-code file and cross-references them with your actual print data:
+
+- **Calculates volumetric flow** for every speed setting — shows you exactly how many mm³/s each feature demands
+- **Flags settings that exceed your nozzle's safe limit** — based on E3D's published flow data for your specific Revo nozzle and heater wattage
+- **Shows maximum safe speed** for each setting — so you know how fast you can go before quality degrades
+- **Detects acceleration mismatches** — inner vs outer wall accel differences that cause visible lines at feature transitions
+- **Provides specific before→after recommendations** — not vague advice, but "change `inner_wall_acceleration` from 5000 to 3000" with the OrcaSlicer menu location
+
+This means you can print once, open the dashboard, and get a concrete list of slicer changes that will improve your next print — no trial and error.
 
 ## Quick Start
 
@@ -174,24 +209,25 @@ Every chart has tooltips explaining what you're looking at and what "good" looks
 
 During a print, the system continuously:
 
-1. **Measures** volumetric flow rate from extruder velocity
-2. **Predicts** upcoming flow changes 5 seconds ahead (lookahead)
-3. **Adjusts** nozzle temperature proportional to flow demand
-4. **Scales** PA as temperature changes (hotter = less viscous = less PA needed)
-5. **Monitors** heater duty cycle, capping boost when PWM exceeds 95%
-6. **Guards** tricky geometry (Speed Guard) — auto-slows acceleration at domes, overhangs, and curves to prevent artifacts
+1. **Measures** volumetric flow rate (mm³/s) from extruder velocity and filament cross-section
+2. **Predicts** upcoming flow changes 5 seconds ahead via G-code lookahead — pre-heats the nozzle *before* a fast infill segment arrives
+3. **Adjusts** nozzle temperature proportional to flow demand — more heat for high-flow moves, base temp for fine detail
+4. **Scales PA in real-time** as temperature changes — hotter filament is less viscous, so PA decreases automatically (PA_adjusted = PA_base − boost × pa_boost_k)
+5. **Monitors** heater duty cycle, capping temperature boost when PWM exceeds 95% so the system never demands more than the heater can deliver
+6. **Guards** tricky geometry (Speed Guard) — auto-slows acceleration at domes, overhangs, and curves to prevent ringing and artifacts
 
-All adjustments stay within safe limits defined by your hardware.
+All adjustments stay within safe limits defined by your hardware and material profile.
 
 ## What You Don't Need To Do
 
-- ~~Print PA calibration patterns~~
+- ~~Print PA calibration patterns for every material~~
+- ~~Recalibrate PA when you change nozzles or temperatures~~
 - ~~Run flow tests with calipers~~
-- ~~Create per-material fan profiles~~
-- ~~Calculate volumetric flow limits~~
-- ~~Tune temperature for different speeds~~
-- ~~Adjust settings when switching nozzles~~
+- ~~Calculate volumetric flow limits for your hotend~~
+- ~~Tune temperature for different speeds and flow rates~~
+- ~~Adjust settings when switching between Standard and HF nozzles~~
 - ~~Manually override anything for heater upgrades~~
+- ~~Guess which slicer acceleration/speed values to use~~ (the dashboard tells you)
 
 For most users — especially those switching from a Standard to HF nozzle or changing filament brands — Adaptive Flow handles everything automatically.
 
