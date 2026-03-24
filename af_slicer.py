@@ -148,7 +148,6 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
     and the raw list of accel values seen during printing, produce a
     diagnostic dict with:
     - distinct_accels: unique accel values observed in the CSV
-    - accel_map: mapping of observed accel → probable slicer feature
     - max_accel_swing: largest single accel change observed
     - issues: list of specific slicer setting problems found
     - suggestions: list of {setting, current, suggested, reason} dicts
@@ -160,7 +159,6 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
 
     result = {
         'distinct_accels': [],
-        'accel_map': {},
         'max_accel_swing': 0,
         'issues': [],
         'suggestions': [],
@@ -199,47 +197,6 @@ def analyze_slicer_vs_banding(slicer_settings, banding_data, csv_accel_values):
             except (ValueError, TypeError):
                 return None
         return _to_num(v)
-
-    # --- Map observed accels to slicer features ---
-    # Build a reverse lookup: slicer accel value → feature name(s)
-    # Resolve percentage values (e.g. '100%', '50%') against the reference accel.
-    _ref_accel_for_map = _to_num(slicer_settings.get('default_acceleration')) or 10000
-    feature_map = {}
-    for key in _SLICER_ACCEL_KEYS:
-        val = slicer_settings.get(key)
-        if val is None:
-            continue
-        # Resolve percentage strings like '100%' or '50%'
-        if isinstance(val, str) and val.strip().endswith('%'):
-            try:
-                resolved = float(val.strip().rstrip('%')) / 100.0 * _ref_accel_for_map
-                ival = int(resolved)
-            except (ValueError, TypeError):
-                continue
-        elif isinstance(val, (int, float)):
-            ival = int(val)
-        else:
-            continue
-        if ival not in feature_map:
-            feature_map[ival] = []
-        nice_name = key.replace('_acceleration', '').replace('_', ' ').title()
-        feature_map[ival].append(nice_name)
-
-    for accel_val in distinct:
-        count = accel_counter[accel_val]
-        if accel_val in feature_map:
-            result['accel_map'][str(accel_val)] = {
-                'features': feature_map[accel_val],
-                'count': count,
-                'pct': round(100 * count / len(csv_accel_values), 1),
-            }
-        else:
-            # Unknown — might be Klipper default or Speed Guard override
-            result['accel_map'][str(accel_val)] = {
-                'features': ['Unknown / Klipper default'],
-                'count': count,
-                'pct': round(100 * count / len(csv_accel_values), 1),
-            }
 
     # --- Largest accel swing from banding data ---
     accel_spikes = (banding_data or {}).get('events', {}).get('accel_spikes', [])

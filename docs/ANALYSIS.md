@@ -38,7 +38,7 @@ Below the cards, tabs switch between analysis views. Each tab has a **?** toolti
 
 | Tab | Contents |
 |-----|----------|
-| **✂ Slicer** | The most useful tab. Extracts slicer settings from G-code, shows acceleration fingerprint chart, and tells you exactly which settings to change |
+| **✂ Slicer** | The most useful tab. Extracts slicer settings from G-code with flow rates, max speeds, and specific change suggestions |
 | **Timeline** | Temperature and flow/speed/PWM charts over time |
 | **Z-Height** | Banding risk bar chart by Z-layer + problem zone breakdown |
 | **Heater** | PWM vs flow-rate brackets + thermal lag episodes |
@@ -68,43 +68,11 @@ The dashboard detects active prints automatically:
 
 For completed prints, optional auto-refresh runs at 30-second intervals.
 
-## Interactive Charts
-
-All charts are built with Chart.js v4 and support:
-
-- **Hover tooltips** — hover over any data point for exact values
-- **Zoom & pan** — scroll to zoom, drag to pan (on supported views)
-- **Legend toggling** — click legend items to show/hide individual data series
-- **Responsive layout** — charts resize to fit any screen (desktop, tablet, mobile)
-
 ### Slicer Tab
 
-The Slicer tab extracts settings from your G-code file's footer and cross-references them with observed print data. It works with OrcaSlicer, BambuStudio, PrusaSlicer, and SuperSlicer — any slicer that writes `; key = value` comments.
+Extracts settings from your G-code file's footer and cross-references them with observed print data. Works with OrcaSlicer, BambuStudio, PrusaSlicer, and SuperSlicer — any slicer that writes `; key = value` comments.
 
-**Acceleration Fingerprint** — a horizontal bar chart showing each distinct acceleration value the slicer used during the print, what percentage of print time was spent at that value, and which slicer feature maps to it. For example:
-
-```
-8000 (Outer Wall, Inner Wall, Bridge)  ████████████████████████ 72.7%
-10000 (Default, Sparse Infill)         ██████ 17.9%
-12000 (Travel)                         ██ 4.8%
-6000 (Top Surface)                     █ 2.4%
-2000 (Initial Layer)                   █ 2.3%
-```
-
-Fewer distinct values = fewer banding-causing transitions.
-
-**Accel Breakdown** — table with exact sample counts and percentages per acceleration value.
-
-**Issues & Suggestions** — when the diagnosis finds problematic settings, it shows specific before → after recommendations:
-
-| Issue | What It Detects | Example Suggestion |
-|-------|-----------------|-------------------|
-| Bridge accel mismatch | Bridge acceleration far below outer wall | Bridge acceleration 1600 → 8000 |
-| Bridge flow too low | Bridge flow ratio causing under-extrusion | Bridge flow 0.9 → 1.0 |
-| Inner/outer wall mismatch | Different accel for inner vs outer walls | Inner wall acceleration 5000 → 8000 |
-| Too many distinct accels | 5+ different values causing constant transitions | Informational — review settings |
-
-**Settings Tables** — all acceleration, speed, and other quality-related settings extracted from the G-code, organised into Acceleration, Speed, and Quality categories. Each speed setting shows:
+Settings are organised into Acceleration, Speed, and Quality tables. Each speed setting shows:
 
 | Column | Description |
 |--------|-------------|
@@ -113,6 +81,8 @@ Fewer distinct values = fewer banding-causing transitions.
 | **Suggested** | Recommended value if a change would help |
 | **Max Speed** | Maximum speed before hitting hotend safe flow limit (E3D published data). Only shown for core print-move settings — omitted for bridge, gap fill, first layer, etc. where speed is intentionally limited for non-flow reasons. |
 | **Details** | Explanation including OrcaSlicer menu location where applicable |
+
+When the analysis detects problematic settings (mismatched accels, excessive flow, bridge issues), suggestions appear inline with the affected setting — with a specific before → after recommendation and reasoning.
 
 ### Timeline Tab
 
@@ -160,11 +130,7 @@ The dashboard exposes a JSON API:
 | `/api/data?session=<file>` | GET | Data for a specific completed print |
 | `/api/apply-config` | POST | Apply a config change (JSON body: `{variable, value}`) |
 
-The `/api/data` response includes `slicer_settings` (dict of all extracted G-code settings) and `slicer_diagnosis` (accel fingerprint, issues, suggestions).
-
 Responses are cached with a 15-second TTL. Applying a config change via `/api/apply-config` invalidates the cache so subsequent reads reflect the updated state.
-
-All endpoints return JSON — useful for custom integrations, Grafana panels, or external dashboards.
 
 ---
 
@@ -300,7 +266,7 @@ The verdict is one of:
 - **significant_headroom** — all systems have margin, with a suggested speed increase percentage
 - **moderate_headroom** — some margin exists, with specific limiting factors identified
 - **at_limit** — one or more systems are saturated, with the bottleneck identified
-- **over_limit** — actively exceeding safe limits
+- **well_tuned** — speeds and flow are well-matched to hardware capabilities
 
 When headroom exists, the dashboard shows specific suggestions (e.g. "Increase speeds by ~40%") and offers config changes like adjusting `flow_k` to better utilise available headroom.
 
@@ -370,6 +336,14 @@ python3 analyze_print.py --dynz-map
 
 # Speed/flow distribution
 python3 analyze_print.py --distribution
+
+# Print-over-print trend analysis
+python3 analyze_print.py --trend 20
+python3 analyze_print.py --trend 20 --material PLA
+
+# Start web dashboard
+python3 analyze_print.py --serve
+python3 analyze_print.py --serve --port 8080
 
 # Custom log directory
 python3 analyze_print.py --log-dir /path/to/logs
